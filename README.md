@@ -4,6 +4,19 @@ A WinUI 3 control application for the RP2040-based DSPi audio processor. This is
 
 ![Screenshot](Images/screenshot.png)
 
+## Table of Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Building](#building)
+- [Usage](#usage)
+- [Project Structure](#project-structure)
+- [USB Communication Protocol](#usb-communication-protocol)
+- [Customizing the UI](#customizing-the-ui)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
+- [Notes](#notes)
+
 ## Features
 
 ### DSP Control
