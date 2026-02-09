@@ -205,7 +205,12 @@ See `gui_specs.md` for a comprehensive guide to all UI styling parameters includ
 ### Device not detected
 
 1. Check that the DSPi device is connected and powered
-2. Verify the WinUSB driver is installed (Device Manager > Universal Serial Bus devices)
+2. Install the WinUSB driver using [Zadig](https://zadig.akeo.ie/):
+   1. Download and run Zadig
+   2. Select **Options > List All Devices**
+   3. Find the DSPi device in the dropdown
+   4. Select **WinUSB** as the target driver
+   5. Click **Replace Driver** (or **Install Driver** if no driver is currently assigned)
 3. Try unplugging and reconnecting the device
 4. Click the reconnect button in the application
 
