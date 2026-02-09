@@ -3,7 +3,9 @@
     "allow": [
       "Bash(cd:*)",
       "Bash(dotnet build:*)",
-      "Bash(findstr:*)"
+      "Bash(findstr:*)",
+      "Bash(ls:*)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

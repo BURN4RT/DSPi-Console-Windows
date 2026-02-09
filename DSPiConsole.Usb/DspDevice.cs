@@ -35,6 +35,16 @@ public static class VendorCommands
     public const byte GetLoudnessRefSPL = 0x5B;
     public const byte SetLoudnessIntensity = 0x5C;
     public const byte GetLoudnessIntensity = 0x5D;
+    public const byte SetCrossfeedEnabled = 0x5E;
+    public const byte GetCrossfeedEnabled = 0x5F;
+    public const byte SetCrossfeedPreset = 0x60;
+    public const byte GetCrossfeedPreset = 0x61;
+    public const byte SetCrossfeedFreq = 0x62;
+    public const byte GetCrossfeedFreq = 0x63;
+    public const byte SetCrossfeedFeed = 0x64;
+    public const byte GetCrossfeedFeed = 0x65;
+    public const byte SetCrossfeedItd = 0x66;
+    public const byte GetCrossfeedItd = 0x67;
 }
 
 /// <summary>
@@ -659,6 +669,98 @@ public partial class DspDevice : ObservableObject, IDisposable
         var response = ControlTransferIn(VendorCommands.GetLoudnessIntensity, 0, 4);
         if (response == null || response.Length < 4) return null;
         return BitConverter.ToSingle(response, 0);
+    }
+
+    /// <summary>
+    /// Set crossfeed enabled state.
+    /// </summary>
+    public bool SetCrossfeedEnabled(bool enabled)
+    {
+        return ControlTransferOut(VendorCommands.SetCrossfeedEnabled, 0, new[] { (byte)(enabled ? 1 : 0) });
+    }
+
+    /// <summary>
+    /// Get crossfeed enabled state.
+    /// </summary>
+    public bool? GetCrossfeedEnabled()
+    {
+        var response = ControlTransferIn(VendorCommands.GetCrossfeedEnabled, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0] != 0;
+    }
+
+    /// <summary>
+    /// Set crossfeed preset (0=Default, 1=Chu Moy, 2=Jan Meier, 3=Custom).
+    /// </summary>
+    public bool SetCrossfeedPreset(int preset)
+    {
+        return ControlTransferOut(VendorCommands.SetCrossfeedPreset, 0, new[] { (byte)preset });
+    }
+
+    /// <summary>
+    /// Get crossfeed preset.
+    /// </summary>
+    public int? GetCrossfeedPreset()
+    {
+        var response = ControlTransferIn(VendorCommands.GetCrossfeedPreset, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0];
+    }
+
+    /// <summary>
+    /// Set crossfeed cutoff frequency in Hz (500-2000).
+    /// </summary>
+    public bool SetCrossfeedFreq(float freq)
+    {
+        var data = BitConverter.GetBytes(freq);
+        return ControlTransferOut(VendorCommands.SetCrossfeedFreq, 0, data);
+    }
+
+    /// <summary>
+    /// Get crossfeed cutoff frequency.
+    /// </summary>
+    public float? GetCrossfeedFreq()
+    {
+        var response = ControlTransferIn(VendorCommands.GetCrossfeedFreq, 0, 4);
+        if (response == null || response.Length < 4) return null;
+        return BitConverter.ToSingle(response, 0);
+    }
+
+    /// <summary>
+    /// Set crossfeed feed level in dB (0-15).
+    /// </summary>
+    public bool SetCrossfeedFeed(float feed)
+    {
+        var data = BitConverter.GetBytes(feed);
+        return ControlTransferOut(VendorCommands.SetCrossfeedFeed, 0, data);
+    }
+
+    /// <summary>
+    /// Get crossfeed feed level.
+    /// </summary>
+    public float? GetCrossfeedFeed()
+    {
+        var response = ControlTransferIn(VendorCommands.GetCrossfeedFeed, 0, 4);
+        if (response == null || response.Length < 4) return null;
+        return BitConverter.ToSingle(response, 0);
+    }
+
+    /// <summary>
+    /// Set interaural time delay (ITD) enabled state.
+    /// </summary>
+    public bool SetCrossfeedItd(bool enabled)
+    {
+        return ControlTransferOut(VendorCommands.SetCrossfeedItd, 0, new[] { (byte)(enabled ? 1 : 0) });
+    }
+
+    /// <summary>
+    /// Get interaural time delay enabled state.
+    /// </summary>
+    public bool? GetCrossfeedItd()
+    {
+        var response = ControlTransferIn(VendorCommands.GetCrossfeedItd, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0] != 0;
     }
 
     /// <summary>

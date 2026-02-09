@@ -61,6 +61,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private float _loudnessIntensity = 100.0f;
 
+    [ObservableProperty]
+    private bool _crossfeedEnabled;
+
+    [ObservableProperty]
+    private int _crossfeedPreset = 0; // 0=Default, 1=Chu Moy, 2=Jan Meier, 3=Custom
+
+    [ObservableProperty]
+    private float _crossfeedFreq = 700.0f; // Hz (500-2000)
+
+    [ObservableProperty]
+    private float _crossfeedFeed = 4.5f; // dB (0-15)
+
+    [ObservableProperty]
+    private bool _crossfeedItd = true; // Inter-aural Time Delay
+
     public IReadOnlyDictionary<int, ObservableCollection<FilterParams>> ChannelData => _channelData;
     public IReadOnlyDictionary<int, bool> ChannelVisibility => _channelVisibility;
     public IReadOnlyDictionary<int, float> ChannelDelays => _channelDelays;
@@ -202,6 +217,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
 
         FetchLoudness();
+        FetchCrossfeed();
 
         // Dispatch FiltersChanged to run after all filter updates are processed
         _dispatcher.TryEnqueue(() => FiltersChanged?.Invoke(this, EventArgs.Empty));
@@ -329,6 +345,29 @@ public partial class MainViewModel : ObservableObject, IDisposable
             _dispatcher.TryEnqueue(() => LoudnessIntensity = intensity.Value);
     }
 
+    private void FetchCrossfeed()
+    {
+        var enabled = _device.GetCrossfeedEnabled();
+        if (enabled.HasValue)
+            _dispatcher.TryEnqueue(() => CrossfeedEnabled = enabled.Value);
+
+        var preset = _device.GetCrossfeedPreset();
+        if (preset.HasValue)
+            _dispatcher.TryEnqueue(() => CrossfeedPreset = preset.Value);
+
+        var freq = _device.GetCrossfeedFreq();
+        if (freq.HasValue)
+            _dispatcher.TryEnqueue(() => CrossfeedFreq = freq.Value);
+
+        var feed = _device.GetCrossfeedFeed();
+        if (feed.HasValue)
+            _dispatcher.TryEnqueue(() => CrossfeedFeed = feed.Value);
+
+        var itd = _device.GetCrossfeedItd();
+        if (itd.HasValue)
+            _dispatcher.TryEnqueue(() => CrossfeedItd = itd.Value);
+    }
+
     partial void OnLoudnessEnabledChanged(bool value)
     {
         _device.SetLoudnessEnabled(value);
@@ -342,6 +381,31 @@ public partial class MainViewModel : ObservableObject, IDisposable
     partial void OnLoudnessIntensityChanged(float value)
     {
         _device.SetLoudnessIntensity(value);
+    }
+
+    partial void OnCrossfeedEnabledChanged(bool value)
+    {
+        _device.SetCrossfeedEnabled(value);
+    }
+
+    partial void OnCrossfeedPresetChanged(int value)
+    {
+        _device.SetCrossfeedPreset(value);
+    }
+
+    partial void OnCrossfeedFreqChanged(float value)
+    {
+        _device.SetCrossfeedFreq(value);
+    }
+
+    partial void OnCrossfeedFeedChanged(float value)
+    {
+        _device.SetCrossfeedFeed(value);
+    }
+
+    partial void OnCrossfeedItdChanged(bool value)
+    {
+        _device.SetCrossfeedItd(value);
     }
 
     partial void OnPreampDbChanged(float value)

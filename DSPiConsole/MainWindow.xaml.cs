@@ -30,6 +30,7 @@ public sealed partial class MainWindow : Window
     private bool _isUpdatingGain;
     private StatsWindow? _statsWindow;
     private LoudnessWindow? _loudnessWindow;
+    private CrossfeedWindow? _crossfeedWindow;
 
     // Track output controls for live updates
     private TextBox? _currentGainTextBox;
@@ -1381,6 +1382,16 @@ public sealed partial class MainWindow : Window
             _loudnessWindow.Closed += (s, e) => _loudnessWindow = null;
         }
         _loudnessWindow.Activate();
+    }
+
+    private void OnCrossfeedClick(object sender, RoutedEventArgs e)
+    {
+        if (_crossfeedWindow == null)
+        {
+            _crossfeedWindow = new CrossfeedWindow(ViewModel);
+            _crossfeedWindow.Closed += (s, e) => _crossfeedWindow = null;
+        }
+        _crossfeedWindow.Activate();
     }
 
     private void OnStatsClick(object sender, RoutedEventArgs e)

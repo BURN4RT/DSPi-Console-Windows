@@ -14,12 +14,27 @@ A WinUI 3 control application for the RP2040-based DSPi audio processor. This is
   - Sub (PDM output) - 10 EQ bands
 - **Filter Types**: Off, Peaking, Low Shelf, High Shelf, Low Pass, High Pass
 - **Per-Channel Delay**: 0-170ms delay for output channels (Sub and SPDIF)
+- **Per-Channel Gain & Mute**: Independent gain (-60 to +10 dB) and mute for each output channel
 - **Global Controls**: Preamp gain (-60 to +10 dB), Master EQ bypass
+
+### Loudness Compensation
+- **ISO 226 Equal-Loudness Contour Correction**: Compensates for the human ear's frequency-dependent sensitivity at different listening volumes
+- **Reference SPL**: Calibrate to your typical listening level (40-100 dB)
+- **Intensity**: Scale the compensation curve (0-200%)
+- **Real-time Compensation Curve**: Visual frequency response graph
+
+### Headphone Crossfeed
+- **BS2B Binaural Processing**: Simulates natural acoustic crossfeed for more natural headphone listening
+- **3 Built-in Presets**: Default (700 Hz / 4.5 dB), Chu Moy (700 Hz / 6.0 dB), Jan Meier (650 Hz / 9.5 dB)
+- **Custom Mode**: Manual control of cutoff frequency (500-2000 Hz) and feed level (0-15 dB)
+- **Interaural Time Delay**: Optional ~220 us path difference simulation
+- **Real-time Frequency Response Graph**: Direct and crossfeed path visualization
 
 ### AutoEQ Integration
 - **Headphone Profile Browser**: Search and apply EQ profiles from the AutoEQ database (1000+ headphone models)
 - **Favorites System**: Save frequently used profiles for quick access
 - **Automatic Preamp Adjustment**: Applies recommended preamp gain with each profile
+- **Database Updates**: Import custom AutoEQ database or reset to built-in
 
 ### Filter Import/Export
 - **Import Filters**: Load filter configurations from text files
@@ -37,6 +52,7 @@ A WinUI 3 control application for the RP2040-based DSPi audio processor. This is
 - **Peak Meters**: Visual level indicators for all 5 channels
 - **CPU Load**: Real-time display of both RP2040 cores
 - **Live Bode Plot**: Hardware-accelerated frequency response visualization
+- **System Stats**: Clock frequency, supply voltage, sample rate, temperature, PDM/SPDIF error counters
 
 ### User Interface
 - **Dashboard View**: Overview of all channels with filter summaries at a glance
@@ -44,12 +60,6 @@ A WinUI 3 control application for the RP2040-based DSPi audio processor. This is
 - **Desktop Acrylic Backdrop**: Modern translucent sidebar effect (Windows 10/11)
 - **Channel Visibility Toggles**: Show/hide individual channels on the Bode plot
 - **Color-coded Channels**: Distinct colors for easy identification
-
-## Screenshots
-
-The application features a modern dark theme with translucent sidebar:
-- Left sidebar: Channel selection, global controls, meters, and connection status
-- Main area: Bode plot with frequency response and filter editing panels
 
 ## Requirements
 
@@ -82,7 +92,7 @@ dotnet build -c Release -r win-x64
 ### Applying AutoEQ Profiles
 
 1. Click the settings gear icon (top right)
-2. Select **AutoEQ → Browse Profiles...**
+2. Select **AutoEQ > Browse Profiles...**
 3. Search for your headphone model
 4. Click **Apply** to load the profile to Master L/R channels
 5. Optionally click the star to add to favorites
@@ -97,7 +107,7 @@ dotnet build -c Release -r win-x64
 ### Saving to Device
 
 1. Make your desired adjustments
-2. Click settings → **Commit Parameters...**
+2. Click settings > **Commit Parameters...**
 3. Confirm to save to flash (survives power cycles)
 
 ### Keyboard Shortcuts
@@ -107,6 +117,10 @@ dotnet build -c Release -r win-x64
 | Ctrl+I | Import Filters |
 | Ctrl+E | Export Filters |
 | Ctrl+S | Commit Parameters |
+| Ctrl+Shift+B | Browse AutoEQ Profiles |
+| Ctrl+Shift+L | Loudness Compensation |
+| Ctrl+Shift+C | Crossfeed |
+| Ctrl+Shift+T | System Stats |
 | Alt+F4 | Exit |
 
 ## Project Structure
@@ -119,6 +133,9 @@ DSPiConsole-Windows/
 ├── DSPiConsole/                 # Main WinUI 3 application
 │   ├── App.xaml(.cs)            # Application entry point & theme resources
 │   ├── MainWindow.xaml(.cs)     # Main window with all UI
+│   ├── LoudnessWindow.xaml(.cs) # Loudness compensation controls
+│   ├── CrossfeedWindow.xaml(.cs)# BS2B crossfeed controls
+│   ├── StatsWindow.xaml(.cs)    # System statistics display
 │   ├── autoeq_database.json     # AutoEQ headphone profiles
 │   ├── Controls/                # Custom controls
 │   │   ├── BodePlotControl.cs   # Frequency response graph (Win2D)
@@ -127,7 +144,8 @@ DSPiConsole-Windows/
 │   ├── Converters/              # Value converters for XAML binding
 │   ├── Dialogs/                 # Modal dialogs
 │   │   ├── AutoEQBrowserDialog.xaml(.cs)    # Headphone profile browser
-│   │   └── ChannelSelectionDialog.xaml(.cs) # Import channel selection
+│   │   ├── ChannelSelectionDialog.xaml(.cs)  # Import channel selection
+│   │   └── SettingsDialog.xaml(.cs)          # Application settings
 │   ├── Services/                # Business logic
 │   │   ├── AutoEQManager.cs     # AutoEQ database & favorites
 │   │   └── FilterFileService.cs # Import/export file parsing
@@ -136,7 +154,9 @@ DSPiConsole-Windows/
 ├── DSPiConsole.Core/            # Core library (cross-platform)
 │   ├── Models/                  # Data models
 │   │   ├── Channel.cs           # Channel definitions & colors
+│   │   ├── CrossfeedData.cs     # BS2B crossfeed math & presets
 │   │   ├── FilterParams.cs      # Filter parameters & types
+│   │   ├── LoudnessData.cs      # ISO 226 loudness compensation
 │   │   └── SystemStatus.cs      # Real-time device status
 │   └── DspMath.cs               # Biquad coefficient calculation
 └── DSPiConsole.Usb/             # USB communication library
@@ -161,6 +181,16 @@ The application communicates with the DSPi firmware using USB vendor control tra
 | SAVE_PARAMS | 0x51 | OUT | Save to flash |
 | LOAD_PARAMS | 0x52 | IN | Load from flash |
 | FACTORY_RESET | 0x53 | OUT | Reset to defaults |
+| SET/GET_CHANNEL_GAIN | 0x54/0x55 | OUT/IN | Output channel gain |
+| SET/GET_CHANNEL_MUTE | 0x56/0x57 | OUT/IN | Output channel mute |
+| SET/GET_LOUDNESS_ENABLED | 0x58/0x59 | OUT/IN | Loudness compensation on/off |
+| SET/GET_LOUDNESS_REF_SPL | 0x5A/0x5B | OUT/IN | Loudness reference SPL |
+| SET/GET_LOUDNESS_INTENSITY | 0x5C/0x5D | OUT/IN | Loudness intensity |
+| SET/GET_CROSSFEED_ENABLED | 0x5E/0x5F | OUT/IN | Crossfeed on/off |
+| SET/GET_CROSSFEED_PRESET | 0x60/0x61 | OUT/IN | Crossfeed preset selection |
+| SET/GET_CROSSFEED_FREQ | 0x62/0x63 | OUT/IN | Crossfeed cutoff frequency |
+| SET/GET_CROSSFEED_FEED | 0x64/0x65 | OUT/IN | Crossfeed feed level |
+| SET/GET_CROSSFEED_ITD | 0x66/0x67 | OUT/IN | Crossfeed interaural time delay |
 
 ## Customizing the UI
 
@@ -175,7 +205,7 @@ See `gui_specs.md` for a comprehensive guide to all UI styling parameters includ
 ### Device not detected
 
 1. Check that the DSPi device is connected and powered
-2. Verify the WinUSB driver is installed (Device Manager → Universal Serial Bus devices)
+2. Verify the WinUSB driver is installed (Device Manager > Universal Serial Bus devices)
 3. Try unplugging and reconnecting the device
 4. Click the reconnect button in the application
 
@@ -196,7 +226,7 @@ The application polls the device status at 60ms intervals. This is normal and re
 
 ### Translucent effect not visible
 
-1. Ensure **Transparency effects** is enabled in Windows Settings → Personalization → Colors
+1. Ensure **Transparency effects** is enabled in Windows Settings > Personalization > Colors
 2. The effect may be disabled on battery saver mode
 3. Windows 11 provides better backdrop support than Windows 10
 
