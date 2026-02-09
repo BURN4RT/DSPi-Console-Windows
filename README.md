@@ -211,8 +211,8 @@ See `gui_specs.md` for a comprehensive guide to all UI styling parameters includ
    - Select **Weeb Labs DSPi (Interface 2)** from the dropdown
    - Select **WinUSB** as the target driver
    - Click **Install Driver**
-3. Try unplugging and reconnecting the device
-4. Click the reconnect button in the application
+   - Wait for the installation process to complete
+3. Click the reconnect button in lower left corner of the application
 
 ### No audio
 
@@ -237,10 +237,9 @@ The application polls the device status at 60ms intervals. This is normal and re
 
 ## License
 
-This project is provided as-is for use with the DSPi hardware.
+This project is licensed under GNU v3.
 
-## Credits
+## Notes
 
-- Original macOS application by Troy Dunn-Higgins
 - Windows port using WinUI 3 and .NET 8
 - AutoEQ database from [jaakkopasanen/AutoEq](https://github.com/jaakkopasanen/AutoEq)
