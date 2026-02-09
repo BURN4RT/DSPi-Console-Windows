@@ -210,7 +210,7 @@ See `gui_specs.md` for a comprehensive guide to all UI styling parameters includ
    - Select **Options > List All Devices**
    - Select **Weeb Labs DSPi (Interface 2)** from the dropdown
    - Select **WinUSB** as the target driver
-   - Click **Replace Driver** (or **Install Driver** if no driver is currently assigned)
+   - Click **Install Driver**
 3. Try unplugging and reconnecting the device
 4. Click the reconnect button in the application
 
