@@ -4,19 +4,6 @@ A WinUI 3 control application for the RP2040-based DSPi audio processor. This is
 
 ![Screenshot](Images/screenshot.png)
 
-## Table of Contents
-
-- [Features](#features)
-- [Requirements](#requirements)
-- [Building](#building)
-- [Usage](#usage)
-- [Project Structure](#project-structure)
-- [USB Communication Protocol](#usb-communication-protocol)
-- [Customizing the UI](#customizing-the-ui)
-- [Troubleshooting](#troubleshooting)
-- [License](#license)
-- [Notes](#notes)
-
 ## Features
 
 ### DSP Control
@@ -250,7 +237,8 @@ The application polls the device status at 60ms intervals. This is normal and re
 
 ## License
 
-This project is licensed under GNU v3.
+This project is licensed under the GNU General Public License v3.0
+
 
 ## Notes
 
