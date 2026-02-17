@@ -31,6 +31,7 @@ public sealed partial class MainWindow : Window
     private StatsWindow? _statsWindow;
     private LoudnessWindow? _loudnessWindow;
     private CrossfeedWindow? _crossfeedWindow;
+    private MatrixMixerWindow? _matrixMixerWindow;
 
     // Track output controls for live updates
     private TextBox? _currentGainTextBox;
@@ -1392,6 +1393,16 @@ public sealed partial class MainWindow : Window
             _crossfeedWindow.Closed += (s, e) => _crossfeedWindow = null;
         }
         _crossfeedWindow.Activate();
+    }
+
+    private void OnMatrixMixerClick(object sender, RoutedEventArgs e)
+    {
+        if (_matrixMixerWindow == null)
+        {
+            _matrixMixerWindow = new MatrixMixerWindow(ViewModel);
+            _matrixMixerWindow.Closed += (s, e) => _matrixMixerWindow = null;
+        }
+        _matrixMixerWindow.Activate();
     }
 
     private void OnStatsClick(object sender, RoutedEventArgs e)

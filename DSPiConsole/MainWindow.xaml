@@ -271,6 +271,11 @@
                                         <KeyboardAccelerator Modifiers="Control,Shift" Key="C"/>
                                     </MenuFlyoutItem.KeyboardAccelerators>
                                 </MenuFlyoutItem>
+                                <MenuFlyoutItem Text="Matrix Mixer..." Click="OnMatrixMixerClick">
+                                    <MenuFlyoutItem.KeyboardAccelerators>
+                                        <KeyboardAccelerator Modifiers="Control,Shift" Key="M"/>
+                                    </MenuFlyoutItem.KeyboardAccelerators>
+                                </MenuFlyoutItem>
                                 <MenuFlyoutItem Text="Stats for nerbs" Click="OnStatsClick">
                                     <MenuFlyoutItem.KeyboardAccelerators>
                                         <KeyboardAccelerator Modifiers="Control,Shift" Key="T"/>
