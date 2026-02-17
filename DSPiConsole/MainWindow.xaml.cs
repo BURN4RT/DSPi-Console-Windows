@@ -351,11 +351,11 @@ public sealed partial class MainWindow : Window
         bottomRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
         bottomRow.ColumnSpacing = 16;
 
-        var spdifCard = CreateStereoDashboardCard("STEREO OUTPUT (SPDIF)", Channel.OutLeft, Channel.OutRight, true);
+        var spdifCard = CreateStereoDashboardCard("STEREO OUTPUT (SPDIF)", Channel.Spdif1L, Channel.Spdif1R, true);
         Grid.SetColumn(spdifCard, 0);
         bottomRow.Children.Add(spdifCard);
 
-        var subCard = CreateMonoDashboardCard(Channel.Sub);
+        var subCard = CreateMonoDashboardCard(Channel.Pdm);
         Grid.SetColumn(subCard, 1);
         bottomRow.Children.Add(subCard);
 
@@ -1002,9 +1002,9 @@ public sealed partial class MainWindow : Window
         MeterSub.Level = status.Peaks[4];
 
         // Dim output meters when muted
-        bool outLMuted = ViewModel.GetChannelMute(Channel.OutLeft);
-        bool outRMuted = ViewModel.GetChannelMute(Channel.OutRight);
-        bool subMuted = ViewModel.GetChannelMute(Channel.Sub);
+        bool outLMuted = ViewModel.GetChannelMute(Channel.Spdif1L);
+        bool outRMuted = ViewModel.GetChannelMute(Channel.Spdif1R);
+        bool subMuted = ViewModel.GetChannelMute(Channel.Pdm);
 
         MeterOutL.Opacity = outLMuted ? 0.3 : 1.0;
         MeterOutLLabel.Opacity = outLMuted ? 0.3 : 1.0;

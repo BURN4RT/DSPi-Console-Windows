@@ -281,14 +281,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public void SetChannelGain(int channelId, float db)
     {
         _channelGains[channelId] = db;
-        int outputIndex = channelId - (int)ChannelId.OutLeft;
+        int outputIndex = channelId - (int)ChannelId.Spdif1L;
         _device.SetChannelGain(outputIndex, db);
         OnPropertyChanged(nameof(ChannelGains));
     }
 
     private void FetchChannelGain(int channelId)
     {
-        int outputIndex = channelId - (int)ChannelId.OutLeft;
+        int outputIndex = channelId - (int)ChannelId.Spdif1L;
         var gain = _device.GetChannelGain(outputIndex);
         if (gain.HasValue)
         {
@@ -307,14 +307,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public void SetChannelMute(int channelId, bool muted)
     {
         _channelMutes[channelId] = muted;
-        int outputIndex = channelId - (int)ChannelId.OutLeft;
+        int outputIndex = channelId - (int)ChannelId.Spdif1L;
         _device.SetChannelMute(outputIndex, muted);
         OnPropertyChanged(nameof(ChannelMutes));
     }
 
     private void FetchChannelMute(int channelId)
     {
-        int outputIndex = channelId - (int)ChannelId.OutLeft;
+        int outputIndex = channelId - (int)ChannelId.Spdif1L;
         var muted = _device.GetChannelMute(outputIndex);
         if (muted.HasValue)
         {

@@ -18,9 +18,11 @@ public sealed partial class MatrixMixerWindow : Window
     private readonly Dictionary<(int, int), Border> _routeCircles = new();
     private readonly Dictionary<(int, int), TextBlock> _routeGainTexts = new();
     private readonly Dictionary<(int, int), Button> _routeInvButtons = new();
+    private readonly Dictionary<(int, int), bool> _routeConnected = new();
 
     // Output controls: key = outputIndex
     private readonly Dictionary<int, Button> _outputEnableButtons = new();
+    private readonly Dictionary<int, bool> _outputEnabled = new();
     private readonly Dictionary<int, TextBlock> _outputGainTexts = new();
     private readonly Dictionary<int, TextBlock> _outputDelayTexts = new();
     private readonly Dictionary<int, Button> _outputMuteButtons = new();
@@ -56,13 +58,23 @@ public sealed partial class MatrixMixerWindow : Window
 
         BuildUI();
 
-        // Size window to fit content
-        RootGrid.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
-        var desired = RootGrid.DesiredSize;
-        int titleBarHeight = appWindow.TitleBar?.Height ?? 32;
-        appWindow.Resize(new Windows.Graphics.SizeInt32(
-            (int)Math.Ceiling(desired.Width),
-            (int)Math.Ceiling(desired.Height) + titleBarHeight));
+        // Size window to content after first layout: fonts are measured and DPI scale is known.
+        // DesiredSize is in DIPs; AppWindow.Resize takes physical pixels.
+        // Non-client height (titlebar + frame) is derived empirically — TitleBar.Height returns
+        // 0 as an int (not null) so a null-coalescing fallback would silently miss it.
+        bool sized = false;
+        RootGrid.Loaded += (s, e) =>
+        {
+            if (sized) return;
+            sized = true;
+            double scale = RootGrid.XamlRoot?.RasterizationScale ?? 1.0;
+            int nonClientH = appWindow.Size.Height - (int)Math.Round(RootGrid.ActualHeight * scale);
+            RootGrid.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+            var desired = RootGrid.DesiredSize;
+            appWindow.Resize(new Windows.Graphics.SizeInt32(
+                (int)Math.Ceiling(desired.Width * scale),
+                (int)Math.Ceiling(desired.Height * scale) + nonClientH));
+        };
     }
 
     private void BuildUI()
@@ -76,7 +88,7 @@ public sealed partial class MatrixMixerWindow : Window
         // Columns: label (col 0) + one per output
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(96) });
         for (int o = 0; o < outputCount; o++)
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto, MinWidth = 140 });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto, MinWidth = 95 });
 
         // Rows: 0=headers, 1=routing bar, 2=input L, 3=divider, 4=input R, 5=output bar,
         //       6=enable, 7=gain, 8=delay, 9=mute
@@ -111,7 +123,7 @@ public sealed partial class MatrixMixerWindow : Window
                 Text = ch.Name,
                 FontSize = 13,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(230, 255, 255, 255)),
+                Foreground = (SolidColorBrush)Application.Current.Resources["TextFillColorSecondaryBrush"],
                 HorizontalAlignment = HorizontalAlignment.Center
             });
 
@@ -165,6 +177,7 @@ public sealed partial class MatrixMixerWindow : Window
         AddOutputDataRow(grid, 6, "ENABLE", outputCount, isLast: false,
             makeCell: o =>
             {
+                _outputEnabled[o] = false;
                 var btn = new Button
                 {
                     Content = new FontIcon { Glyph = "\uE7E8", FontSize = 15,
@@ -174,6 +187,18 @@ public sealed partial class MatrixMixerWindow : Window
                     Padding = new Thickness(8, 4, 8, 4),
                     HorizontalAlignment = HorizontalAlignment.Center,
                     Tag = o
+                };
+                btn.Click += (s, e) =>
+                {
+                    bool nowEnabled = !_outputEnabled[o];
+                    _outputEnabled[o] = nowEnabled;
+                    if (btn.Content is FontIcon icon)
+                        icon.Foreground = nowEnabled
+                            ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 74, 143, 227))
+                            : new SolidColorBrush(Windows.UI.Color.FromArgb(120, 200, 200, 220));
+                    btn.Background = nowEnabled
+                        ? new SolidColorBrush(Windows.UI.Color.FromArgb(40, 74, 143, 227))
+                        : new SolidColorBrush(Colors.Transparent);
                 };
                 _outputEnableButtons[o] = btn;
                 return btn;
@@ -332,7 +357,8 @@ public sealed partial class MatrixMixerWindow : Window
         _routeGainTexts[(input, output)] = gainText;
         panel.Children.Add(gainText);
 
-        // Connection circle
+        // Connection circle — clickable toggle
+        _routeConnected[(input, output)] = false;
         var circle = new Border
         {
             Width = 22,
@@ -343,6 +369,13 @@ public sealed partial class MatrixMixerWindow : Window
             Background = new SolidColorBrush(Colors.Transparent),
             HorizontalAlignment = HorizontalAlignment.Center,
             Tag = (input, output, inputColor)
+        };
+        circle.Tapped += (s, e) =>
+        {
+            var key = (input, output);
+            bool nowConnected = !_routeConnected[key];
+            _routeConnected[key] = nowConnected;
+            SetRouteConnected(input, output, nowConnected);
         };
         _routeCircles[(input, output)] = circle;
         panel.Children.Add(circle);
@@ -431,11 +464,12 @@ public sealed partial class MatrixMixerWindow : Window
         if (connected)
         {
             circle.Background = new SolidColorBrush(inputColor);
-            circle.BorderBrush = new SolidColorBrush(inputColor);
+            circle.BorderThickness = new Thickness(0);
         }
         else
         {
             circle.Background = new SolidColorBrush(Colors.Transparent);
+            circle.BorderThickness = new Thickness(2);
             circle.BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(90, 160, 160, 170));
         }
     }

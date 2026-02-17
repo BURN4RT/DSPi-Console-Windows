@@ -6,10 +6,11 @@ namespace DSPiConsole.Core.Models;
 public class SystemStatus
 {
     /// <summary>
-    /// Peak levels for all 5 channels (0.0 to 1.0)
-    /// Index: 0=MasterL, 1=MasterR, 2=OutL, 3=OutR, 4=Sub
+    /// Peak levels for all 11 channels (0.0 to 1.0)
+    /// Index: 0=MasterL, 1=MasterR, 2=SPDIF1L, 3=SPDIF1R, 4=SPDIF2L, 5=SPDIF2R,
+    ///        6=SPDIF3L, 7=SPDIF3R, 8=SPDIF4L, 9=SPDIF4R, 10=PDM
     /// </summary>
-    public float[] Peaks { get; set; } = new float[5];
+    public float[] Peaks { get; set; } = new float[11];
 
     /// <summary>
     /// CPU load percentage for Core 0 (0-100)
