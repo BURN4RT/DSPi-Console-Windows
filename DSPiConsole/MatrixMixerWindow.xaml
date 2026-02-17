@@ -4,5 +4,34 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Matrix Mixer">
 
-    <Grid x:Name="RootGrid" Background="#FF222222" />
+    <Grid x:Name="RootGrid" Background="#FF222222">
+        <Grid.Resources>
+            <Style x:Key="InlineTextBoxStyle" TargetType="TextBox">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="TextBox">
+                            <ScrollViewer x:Name="ContentElement"
+                                          Background="Transparent"
+                                          BorderThickness="0"
+                                          Padding="{TemplateBinding Padding}"
+                                          Margin="0"
+                                          VerticalAlignment="Center"
+                                          HorizontalScrollBarVisibility="Hidden"
+                                          VerticalScrollBarVisibility="Hidden"
+                                          IsTabStop="False" />
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="MinHeight" Value="0" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="TextAlignment" Value="Center" />
+            </Style>
+        </Grid.Resources>
+
+        <Border x:Name="FocusSink" IsTabStop="True" Background="Transparent"
+                Width="0" Height="0" Opacity="0" />
+    </Grid>
 </Window>

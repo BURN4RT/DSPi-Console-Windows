@@ -28,6 +28,30 @@
                 <converters:ChannelToBrushConverter x:Key="ChannelToBrush" />
                 <converters:FloatFormatConverter x:Key="FloatFormat" />
 
+                <!-- Inline channel name textbox style - for in-place renaming -->
+                <Style x:Key="ChannelNameTextBoxStyle" TargetType="TextBox">
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="TextBox">
+                                <ScrollViewer x:Name="ContentElement"
+                                              Background="Transparent"
+                                              BorderThickness="0"
+                                              Padding="{TemplateBinding Padding}"
+                                              Margin="0"
+                                              VerticalAlignment="Center"
+                                              HorizontalScrollBarVisibility="Hidden"
+                                              VerticalScrollBarVisibility="Hidden"
+                                              IsTabStop="False" />
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="BorderThickness" Value="0" />
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="MinHeight" Value="0" />
+                    <Setter Property="VerticalAlignment" Value="Center" />
+                </Style>
+
                 <!-- Inline value textbox style - no visual feedback -->
                 <Style x:Key="InlineValueTextBoxStyle" TargetType="TextBox">
                     <Setter Property="Template">

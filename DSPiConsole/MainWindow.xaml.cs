@@ -42,6 +42,7 @@ public sealed partial class MainWindow : Window
     // Simple channel selection: 0 = dashboard, 1-5 = channel index
     private int _selectedChannelIndex = 0;
     private readonly List<ListViewItem> _channelListItems = new();
+    private readonly Dictionary<int, TextBlock> _channelNameTexts = new();
 
     // Acrylic backdrop
     private DesktopAcrylicController? _acrylicController;
@@ -91,6 +92,12 @@ public sealed partial class MainWindow : Window
         {
             UpdateLegend();
             BodePlot.Invalidate();
+        };
+
+        ViewModel.ChannelNameChanged += channelId =>
+        {
+            if (_channelNameTexts.TryGetValue(channelId, out var tb))
+                tb.Text = ViewModel.GetChannelName(Channel.FromId((ChannelId)channelId));
         };
 
         // Right-click preamp slider to reset to 0 dB
@@ -186,12 +193,55 @@ public sealed partial class MainWindow : Window
 
         var nameText = new TextBlock
         {
-            Text = channel.Name,
+            Text = ViewModel.GetChannelName(channel),
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = (SolidColorBrush)Application.Current.Resources["TextFillColorSecondaryBrush"]
         };
-        Grid.SetColumn(nameText, 0);
-        grid.Children.Add(nameText);
+        var nameBox = new TextBox
+        {
+            Text = ViewModel.GetChannelName(channel),
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            Style = (Style)RootGrid.Resources["ChannelNameTextBoxStyle"]
+        };
+        var nameContainer = new Grid();
+        nameContainer.Children.Add(nameText);
+        nameContainer.Children.Add(nameBox);
+        _channelNameTexts[(int)channel.Id] = nameText;
+        Grid.SetColumn(nameContainer, 0);
+        grid.Children.Add(nameContainer);
+
+        void CommitSidebarName()
+        {
+            if (nameBox.Visibility != Visibility.Visible) return;
+            nameBox.Visibility = Visibility.Collapsed;
+            nameText.Visibility = Visibility.Visible;
+            var name = nameBox.Text.Trim();
+            if (!string.IsNullOrEmpty(name)) ViewModel.SetChannelName(channel, name);
+            FocusSink.Focus(FocusState.Programmatic);
+        }
+
+        item.RightTapped += (s, e) =>
+        {
+            e.Handled = true;
+            nameText.Visibility = Visibility.Collapsed;
+            nameBox.Text = ViewModel.GetChannelName(channel);
+            nameBox.Visibility = Visibility.Visible;
+            nameBox.Focus(FocusState.Pointer);
+            nameBox.SelectAll();
+        };
+        nameBox.KeyDown += (s, e) =>
+        {
+            if (e.Key == Windows.System.VirtualKey.Enter) { e.Handled = true; CommitSidebarName(); }
+            else if (e.Key == Windows.System.VirtualKey.Escape)
+            {
+                nameBox.Visibility = Visibility.Collapsed;
+                nameText.Visibility = Visibility.Visible;
+                FocusSink.Focus(FocusState.Programmatic);
+            }
+        };
+        nameBox.LostFocus += (s, e) => CommitSidebarName();
 
         // Modern pill-shaped badge with glow indicator
         var badge = new Border

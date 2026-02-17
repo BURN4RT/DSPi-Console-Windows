@@ -84,7 +84,22 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public DspDevice Device => _device;
 
+    // Channel name overrides: Dictionary<ChannelId, string>
+    private readonly Dictionary<int, string> _channelNames = new();
+
+    public string GetChannelName(Channel channel) =>
+        _channelNames.TryGetValue((int)channel.Id, out var n) ? n : channel.Name;
+
+    public void SetChannelName(Channel channel, string name)
+    {
+        name = name.Trim();
+        if (string.IsNullOrEmpty(name) || name == GetChannelName(channel)) return;
+        _channelNames[(int)channel.Id] = name;
+        ChannelNameChanged?.Invoke((int)channel.Id);
+    }
+
     // Event for notifying UI when graph needs redraw
+    public event Action<int>? ChannelNameChanged;
     public event EventHandler? FiltersChanged;
     public event EventHandler? VisibilityChanged;
 

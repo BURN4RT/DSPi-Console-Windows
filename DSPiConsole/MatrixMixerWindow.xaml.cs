@@ -22,6 +22,9 @@ public sealed partial class MatrixMixerWindow : Window
     private readonly Dictionary<(int, int), bool> _routeConnected = new();
     private readonly Dictionary<(int, int), bool> _routeInverted = new();
 
+    // Column header name TextBoxes: key = outputIndex
+    private readonly Dictionary<int, TextBox> _headerNameTexts = new();
+
     // Output controls: key = outputIndex
     private readonly Dictionary<int, Button> _outputEnableButtons = new();
     private readonly Dictionary<int, bool> _outputEnabled = new();
@@ -60,6 +63,19 @@ public sealed partial class MatrixMixerWindow : Window
         }
 
         BuildUI();
+
+        _viewModel.ChannelNameChanged += channelId =>
+        {
+            for (int o = 0; o < Channel.Outputs.Count; o++)
+            {
+                if ((int)Channel.Outputs[o].Id == channelId && _headerNameTexts.TryGetValue(o, out var tb))
+                {
+                    if (tb.FocusState == FocusState.Unfocused)
+                        tb.Text = _viewModel.GetChannelName(Channel.Outputs[o]);
+                    break;
+                }
+            }
+        };
 
         // Size window to content after first layout: fonts are measured and DPI scale is known.
         // DesiredSize is in DIPs; AppWindow.Resize takes physical pixels.
@@ -121,14 +137,37 @@ public sealed partial class MatrixMixerWindow : Window
                 Padding = new Thickness(0, 16, 0, 16)
             };
 
-            panel.Children.Add(new TextBlock
+            var headerName = new TextBox
             {
-                Text = ch.Name,
+                Text = _viewModel.GetChannelName(ch),
                 FontSize = 13,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 Foreground = (SolidColorBrush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-                HorizontalAlignment = HorizontalAlignment.Center
-            });
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Style = (Style)RootGrid.Resources["InlineTextBoxStyle"]
+            };
+            _headerNameTexts[o] = headerName;
+            headerName.KeyDown += (s, e) =>
+            {
+                if (e.Key == Windows.System.VirtualKey.Enter)
+                {
+                    e.Handled = true;
+                    var name = headerName.Text.Trim();
+                    if (!string.IsNullOrEmpty(name)) _viewModel.SetChannelName(ch, name);
+                    FocusSink.Focus(FocusState.Programmatic);
+                }
+                else if (e.Key == Windows.System.VirtualKey.Escape)
+                {
+                    headerName.Text = _viewModel.GetChannelName(ch);
+                    FocusSink.Focus(FocusState.Programmatic);
+                }
+            };
+            headerName.LostFocus += (s, e) =>
+            {
+                var name = headerName.Text.Trim();
+                if (!string.IsNullOrEmpty(name)) _viewModel.SetChannelName(ch, name);
+            };
+            panel.Children.Add(headerName);
 
             panel.Children.Add(new Border
             {
