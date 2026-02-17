@@ -28,6 +28,7 @@ public sealed partial class MatrixMixerWindow : Window
     private readonly Dictionary<int, TextBlock> _outputGainTexts = new();
     private readonly Dictionary<int, TextBlock> _outputDelayTexts = new();
     private readonly Dictionary<int, Button> _outputMuteButtons = new();
+    private readonly Dictionary<int, bool> _outputMuted = new();
 
     // Shared cell border brush (reused across all cells)
     private static readonly SolidColorBrush CellBorderBrush =
@@ -241,15 +242,28 @@ public sealed partial class MatrixMixerWindow : Window
         AddOutputDataRow(grid, 9, "MUTE", outputCount, isLast: true,
             makeCell: o =>
             {
+                _outputMuted[o] = false;
                 var btn = new Button
                 {
-                    Content = new FontIcon { Glyph = "\uE74F", FontSize = 15,
+                    Content = new FontIcon { Glyph = "\uE767", FontSize = 15,
                         Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(120, 200, 200, 220)) },
                     Background = new SolidColorBrush(Colors.Transparent),
                     BorderThickness = new Thickness(0),
                     Padding = new Thickness(8, 4, 8, 4),
                     HorizontalAlignment = HorizontalAlignment.Center,
                     Tag = o
+                };
+                btn.Click += (s, e) =>
+                {
+                    bool nowMuted = !_outputMuted[o];
+                    _outputMuted[o] = nowMuted;
+                    if (btn.Content is FontIcon icon)
+                    {
+                        icon.Glyph = nowMuted ? "\uE74F" : "\uE767";
+                        icon.Foreground = nowMuted
+                            ? new SolidColorBrush(Windows.UI.Color.FromArgb(200, 210, 70, 70))
+                            : new SolidColorBrush(Windows.UI.Color.FromArgb(120, 200, 200, 220));
+                    }
                 };
                 _outputMuteButtons[o] = btn;
                 return btn;
