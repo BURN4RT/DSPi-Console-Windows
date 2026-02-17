@@ -5,6 +5,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Windows.UI;
 using WinRT.Interop;
 
@@ -17,8 +18,9 @@ public sealed partial class MatrixMixerWindow : Window
     // Route UI controls: key = (inputIndex, outputIndex)
     private readonly Dictionary<(int, int), Border> _routeCircles = new();
     private readonly Dictionary<(int, int), TextBlock> _routeGainTexts = new();
-    private readonly Dictionary<(int, int), Button> _routeInvButtons = new();
+    private readonly Dictionary<(int, int), TextBlock> _routeInvButtons = new();
     private readonly Dictionary<(int, int), bool> _routeConnected = new();
+    private readonly Dictionary<(int, int), bool> _routeInverted = new();
 
     // Output controls: key = outputIndex
     private readonly Dictionary<int, Button> _outputEnableButtons = new();
@@ -45,13 +47,13 @@ public sealed partial class MatrixMixerWindow : Window
         if (appWindow.TitleBar is { } titleBar)
         {
             titleBar.ForegroundColor = Windows.UI.Color.FromArgb(255, 220, 220, 220);
-            titleBar.BackgroundColor = Windows.UI.Color.FromArgb(255, 22, 22, 22);
+            titleBar.BackgroundColor = Windows.UI.Color.FromArgb(255, 32, 32, 32);
             titleBar.InactiveForegroundColor = Windows.UI.Color.FromArgb(255, 130, 130, 130);
-            titleBar.InactiveBackgroundColor = Windows.UI.Color.FromArgb(255, 22, 22, 22);
+            titleBar.InactiveBackgroundColor = Windows.UI.Color.FromArgb(255, 32, 32, 32);
             titleBar.ButtonForegroundColor = Windows.UI.Color.FromArgb(255, 210, 210, 210);
-            titleBar.ButtonBackgroundColor = Windows.UI.Color.FromArgb(255, 22, 22, 22);
+            titleBar.ButtonBackgroundColor = Windows.UI.Color.FromArgb(255, 32, 32, 32);
             titleBar.ButtonInactiveForegroundColor = Windows.UI.Color.FromArgb(255, 120, 120, 120);
-            titleBar.ButtonInactiveBackgroundColor = Windows.UI.Color.FromArgb(255, 22, 22, 22);
+            titleBar.ButtonInactiveBackgroundColor = Windows.UI.Color.FromArgb(255, 32, 32, 32);
             titleBar.ButtonHoverForegroundColor = Windows.UI.Color.FromArgb(255, 255, 255, 255);
             titleBar.ButtonHoverBackgroundColor = Windows.UI.Color.FromArgb(255, 48, 48, 48);
         }
@@ -98,7 +100,7 @@ public sealed partial class MatrixMixerWindow : Window
         // ── Row 0: Header background ──
         var headerBg = new Border
         {
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 20, 20, 20)),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 30, 30, 30)),
             BorderBrush = CellBorderBrush,
             BorderThickness = new Thickness(0, 0, 0, 1),
             IsHitTestVisible = false
@@ -256,7 +258,7 @@ public sealed partial class MatrixMixerWindow : Window
         // ── Card wrapper ─────────────────────────────────────────────
         var card = new Border
         {
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 22, 22, 22)),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 32, 32, 32)),
             BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(55, 255, 255, 255)),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
@@ -380,28 +382,54 @@ public sealed partial class MatrixMixerWindow : Window
         _routeCircles[(input, output)] = circle;
         panel.Children.Add(circle);
 
-        // INV button (below circle)
-        var invBtn = new Button
+        // INV text (below circle) — dims when off, illuminates when on, fades on hover
+        _routeInverted[(input, output)] = false;
+        var invColor = Color.FromArgb(60, 200, 200, 220);
+        var invBrush = new SolidColorBrush(invColor);
+        var invText = new TextBlock
         {
-            Content = new TextBlock
-            {
-                Text = "INV",
-                FontSize = 9,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(130, 200, 200, 220))
-            },
-            Padding = new Thickness(8, 2, 8, 2),
-            MinWidth = 0,
-            MinHeight = 0,
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(40, 255, 255, 255)),
-            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(50, 255, 255, 255)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Tag = (input, output)
+            Text = "INV",
+            FontSize = 9,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = invBrush,
+            HorizontalAlignment = HorizontalAlignment.Center
         };
-        _routeInvButtons[(input, output)] = invBtn;
-        panel.Children.Add(invBtn);
+
+        void AnimateInvColor(Color to, int ms)
+        {
+            var anim = new ColorAnimation
+            {
+                To = to,
+                Duration = new Duration(TimeSpan.FromMilliseconds(ms)),
+                EnableDependentAnimation = true
+            };
+            var sb = new Storyboard();
+            Storyboard.SetTarget(anim, invBrush);
+            Storyboard.SetTargetProperty(anim, "Color");
+            sb.Children.Add(anim);
+            sb.Begin();
+        }
+
+        invText.Tapped += (s, e) =>
+        {
+            bool nowInverted = !_routeInverted[(input, output)];
+            _routeInverted[(input, output)] = nowInverted;
+            AnimateInvColor(
+                nowInverted ? Color.FromArgb(175, 255, 255, 255) : Color.FromArgb(60, 200, 200, 220),
+                120);
+        };
+        invText.PointerEntered += (s, e) =>
+        {
+            if (!_routeInverted[(input, output)])
+                AnimateInvColor(Color.FromArgb(130, 210, 210, 225), 150);
+        };
+        invText.PointerExited += (s, e) =>
+        {
+            if (!_routeInverted[(input, output)])
+                AnimateInvColor(Color.FromArgb(60, 200, 200, 220), 200);
+        };
+        _routeInvButtons[(input, output)] = invText;
+        panel.Children.Add(invText);
 
         return panel;
     }
@@ -437,7 +465,7 @@ public sealed partial class MatrixMixerWindow : Window
 
         var bar = new Border
         {
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 28, 28, 28)),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 36, 36, 36)),
             BorderBrush = CellBorderBrush,
             BorderThickness = new Thickness(0, 1, 0, 1),
             Padding = new Thickness(14, 8, 14, 8),

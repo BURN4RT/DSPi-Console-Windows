@@ -4,5 +4,5 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Matrix Mixer">
 
-    <Grid x:Name="RootGrid" Background="#FF1A1A1A" />
+    <Grid x:Name="RootGrid" Background="#FF222222" />
 </Window>
