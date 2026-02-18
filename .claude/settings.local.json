@@ -5,7 +5,11 @@
       "Bash(dotnet build:*)",
       "Bash(findstr:*)",
       "Bash(ls:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(cmd.exe /c \"dir /b C:\\\\Users\\\\\"Weeb Labs\")",
+      "Bash(powershell.exe -Command \"Get-ChildItem ''C:\\\\Users\\\\Weeb Labs'' -Directory | Where-Object { $_.Name -like ''*DSPi*'' } | Select-Object -ExpandProperty FullName\")",
+      "Bash(powershell.exe -NoProfile -Command 'Get-ChildItem \"\"C:\\\\Users\\\\Weeb Labs\"\" -Directory | Where-Object { $_.Name -like \"\"*DSPi*\"\" } | Select-Object -ExpandProperty FullName')",
+      "Bash(echo:*)"
     ]
   }
 }
