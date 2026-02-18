@@ -107,10 +107,11 @@ public sealed partial class MatrixMixerWindow : Window
         // ── Inner table grid ─────────────────────────────────────────
         var grid = new Grid();
 
-        // Columns: label (col 0) + one per output
+        // Columns: label (col 0) + one per output + flexible spacer
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(96) });
         for (int o = 0; o < outputCount; o++)
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto, MinWidth = 95 });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         // Rows: 0=headers, 1=routing bar, 2=input L, 3=divider, 4=input R, 5=output bar,
         //       6=enable, 7=gain, 8=delay, 9=mute
@@ -125,7 +126,7 @@ public sealed partial class MatrixMixerWindow : Window
             BorderThickness = new Thickness(0, 0, 0, 1),
             IsHitTestVisible = false
         };
-        Grid.SetColumnSpan(headerBg, outputCount + 1);
+        Grid.SetColumnSpan(headerBg, outputCount + 2);
         grid.Children.Add(headerBg);
 
         // ── Row 0: Output column headers ──
@@ -208,7 +209,7 @@ public sealed partial class MatrixMixerWindow : Window
             Background = new SolidColorBrush(Windows.UI.Color.FromArgb(22, 255, 255, 255)),
             IsHitTestVisible = false
         };
-        Grid.SetColumnSpan(inputDivider, outputCount + 1);
+        Grid.SetColumnSpan(inputDivider, outputCount + 2);
         Grid.SetRow(inputDivider, 3);
         grid.Children.Add(inputDivider);
 
@@ -335,7 +336,7 @@ public sealed partial class MatrixMixerWindow : Window
         RootGrid.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
         var desired = RootGrid.DesiredSize;
         appWindow?.Resize(new Windows.Graphics.SizeInt32(
-            (int)Math.Ceiling(desired.Width * scale),
+            (int)Math.Ceiling((desired.Width + 40) * scale),
             (int)Math.Ceiling(desired.Height * scale) + _nonClientH));
     }
 
@@ -562,7 +563,7 @@ public sealed partial class MatrixMixerWindow : Window
             Child = content
         };
 
-        Grid.SetColumnSpan(bar, outputCount + 1);
+        Grid.SetColumnSpan(bar, outputCount + 2);
         Grid.SetRow(bar, row);
         grid.Children.Add(bar);
     }
