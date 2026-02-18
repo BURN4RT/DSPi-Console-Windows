@@ -10,8 +10,12 @@ namespace DSPiConsole;
 
 public sealed partial class SettingsDialog : ContentDialog
 {
-    public SettingsDialog()
+    private readonly string _platform;
+
+    public SettingsDialog(string platform)
     {
+        _platform = platform;
+
         InitializeComponent();
 
         var settings = AppSettings.Instance;
@@ -81,8 +85,7 @@ public sealed partial class SettingsDialog : ContentDialog
 
     private void BuildPinAssignmentTable()
     {
-        // TODO: use actual connected platform; for now default to RP2350 to show full table
-        var outputs = PinOutputsRp2350;
+        var outputs = _platform == "RP2350" ? PinOutputsRp2350 : PinOutputsRp2040;
 
         // Header row: "Pin Assignment" label + "Reset to Defaults" button
         var header = new Grid();
