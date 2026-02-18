@@ -391,28 +391,29 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public void SetDelay(int channel, float ms)
     {
         _channelDelays[channel] = ms;
-        _device.SetDelay(channel, ms);
-        OnPropertyChanged(nameof(ChannelDelays));
         int outputIndex = GetOutputIndex(channel);
+        if (outputIndex >= 0)
+            _device.SetOutputDelay(outputIndex, ms);
+        OnPropertyChanged(nameof(ChannelDelays));
         if (outputIndex >= 0)
             MatrixOutputDelayChanged?.Invoke(outputIndex);
     }
 
     private void FetchDelay(int channel)
     {
-        var delay = _device.GetDelay(channel);
+        int outputIndex = GetOutputIndex(channel);
+        if (outputIndex < 0) return;
+        var delay = _device.GetOutputDelay(outputIndex);
         if (delay.HasValue)
         {
             var current = _channelDelays.TryGetValue(channel, out var d) ? d : 0;
             if (Math.Abs(current - delay.Value) > 0.01f)
             {
-                int outputIndex = GetOutputIndex(channel);
                 _dispatcher.TryEnqueue(() =>
                 {
                     _channelDelays[channel] = delay.Value;
                     OnPropertyChanged(nameof(ChannelDelays));
-                    if (outputIndex >= 0)
-                        MatrixOutputDelayChanged?.Invoke(outputIndex);
+                    MatrixOutputDelayChanged?.Invoke(outputIndex);
                 });
             }
         }
@@ -431,7 +432,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _channelGains[channelId] = db;
         int outputIndex = GetOutputIndex(channelId);
         if (outputIndex < 0) return;
-        _device.SetChannelGain(outputIndex, db);
+        _device.SetOutputGain(outputIndex, db);
         OnPropertyChanged(nameof(ChannelGains));
         MatrixOutputGainChanged?.Invoke(outputIndex);
     }
@@ -440,7 +441,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         int outputIndex = GetOutputIndex(channelId);
         if (outputIndex < 0) return;
-        var gain = _device.GetChannelGain(outputIndex);
+        var gain = _device.GetOutputGain(outputIndex);
         if (gain.HasValue)
         {
             var current = _channelGains.TryGetValue(channelId, out var g) ? g : 0;
@@ -461,7 +462,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _channelMutes[channelId] = muted;
         int outputIndex = GetOutputIndex(channelId);
         if (outputIndex < 0) return;
-        _device.SetChannelMute(outputIndex, muted);
+        _device.SetOutputMute(outputIndex, muted);
         OnPropertyChanged(nameof(ChannelMutes));
     }
 
@@ -469,7 +470,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         int outputIndex = GetOutputIndex(channelId);
         if (outputIndex < 0) return;
-        var muted = _device.GetChannelMute(outputIndex);
+        var muted = _device.GetOutputMute(outputIndex);
         if (muted.HasValue)
         {
             var current = _channelMutes.TryGetValue(channelId, out var m) && m;

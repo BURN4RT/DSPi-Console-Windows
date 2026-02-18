@@ -25,7 +25,7 @@ public sealed partial class MatrixMixerWindow : Window
 
     // Route UI controls: key = (inputIndex, outputIndex)
     private readonly Dictionary<(int, int), Border> _routeCircles = new();
-    private readonly Dictionary<(int, int), TextBlock> _routeGainTexts = new();
+    private readonly Dictionary<(int, int), TextBox> _routeGainTexts = new();
     private readonly Dictionary<(int, int), TextBlock> _routeInvButtons = new();
     private readonly Dictionary<(int, int), bool> _routeConnected = new();
     private readonly Dictionary<(int, int), bool> _routeInverted = new();
@@ -492,14 +492,16 @@ public sealed partial class MatrixMixerWindow : Window
         float initGain = _viewModel.GetMatrixGain(input, output);
         bool initInverted = _viewModel.GetMatrixInvert(input, output);
 
-        // Gain text (above circle) — scroll to adjust per-route gain
-        var gainText = new TextBlock
+        // Gain text (above circle) — type, scroll, or right-click to reset
+        var gainText = new TextBox
         {
             Text = FormatGain(initGain),
             FontSize = 11,
             FontFamily = new FontFamily("Cascadia Code, Consolas"),
             Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(140, 255, 255, 255)),
-            HorizontalAlignment = HorizontalAlignment.Center
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Style = (Style)RootGrid.Resources["InlineTextBoxStyle"],
+            Width = 60
         };
         gainText.PointerWheelChanged += (s, e) =>
         {
@@ -511,6 +513,47 @@ public sealed partial class MatrixMixerWindow : Window
             bool enabled = _viewModel.GetMatrixRouting(input, output);
             bool inv = _viewModel.GetMatrixInvert(input, output);
             _viewModel.SetMatrixRoute(input, output, enabled, newGain, inv);
+        };
+        gainText.KeyDown += (s, e) =>
+        {
+            if (e.Key == Windows.System.VirtualKey.Enter)
+            {
+                e.Handled = true;
+                if (ParseGainText(gainText.Text, out float val))
+                {
+                    val = Math.Clamp(val, -60f, 12f);
+                    bool enabled = _viewModel.GetMatrixRouting(input, output);
+                    bool inv = _viewModel.GetMatrixInvert(input, output);
+                    _viewModel.SetMatrixRoute(input, output, enabled, val, inv);
+                }
+                FocusSink.Focus(FocusState.Programmatic);
+            }
+            else if (e.Key == Windows.System.VirtualKey.Escape)
+            {
+                gainText.Text = FormatGain(_viewModel.GetMatrixGain(input, output));
+                FocusSink.Focus(FocusState.Programmatic);
+            }
+        };
+        gainText.LostFocus += (s, e) =>
+        {
+            if (ParseGainText(gainText.Text, out float val))
+            {
+                val = Math.Clamp(val, -60f, 12f);
+                bool enabled = _viewModel.GetMatrixRouting(input, output);
+                bool inv = _viewModel.GetMatrixInvert(input, output);
+                _viewModel.SetMatrixRoute(input, output, enabled, val, inv);
+            }
+            else
+            {
+                gainText.Text = FormatGain(_viewModel.GetMatrixGain(input, output));
+            }
+        };
+        gainText.RightTapped += (s, e) =>
+        {
+            e.Handled = true;
+            bool enabled = _viewModel.GetMatrixRouting(input, output);
+            bool inv = _viewModel.GetMatrixInvert(input, output);
+            _viewModel.SetMatrixRoute(input, output, enabled, 0f, inv);
         };
         _routeGainTexts[(input, output)] = gainText;
         panel.Children.Add(gainText);
@@ -670,7 +713,8 @@ public sealed partial class MatrixMixerWindow : Window
         SetRouteConnected(input, output, connected);
 
         float gain = _viewModel.GetMatrixGain(input, output);
-        if (_routeGainTexts.TryGetValue((input, output), out var gt))
+        if (_routeGainTexts.TryGetValue((input, output), out var gt) &&
+            gt.FocusState == FocusState.Unfocused)
             gt.Text = FormatGain(gain);
 
         bool inverted = _viewModel.GetMatrixInvert(input, output);
@@ -729,4 +773,11 @@ public sealed partial class MatrixMixerWindow : Window
 
     private static string FormatDelay(float ms) =>
         ms == 0f ? "0 ms" : $"{ms:0.#} ms";
+
+    private static bool ParseGainText(string text, out float value)
+    {
+        // Strip " dB" suffix and whitespace, then parse the number
+        var s = text.Replace("dB", "").Trim();
+        return float.TryParse(s, out value);
+    }
 }
