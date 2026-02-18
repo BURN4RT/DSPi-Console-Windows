@@ -43,9 +43,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private readonly bool[,] _matrixInvert = new bool[2, 9];
 
     // Per-output matrix mixer state (indexed by output position in ActiveOutputs)
-    private readonly float[] _outputGainDb = new float[9];
     private readonly bool[] _outputMuted = new bool[9];
-    private readonly float[] _outputDelayMs = new float[9];
 
     [ObservableProperty]
     private float _preampDb;
@@ -270,9 +268,19 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public bool GetMatrixRouting(int input, int output) => _matrixRouting[input, output];
     public float GetMatrixGain(int input, int output) => _matrixGain[input, output];
     public bool GetMatrixInvert(int input, int output) => _matrixInvert[input, output];
-    public float GetOutputGainDb(int output) => _outputGainDb[output];
+    public float GetOutputGainDb(int output)
+    {
+        var outputs = ActiveOutputs;
+        if (output < 0 || output >= outputs.Count) return 0f;
+        return _channelGains.TryGetValue((int)outputs[output].Id, out var g) ? g : 0f;
+    }
     public bool GetOutputMuted(int output) => _outputMuted[output];
-    public float GetOutputDelayMs(int output) => _outputDelayMs[output];
+    public float GetOutputDelayMs(int output)
+    {
+        var outputs = ActiveOutputs;
+        if (output < 0 || output >= outputs.Count) return 0f;
+        return _channelDelays.TryGetValue((int)outputs[output].Id, out var d) ? d : 0f;
+    }
 
     public void SetMatrixRoute(int input, int output, bool enabled, float gain, bool invert)
     {
@@ -285,9 +293,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public void SetOutputGainDb(int output, float db)
     {
-        _outputGainDb[output] = db;
-        _device.SetOutputGain(output, db);
-        MatrixOutputGainChanged?.Invoke(output);
+        var outputs = ActiveOutputs;
+        if (output < 0 || output >= outputs.Count) return;
+        int channelId = (int)outputs[output].Id;
+        SetChannelGain(channelId, db);
     }
 
     public void SetOutputMuted(int output, bool muted)
@@ -299,9 +308,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public void SetOutputDelayMs(int output, float ms)
     {
-        _outputDelayMs[output] = ms;
-        _device.SetOutputDelay(output, ms);
-        MatrixOutputDelayChanged?.Invoke(output);
+        var outputs = ActiveOutputs;
+        if (output < 0 || output >= outputs.Count) return;
+        int channelId = (int)outputs[output].Id;
+        SetDelay(channelId, ms);
     }
 
     public void SetOutputEnableUsb(int output, bool enabled)
@@ -340,9 +350,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         for (int o = 0; o < outputCount; o++)
         {
             FetchOutputEnable(o);
-            FetchOutputGainDb(o);
             FetchOutputMuteState(o);
-            FetchOutputDelayMs(o);
         }
 
         // Dispatch FiltersChanged to run after all filter updates are processed
@@ -385,6 +393,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _channelDelays[channel] = ms;
         _device.SetDelay(channel, ms);
         OnPropertyChanged(nameof(ChannelDelays));
+        int outputIndex = GetOutputIndex(channel);
+        if (outputIndex >= 0)
+            MatrixOutputDelayChanged?.Invoke(outputIndex);
     }
 
     private void FetchDelay(int channel)
@@ -395,10 +406,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var current = _channelDelays.TryGetValue(channel, out var d) ? d : 0;
             if (Math.Abs(current - delay.Value) > 0.01f)
             {
+                int outputIndex = GetOutputIndex(channel);
                 _dispatcher.TryEnqueue(() =>
                 {
                     _channelDelays[channel] = delay.Value;
                     OnPropertyChanged(nameof(ChannelDelays));
+                    if (outputIndex >= 0)
+                        MatrixOutputDelayChanged?.Invoke(outputIndex);
                 });
             }
         }
@@ -419,6 +433,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (outputIndex < 0) return;
         _device.SetChannelGain(outputIndex, db);
         OnPropertyChanged(nameof(ChannelGains));
+        MatrixOutputGainChanged?.Invoke(outputIndex);
     }
 
     private void FetchChannelGain(int channelId)
@@ -435,6 +450,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 {
                     _channelGains[channelId] = gain.Value;
                     OnPropertyChanged(nameof(ChannelGains));
+                    MatrixOutputGainChanged?.Invoke(outputIndex);
                 });
             }
         }
@@ -530,14 +546,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (enabled.HasValue)
         {
             _outputEnabled[output] = enabled.Value;
+            _dispatcher.TryEnqueue(() => OutputEnabledChanged?.Invoke(output, enabled.Value));
         }
-    }
-
-    private void FetchOutputGainDb(int output)
-    {
-        var gain = _device.GetOutputGain(output);
-        if (gain.HasValue)
-            _outputGainDb[output] = gain.Value;
     }
 
     private void FetchOutputMuteState(int output)
@@ -545,13 +555,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var muted = _device.GetOutputMute(output);
         if (muted.HasValue)
             _outputMuted[output] = muted.Value;
-    }
-
-    private void FetchOutputDelayMs(int output)
-    {
-        var delay = _device.GetOutputDelay(output);
-        if (delay.HasValue)
-            _outputDelayMs[output] = delay.Value;
     }
 
     partial void OnLoudnessEnabledChanged(bool value)

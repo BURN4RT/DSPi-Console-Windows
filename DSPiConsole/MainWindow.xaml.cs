@@ -110,6 +110,12 @@ public sealed partial class MainWindow : Window
         ViewModel.OutputEnabledChanged += (outputIndex, enabled) =>
             DispatcherQueue.TryEnqueue(() => { OnOutputEnabledChanged(outputIndex, enabled); InitializeLegend(); });
 
+        ViewModel.MatrixOutputGainChanged += outputIndex =>
+            DispatcherQueue.TryEnqueue(() => SyncGainFromViewModel(outputIndex));
+
+        ViewModel.MatrixOutputDelayChanged += outputIndex =>
+            DispatcherQueue.TryEnqueue(() => SyncDelayFromViewModel(outputIndex));
+
         // Right-click preamp slider to reset to 0 dB
         PreampSlider.RightTapped += (s, e) => { e.Handled = true; ViewModel.PreampDb = 0; };
 
@@ -1271,6 +1277,38 @@ public sealed partial class MainWindow : Window
                 _isUpdatingGain = false;
             }
         }
+    }
+
+    private void SyncGainFromViewModel(int outputIndex)
+    {
+        if (_selectedChannel == null || !_selectedChannel.IsOutput) return;
+        var outputs = ViewModel.ActiveOutputs;
+        if (outputIndex < 0 || outputIndex >= outputs.Count) return;
+        if (_selectedChannel.Id != outputs[outputIndex].Id) return;
+
+        float gain = ViewModel.GetChannelGain(_selectedChannel);
+        _isUpdatingGain = true;
+        if (_currentGainSlider != null)
+            _currentGainSlider.Value = gain;
+        if (_currentGainTextBox != null)
+            _currentGainTextBox.Text = gain.ToString("F1");
+        _isUpdatingGain = false;
+    }
+
+    private void SyncDelayFromViewModel(int outputIndex)
+    {
+        if (_selectedChannel == null || !_selectedChannel.IsOutput) return;
+        var outputs = ViewModel.ActiveOutputs;
+        if (outputIndex < 0 || outputIndex >= outputs.Count) return;
+        if (_selectedChannel.Id != outputs[outputIndex].Id) return;
+
+        float delay = ViewModel.GetChannelDelay(_selectedChannel);
+        _isUpdatingDelay = true;
+        if (_currentDelaySlider != null)
+            _currentDelaySlider.Value = delay;
+        if (_currentDelayTextBox != null)
+            _currentDelayTextBox.Text = delay.ToString("F0");
+        _isUpdatingDelay = false;
     }
 
     private void OnMuteToggleClick(object sender, RoutedEventArgs e)
