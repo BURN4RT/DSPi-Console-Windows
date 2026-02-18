@@ -45,6 +45,8 @@ public static class VendorCommands
     public const byte GetCrossfeedFeed = 0x65;
     public const byte SetCrossfeedItd = 0x66;
     public const byte GetCrossfeedItd = 0x67;
+    public const byte GetSerial   = 0x7E;
+    public const byte GetPlatform = 0x7F;
 }
 
 /// <summary>
@@ -781,6 +783,24 @@ public partial class DspDevice : ObservableObject, IDisposable
         var response = ControlTransferIn(VendorCommands.GetStatus, wValue, 4);
         if (response == null || response.Length < 4) return null;
         return BitConverter.ToInt32(response, 0);
+    }
+
+    public string? GetDeviceSerial()
+    {
+        var response = ControlTransferIn(VendorCommands.GetSerial, 0, 16);
+        if (response == null || response.Length < 1) return null;
+        return System.Text.Encoding.ASCII.GetString(response).TrimEnd('\0');
+    }
+
+    public (string Platform, string FirmwareVersion)? GetDeviceInfo()
+    {
+        var response = ControlTransferIn(VendorCommands.GetPlatform, 0, 4);
+        if (response == null || response.Length < 3) return null;
+        var platform = response[0] == 1 ? "RP2350" : "RP2040";
+        var major = response[1];
+        var minor = response[2] >> 4;
+        var patch = response[2] & 0x0F;
+        return (platform, $"v{major}.{minor}.{patch}");
     }
 
     #endregion

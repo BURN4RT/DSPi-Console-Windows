@@ -33,6 +33,9 @@ public sealed partial class MatrixMixerWindow : Window
     private readonly Dictionary<int, Button> _outputMuteButtons = new();
     private readonly Dictionary<int, bool> _outputMuted = new();
 
+    private Border? _card;
+    private int _nonClientH;
+
     // Shared cell border brush (reused across all cells)
     private static readonly SolidColorBrush CellBorderBrush =
         new(Windows.UI.Color.FromArgb(25, 255, 255, 255));
@@ -66,16 +69,20 @@ public sealed partial class MatrixMixerWindow : Window
 
         _viewModel.ChannelNameChanged += channelId =>
         {
-            for (int o = 0; o < Channel.Outputs.Count; o++)
+            var active = _viewModel.ActiveOutputs;
+            for (int o = 0; o < active.Count; o++)
             {
-                if ((int)Channel.Outputs[o].Id == channelId && _headerNameTexts.TryGetValue(o, out var tb))
+                if ((int)active[o].Id == channelId && _headerNameTexts.TryGetValue(o, out var tb))
                 {
                     if (tb.FocusState == FocusState.Unfocused)
-                        tb.Text = _viewModel.GetChannelName(Channel.Outputs[o]);
+                        tb.Text = _viewModel.GetChannelName(active[o]);
                     break;
                 }
             }
         };
+
+        _viewModel.ActiveOutputsChanged += (s, e) =>
+            DispatcherQueue.TryEnqueue(RebuildUI);
 
         // Size window to content after first layout: fonts are measured and DPI scale is known.
         // DesiredSize is in DIPs; AppWindow.Resize takes physical pixels.
@@ -87,18 +94,14 @@ public sealed partial class MatrixMixerWindow : Window
             if (sized) return;
             sized = true;
             double scale = RootGrid.XamlRoot?.RasterizationScale ?? 1.0;
-            int nonClientH = appWindow.Size.Height - (int)Math.Round(RootGrid.ActualHeight * scale);
-            RootGrid.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
-            var desired = RootGrid.DesiredSize;
-            appWindow.Resize(new Windows.Graphics.SizeInt32(
-                (int)Math.Ceiling(desired.Width * scale),
-                (int)Math.Ceiling(desired.Height * scale) + nonClientH));
+            _nonClientH = appWindow.Size.Height - (int)Math.Round(RootGrid.ActualHeight * scale);
+            ResizeToContent();
         };
     }
 
     private void BuildUI()
     {
-        var outputs = Channel.Outputs;
+        var outputs = _viewModel.ActiveOutputs;
         int outputCount = outputs.Count;
 
         // ── Inner table grid ─────────────────────────────────────────
@@ -319,7 +322,41 @@ public sealed partial class MatrixMixerWindow : Window
             Child = grid
         };
 
+        _card = card;
         RootGrid.Children.Add(card);
+    }
+
+    private void ResizeToContent()
+    {
+        var hWnd = WindowNative.GetWindowHandle(this);
+        var windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
+        var appWindow = AppWindow.GetFromWindowId(windowId);
+        double scale = RootGrid.XamlRoot?.RasterizationScale ?? 1.0;
+        RootGrid.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        var desired = RootGrid.DesiredSize;
+        appWindow?.Resize(new Windows.Graphics.SizeInt32(
+            (int)Math.Ceiling(desired.Width * scale),
+            (int)Math.Ceiling(desired.Height * scale) + _nonClientH));
+    }
+
+    private void RebuildUI()
+    {
+        if (_card != null) RootGrid.Children.Remove(_card);
+        _routeCircles.Clear();
+        _routeGainTexts.Clear();
+        _routeInvButtons.Clear();
+        _routeConnected.Clear();
+        _routeInverted.Clear();
+        _headerNameTexts.Clear();
+        _outputEnableButtons.Clear();
+        _outputEnabled.Clear();
+        _outputGainTexts.Clear();
+        _outputDelayTexts.Clear();
+        _outputMuteButtons.Clear();
+        _outputMuted.Clear();
+        BuildUI();
+        DispatcherQueue.TryEnqueue(
+            Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, ResizeToContent);
     }
 
     // Adds an input row (routing section): colored label + route cells per output

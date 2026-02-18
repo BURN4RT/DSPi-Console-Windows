@@ -76,6 +76,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _crossfeedItd = true; // Inter-aural Time Delay
 
+    [ObservableProperty]
+    private string _platform = "";
+
+    public IReadOnlyList<Channel> ActiveOutputs => Platform switch
+    {
+        "RP2040" => Channel.Rp2040Outputs,
+        "RP2350" => Channel.Outputs,
+        _        => Array.Empty<Channel>()
+    };
+
+    public event EventHandler? ActiveOutputsChanged;
+
+    partial void OnPlatformChanged(string value) =>
+        ActiveOutputsChanged?.Invoke(this, EventArgs.Empty);
+
     public IReadOnlyDictionary<int, ObservableCollection<FilterParams>> ChannelData => _channelData;
     public IReadOnlyDictionary<int, bool> ChannelVisibility => _channelVisibility;
     public IReadOnlyDictionary<int, float> ChannelDelays => _channelDelays;
@@ -136,9 +151,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
                     IsDeviceConnected = _device.IsConnected;
                     if (_device.IsConnected)
                     {
-                        // Delay fetch slightly to ensure device is ready
-                        Task.Delay(100).ContinueWith(_ => 
-                            _dispatcher.TryEnqueue(FetchAll));
+                        Task.Run(() =>
+                        {
+                            var info = _device.GetDeviceInfo();
+                            var newPlatform = info?.Platform ?? "";
+                            _dispatcher.TryEnqueue(() => Platform = newPlatform);
+                            System.Threading.Thread.Sleep(100);
+                            _dispatcher.TryEnqueue(FetchAll);
+                        });
+                    }
+                    else
+                    {
+                        Platform = "";
                     }
                 });
             }
@@ -223,12 +247,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
             {
                 FetchFilter((int)channel.Id, band);
             }
-            if (channel.IsOutput)
-            {
-                FetchDelay((int)channel.Id);
-                FetchChannelGain((int)channel.Id);
-                FetchChannelMute((int)channel.Id);
-            }
+        }
+
+        foreach (var channel in ActiveOutputs)
+        {
+            FetchDelay((int)channel.Id);
+            FetchChannelGain((int)channel.Id);
+            FetchChannelMute((int)channel.Id);
         }
 
         FetchLoudness();
@@ -293,17 +318,27 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    private int GetOutputIndex(int channelId)
+    {
+        var outputs = ActiveOutputs;
+        for (int i = 0; i < outputs.Count; i++)
+            if ((int)outputs[i].Id == channelId) return i;
+        return -1;
+    }
+
     public void SetChannelGain(int channelId, float db)
     {
         _channelGains[channelId] = db;
-        int outputIndex = channelId - (int)ChannelId.Spdif1L;
+        int outputIndex = GetOutputIndex(channelId);
+        if (outputIndex < 0) return;
         _device.SetChannelGain(outputIndex, db);
         OnPropertyChanged(nameof(ChannelGains));
     }
 
     private void FetchChannelGain(int channelId)
     {
-        int outputIndex = channelId - (int)ChannelId.Spdif1L;
+        int outputIndex = GetOutputIndex(channelId);
+        if (outputIndex < 0) return;
         var gain = _device.GetChannelGain(outputIndex);
         if (gain.HasValue)
         {
@@ -322,14 +357,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public void SetChannelMute(int channelId, bool muted)
     {
         _channelMutes[channelId] = muted;
-        int outputIndex = channelId - (int)ChannelId.Spdif1L;
+        int outputIndex = GetOutputIndex(channelId);
+        if (outputIndex < 0) return;
         _device.SetChannelMute(outputIndex, muted);
         OnPropertyChanged(nameof(ChannelMutes));
     }
 
     private void FetchChannelMute(int channelId)
     {
-        int outputIndex = channelId - (int)ChannelId.Spdif1L;
+        int outputIndex = GetOutputIndex(channelId);
+        if (outputIndex < 0) return;
         var muted = _device.GetChannelMute(outputIndex);
         if (muted.HasValue)
         {

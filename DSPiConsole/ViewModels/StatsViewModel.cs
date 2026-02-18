@@ -10,6 +10,11 @@ public partial class StatsViewModel : ObservableObject, IDisposable
     private readonly DispatcherQueue _dispatcher;
     private readonly System.Timers.Timer _pollTimer;
     private bool _disposed;
+    private bool _deviceInfoFetched;
+
+    [ObservableProperty] private string _platform = "—";
+    [ObservableProperty] private string _firmwareVersion = "—";
+    [ObservableProperty] private string _serial = "—";
 
     [ObservableProperty] private string _clockHz = "—";
     [ObservableProperty] private string _voltageMv = "—";
@@ -36,9 +41,29 @@ public partial class StatsViewModel : ObservableObject, IDisposable
         Task.Run(PollStats);
     }
 
+    private void FetchDeviceInfo()
+    {
+        if (_disposed || !_device.IsConnected) return;
+        try
+        {
+            var info = _device.GetDeviceInfo();
+            var serial = _device.GetDeviceSerial();
+            if (info == null && serial == null) return;
+            _deviceInfoFetched = true;
+            _dispatcher.TryEnqueue(() =>
+            {
+                Platform = info?.Platform ?? "—";
+                FirmwareVersion = info?.FirmwareVersion ?? "—";
+                Serial = serial ?? "—";
+            });
+        }
+        catch { }
+    }
+
     private void PollStats()
     {
         if (_disposed || !_device.IsConnected) return;
+        if (!_deviceInfoFetched) FetchDeviceInfo();
 
         try
         {

@@ -100,6 +100,9 @@ public sealed partial class MainWindow : Window
                 tb.Text = ViewModel.GetChannelName(Channel.FromId((ChannelId)channelId));
         };
 
+        ViewModel.ActiveOutputsChanged += (s, e) =>
+            DispatcherQueue.TryEnqueue(InitializeChannelLists);
+
         // Right-click preamp slider to reset to 0 dB
         PreampSlider.RightTapped += (s, e) => { e.Handled = true; ViewModel.PreampDb = 0; };
 
@@ -169,7 +172,7 @@ public sealed partial class MainWindow : Window
         }
 
         OutputChannelsList.Items.Clear();
-        foreach (var channel in Channel.Outputs)
+        foreach (var channel in ViewModel.ActiveOutputs)
         {
             var item = CreateChannelListItem(channel, index++);
             _channelListItems.Add(item);

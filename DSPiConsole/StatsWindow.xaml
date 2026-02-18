@@ -4,10 +4,35 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Stats for nerbs">
 
-    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Padding="20">
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <Grid x:Name="RootGrid" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Padding="20">
             <StackPanel Spacing="16">
                 <TextBlock Text="Stats for nerbs" FontSize="20" FontWeight="SemiBold"/>
+
+                <!-- Device Info -->
+                <StackPanel Spacing="4">
+                    <TextBlock Text="DEVICE INFO" FontSize="11" FontWeight="SemiBold"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="0,0,0,4"/>
+                    <Grid ColumnSpacing="12" RowSpacing="6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition/><RowDefinition/><RowDefinition/>
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Text="Platform" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock x:Name="PlatformText" Grid.Column="1" FontFamily="Cascadia Code, Consolas"/>
+
+                        <TextBlock Grid.Row="1" Text="Firmware" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock x:Name="FirmwareVersionText" Grid.Row="1" Grid.Column="1" FontFamily="Cascadia Code, Consolas"/>
+
+                        <TextBlock Grid.Row="2" Text="Serial" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock x:Name="SerialText" Grid.Row="2" Grid.Column="1" FontFamily="Cascadia Code, Consolas"/>
+                    </Grid>
+                </StackPanel>
+
+                <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
 
                 <!-- System Info -->
                 <StackPanel Spacing="4">
@@ -88,6 +113,5 @@
                     </Grid>
                 </StackPanel>
             </StackPanel>
-        </ScrollViewer>
     </Grid>
 </Window>

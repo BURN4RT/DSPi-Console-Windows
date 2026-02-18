@@ -105,6 +105,11 @@ public class Channel
         Spdif1L, Spdif1R, Spdif2L, Spdif2R, Spdif3L, Spdif3R, Spdif4L, Spdif4R, Pdm
     };
 
+    public static IReadOnlyList<Channel> Rp2040Outputs { get; } = new[]
+    {
+        Spdif1L, Spdif1R, Spdif2L, Spdif2R, Pdm
+    };
+
     public static Channel FromId(ChannelId id) => id switch
     {
         ChannelId.MasterLeft => MasterLeft,

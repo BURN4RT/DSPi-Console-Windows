@@ -21,7 +21,7 @@ public sealed partial class StatsWindow : Window
         var hWnd = WindowNative.GetWindowHandle(this);
         var windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
         var appWindow = AppWindow.GetFromWindowId(windowId);
-        appWindow?.Resize(new Windows.Graphics.SizeInt32(400, 500));
+        appWindow?.Resize(new Windows.Graphics.SizeInt32(400, 800));
         appWindow!.Title = "Stats for nerbs";
 
         if (appWindow.TitleBar is { } titleBar)
@@ -43,6 +43,9 @@ public sealed partial class StatsWindow : Window
         {
             DispatcherQueue.TryEnqueue(() =>
             {
+                PlatformText.Text = _viewModel.Platform;
+                FirmwareVersionText.Text = _viewModel.FirmwareVersion;
+                SerialText.Text = _viewModel.Serial;
                 ClockText.Text = _viewModel.ClockHz;
                 VoltageText.Text = _viewModel.VoltageMv;
                 SampleRateText.Text = _viewModel.SampleRateHz;
@@ -54,6 +57,17 @@ public sealed partial class StatsWindow : Window
                 SpdifOverText.Text = _viewModel.SpdifOverruns;
                 SpdifUnderText.Text = _viewModel.SpdifUnderruns;
             });
+        };
+
+        RootGrid.Loaded += (s, e) =>
+        {
+            double scale = RootGrid.XamlRoot?.RasterizationScale ?? 1.0;
+            int nonClientH = appWindow.Size.Height - (int)Math.Round(RootGrid.ActualHeight * scale);
+            RootGrid.Measure(new Windows.Foundation.Size(RootGrid.ActualWidth, double.PositiveInfinity));
+            var desired = RootGrid.DesiredSize;
+            appWindow.Resize(new Windows.Graphics.SizeInt32(
+                appWindow.Size.Width,
+                (int)Math.Ceiling(desired.Height * scale) + nonClientH));
         };
 
         Closed += (s, e) => _viewModel.Dispose();
