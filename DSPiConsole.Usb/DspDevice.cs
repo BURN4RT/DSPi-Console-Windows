@@ -45,6 +45,16 @@ public static class VendorCommands
     public const byte GetCrossfeedFeed = 0x65;
     public const byte SetCrossfeedItd = 0x66;
     public const byte GetCrossfeedItd = 0x67;
+    public const byte SetMatrixRoute = 0x70;
+    public const byte GetMatrixRoute = 0x71;
+    public const byte SetOutputEnable = 0x72;
+    public const byte GetOutputEnable = 0x73;
+    public const byte SetOutputGain = 0x74;
+    public const byte GetOutputGain = 0x75;
+    public const byte SetOutputMute = 0x76;
+    public const byte GetOutputMute = 0x77;
+    public const byte SetOutputDelay = 0x78;
+    public const byte GetOutputDelay = 0x79;
     public const byte GetSerial   = 0x7E;
     public const byte GetPlatform = 0x7F;
 }
@@ -790,6 +800,112 @@ public partial class DspDevice : ObservableObject, IDisposable
         var response = ControlTransferIn(VendorCommands.GetStatus, wValue, 4);
         if (response == null || response.Length < 4) return null;
         return BitConverter.ToInt32(response, 0);
+    }
+
+    /// <summary>
+    /// Set a matrix route: enabled, invert, and gain for a given input/output pair.
+    /// 9-byte packet: input(1), output(1), enabled(1), invert(1), gain(4), pad(1).
+    /// </summary>
+    public bool SetMatrixRoute(int input, int output, bool enabled, bool invert, float gain)
+    {
+        var data = new byte[9];
+        data[0] = (byte)input;
+        data[1] = (byte)output;
+        data[2] = (byte)(enabled ? 1 : 0);
+        data[3] = (byte)(invert ? 1 : 0);
+        BitConverter.GetBytes(gain).CopyTo(data, 4);
+        data[8] = 0; // pad
+        return ControlTransferOut(VendorCommands.SetMatrixRoute, 0, data);
+    }
+
+    /// <summary>
+    /// Get a matrix route. wValue = (input &lt;&lt; 8) | output. Returns 9-byte response.
+    /// </summary>
+    public (bool enabled, bool invert, float gain)? GetMatrixRoute(int input, int output)
+    {
+        ushort wValue = (ushort)((input << 8) | output);
+        var response = ControlTransferIn(VendorCommands.GetMatrixRoute, wValue, 9);
+        if (response == null || response.Length < 8) return null;
+        bool enabled = response[2] != 0;
+        bool invert = response[3] != 0;
+        float gain = BitConverter.ToSingle(response, 4);
+        return (enabled, invert, gain);
+    }
+
+    /// <summary>
+    /// Set output enable state. wValue = output index.
+    /// </summary>
+    public bool SetOutputEnable(int output, bool enabled)
+    {
+        return ControlTransferOut(VendorCommands.SetOutputEnable, (ushort)output,
+            new[] { (byte)(enabled ? 1 : 0) });
+    }
+
+    /// <summary>
+    /// Get output enable state. wValue = output index.
+    /// </summary>
+    public bool? GetOutputEnable(int output)
+    {
+        var response = ControlTransferIn(VendorCommands.GetOutputEnable, (ushort)output, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0] != 0;
+    }
+
+    /// <summary>
+    /// Set output gain in dB (matrix mixer output gain). wValue = output index.
+    /// </summary>
+    public bool SetOutputGain(int output, float db)
+    {
+        var data = BitConverter.GetBytes(db);
+        return ControlTransferOut(VendorCommands.SetOutputGain, (ushort)output, data);
+    }
+
+    /// <summary>
+    /// Get output gain in dB (matrix mixer output gain). wValue = output index.
+    /// </summary>
+    public float? GetOutputGain(int output)
+    {
+        var response = ControlTransferIn(VendorCommands.GetOutputGain, (ushort)output, 4);
+        if (response == null || response.Length < 4) return null;
+        return BitConverter.ToSingle(response, 0);
+    }
+
+    /// <summary>
+    /// Set output mute state (matrix mixer). wValue = output index.
+    /// </summary>
+    public bool SetOutputMute(int output, bool muted)
+    {
+        return ControlTransferOut(VendorCommands.SetOutputMute, (ushort)output,
+            new[] { (byte)(muted ? 1 : 0) });
+    }
+
+    /// <summary>
+    /// Get output mute state (matrix mixer). wValue = output index.
+    /// </summary>
+    public bool? GetOutputMute(int output)
+    {
+        var response = ControlTransferIn(VendorCommands.GetOutputMute, (ushort)output, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0] != 0;
+    }
+
+    /// <summary>
+    /// Set output delay in ms (matrix mixer). wValue = output index.
+    /// </summary>
+    public bool SetOutputDelay(int output, float ms)
+    {
+        var data = BitConverter.GetBytes(ms);
+        return ControlTransferOut(VendorCommands.SetOutputDelay, (ushort)output, data);
+    }
+
+    /// <summary>
+    /// Get output delay in ms (matrix mixer). wValue = output index.
+    /// </summary>
+    public float? GetOutputDelay(int output)
+    {
+        var response = ControlTransferIn(VendorCommands.GetOutputDelay, (ushort)output, 4);
+        if (response == null || response.Length < 4) return null;
+        return BitConverter.ToSingle(response, 0);
     }
 
     public string? GetDeviceSerial()

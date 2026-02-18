@@ -37,6 +37,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // Output enabled in matrix mixer: Dictionary<outputIndex, bool>
     private readonly Dictionary<int, bool> _outputEnabled = new();
 
+    // Matrix mixer state: [inputIndex, outputIndex]
+    private readonly bool[,] _matrixRouting = new bool[2, 9];
+    private readonly float[,] _matrixGain = new float[2, 9];
+    private readonly bool[,] _matrixInvert = new bool[2, 9];
+
+    // Per-output matrix mixer state (indexed by output position in ActiveOutputs)
+    private readonly float[] _outputGainDb = new float[9];
+    private readonly bool[] _outputMuted = new bool[9];
+    private readonly float[] _outputDelayMs = new float[9];
+
     [ObservableProperty]
     private float _preampDb;
 
@@ -127,6 +137,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     public event Action<int, bool>? OutputEnabledChanged;
+
+    // Matrix mixer change events
+    public event Action<int, int>? MatrixRouteChanged;   // (input, output)
+    public event Action<int>? MatrixOutputGainChanged;    // (outputIndex)
+    public event Action<int>? MatrixOutputMuteChanged;    // (outputIndex)
+    public event Action<int>? MatrixOutputDelayChanged;   // (outputIndex)
 
     // Event for notifying UI when graph needs redraw
     public event Action<int>? ChannelNameChanged;
@@ -249,6 +265,50 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public ObservableCollection<FilterParams> GetFilters(Channel channel) =>
         _channelData.TryGetValue((int)channel.Id, out var f) ? f : new();
 
+    // ── Matrix mixer accessors ──
+
+    public bool GetMatrixRouting(int input, int output) => _matrixRouting[input, output];
+    public float GetMatrixGain(int input, int output) => _matrixGain[input, output];
+    public bool GetMatrixInvert(int input, int output) => _matrixInvert[input, output];
+    public float GetOutputGainDb(int output) => _outputGainDb[output];
+    public bool GetOutputMuted(int output) => _outputMuted[output];
+    public float GetOutputDelayMs(int output) => _outputDelayMs[output];
+
+    public void SetMatrixRoute(int input, int output, bool enabled, float gain, bool invert)
+    {
+        _matrixRouting[input, output] = enabled;
+        _matrixGain[input, output] = gain;
+        _matrixInvert[input, output] = invert;
+        _device.SetMatrixRoute(input, output, enabled, invert, gain);
+        MatrixRouteChanged?.Invoke(input, output);
+    }
+
+    public void SetOutputGainDb(int output, float db)
+    {
+        _outputGainDb[output] = db;
+        _device.SetOutputGain(output, db);
+        MatrixOutputGainChanged?.Invoke(output);
+    }
+
+    public void SetOutputMuted(int output, bool muted)
+    {
+        _outputMuted[output] = muted;
+        _device.SetOutputMute(output, muted);
+        MatrixOutputMuteChanged?.Invoke(output);
+    }
+
+    public void SetOutputDelayMs(int output, float ms)
+    {
+        _outputDelayMs[output] = ms;
+        _device.SetOutputDelay(output, ms);
+        MatrixOutputDelayChanged?.Invoke(output);
+    }
+
+    public void SetOutputEnableUsb(int output, bool enabled)
+    {
+        _device.SetOutputEnable(output, enabled);
+    }
+
     #region USB Commands
 
     private void FetchAll()
@@ -273,6 +333,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         FetchLoudness();
         FetchCrossfeed();
+
+        // Fetch matrix mixer state
+        FetchMatrixRoutes();
+        var outputCount = ActiveOutputs.Count;
+        for (int o = 0; o < outputCount; o++)
+        {
+            FetchOutputEnable(o);
+            FetchOutputGainDb(o);
+            FetchOutputMuteState(o);
+            FetchOutputDelayMs(o);
+        }
 
         // Dispatch FiltersChanged to run after all filter updates are processed
         _dispatcher.TryEnqueue(() => FiltersChanged?.Invoke(this, EventArgs.Empty));
@@ -433,6 +504,54 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var itd = _device.GetCrossfeedItd();
         if (itd.HasValue)
             _dispatcher.TryEnqueue(() => CrossfeedItd = itd.Value);
+    }
+
+    private void FetchMatrixRoutes()
+    {
+        var outputs = ActiveOutputs;
+        for (int input = 0; input < 2; input++)
+        {
+            for (int o = 0; o < outputs.Count; o++)
+            {
+                var route = _device.GetMatrixRoute(input, o);
+                if (route.HasValue)
+                {
+                    _matrixRouting[input, o] = route.Value.enabled;
+                    _matrixInvert[input, o] = route.Value.invert;
+                    _matrixGain[input, o] = route.Value.gain;
+                }
+            }
+        }
+    }
+
+    private void FetchOutputEnable(int output)
+    {
+        var enabled = _device.GetOutputEnable(output);
+        if (enabled.HasValue)
+        {
+            _outputEnabled[output] = enabled.Value;
+        }
+    }
+
+    private void FetchOutputGainDb(int output)
+    {
+        var gain = _device.GetOutputGain(output);
+        if (gain.HasValue)
+            _outputGainDb[output] = gain.Value;
+    }
+
+    private void FetchOutputMuteState(int output)
+    {
+        var muted = _device.GetOutputMute(output);
+        if (muted.HasValue)
+            _outputMuted[output] = muted.Value;
+    }
+
+    private void FetchOutputDelayMs(int output)
+    {
+        var delay = _device.GetOutputDelay(output);
+        if (delay.HasValue)
+            _outputDelayMs[output] = delay.Value;
     }
 
     partial void OnLoudnessEnabledChanged(bool value)

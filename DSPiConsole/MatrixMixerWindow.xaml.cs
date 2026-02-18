@@ -6,6 +6,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Animation;
 using Windows.UI;
 using WinRT.Interop;
@@ -93,6 +94,21 @@ public sealed partial class MatrixMixerWindow : Window
 
         _viewModel.ActiveOutputsChanged += (s, e) =>
             DispatcherQueue.TryEnqueue(RebuildUI);
+
+        _viewModel.MatrixRouteChanged += (input, output) =>
+            DispatcherQueue.TryEnqueue(() => SyncRouteUI(input, output));
+
+        _viewModel.MatrixOutputGainChanged += output =>
+            DispatcherQueue.TryEnqueue(() => SyncOutputGainUI(output));
+
+        _viewModel.MatrixOutputMuteChanged += output =>
+            DispatcherQueue.TryEnqueue(() => SyncOutputMuteUI(output));
+
+        _viewModel.MatrixOutputDelayChanged += output =>
+            DispatcherQueue.TryEnqueue(() => SyncOutputDelayUI(output));
+
+        _viewModel.OutputEnabledChanged += (output, enabled) =>
+            DispatcherQueue.TryEnqueue(() => SyncOutputEnableUI(output));
 
         // Size window to content after first layout: fonts are measured and DPI scale is known.
         // DesiredSize is in DIPs; AppWindow.Resize takes physical pixels.
@@ -255,6 +271,7 @@ public sealed partial class MatrixMixerWindow : Window
                 {
                     bool nowEnabled = !_viewModel.IsOutputEnabled(o);
                     _viewModel.SetOutputEnabled(o, nowEnabled);
+                    _viewModel.SetOutputEnableUsb(o, nowEnabled);
                     if (btn.Content is FontIcon icon)
                         icon.Foreground = nowEnabled
                             ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 74, 143, 227))
@@ -270,14 +287,24 @@ public sealed partial class MatrixMixerWindow : Window
         AddOutputDataRow(grid, 7, "GAIN", outputCount, isLast: false,
             makeCell: o =>
             {
+                float initGain = _viewModel.GetOutputGainDb(o);
                 var text = new TextBlock
                 {
-                    Text = "0 dB",
+                    Text = FormatGain(initGain),
                     FontSize = 12,
                     FontFamily = new FontFamily("Cascadia Code, Consolas"),
                     Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(180, 255, 255, 255)),
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Center
+                };
+                text.PointerWheelChanged += (s, e) =>
+                {
+                    e.Handled = true;
+                    int delta = e.GetCurrentPoint(text).Properties.MouseWheelDelta;
+                    float step = delta > 0 ? 0.5f : -0.5f;
+                    float current = _viewModel.GetOutputGainDb(o);
+                    float newGain = Math.Clamp(current + step, -60f, 12f);
+                    _viewModel.SetOutputGainDb(o, newGain);
                 };
                 _outputGainTexts[o] = text;
                 return text;
@@ -286,14 +313,24 @@ public sealed partial class MatrixMixerWindow : Window
         AddOutputDataRow(grid, 8, "DELAY", outputCount, isLast: false,
             makeCell: o =>
             {
+                float initDelay = _viewModel.GetOutputDelayMs(o);
                 var text = new TextBlock
                 {
-                    Text = "0 ms",
+                    Text = FormatDelay(initDelay),
                     FontSize = 12,
                     FontFamily = new FontFamily("Cascadia Code, Consolas"),
                     Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(180, 255, 255, 255)),
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Center
+                };
+                text.PointerWheelChanged += (s, e) =>
+                {
+                    e.Handled = true;
+                    int delta = e.GetCurrentPoint(text).Properties.MouseWheelDelta;
+                    float step = delta > 0 ? 0.1f : -0.1f;
+                    float current = _viewModel.GetOutputDelayMs(o);
+                    float newDelay = Math.Max(0f, MathF.Round((current + step) * 10f) / 10f);
+                    _viewModel.SetOutputDelayMs(o, newDelay);
                 };
                 _outputDelayTexts[o] = text;
                 return text;
@@ -302,11 +339,14 @@ public sealed partial class MatrixMixerWindow : Window
         AddOutputDataRow(grid, 9, "MUTE", outputCount, isLast: true,
             makeCell: o =>
             {
-                _outputMuted[o] = false;
+                bool initMuted = _viewModel.GetOutputMuted(o);
+                _outputMuted[o] = initMuted;
                 var btn = new Button
                 {
-                    Content = new FontIcon { Glyph = "\uE767", FontSize = 15,
-                        Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(120, 200, 200, 220)) },
+                    Content = new FontIcon { Glyph = initMuted ? "\uE74F" : "\uE767", FontSize = 15,
+                        Foreground = new SolidColorBrush(initMuted
+                            ? Windows.UI.Color.FromArgb(200, 210, 70, 70)
+                            : Windows.UI.Color.FromArgb(120, 200, 200, 220)) },
                     Background = new SolidColorBrush(Colors.Transparent),
                     BorderThickness = new Thickness(0),
                     Padding = new Thickness(8, 4, 8, 4),
@@ -316,14 +356,7 @@ public sealed partial class MatrixMixerWindow : Window
                 btn.Click += (s, e) =>
                 {
                     bool nowMuted = !_outputMuted[o];
-                    _outputMuted[o] = nowMuted;
-                    if (btn.Content is FontIcon icon)
-                    {
-                        icon.Glyph = nowMuted ? "\uE74F" : "\uE767";
-                        icon.Foreground = nowMuted
-                            ? new SolidColorBrush(Windows.UI.Color.FromArgb(200, 210, 70, 70))
-                            : new SolidColorBrush(Windows.UI.Color.FromArgb(120, 200, 200, 220));
-                    }
+                    _viewModel.SetOutputMuted(o, nowMuted);
                 };
                 _outputMuteButtons[o] = btn;
                 return btn;
@@ -454,28 +487,46 @@ public sealed partial class MatrixMixerWindow : Window
             Margin = new Thickness(0, 18, 0, 18)
         };
 
-        // Gain text (above circle)
+        // Initialize from ViewModel state
+        bool initConnected = _viewModel.GetMatrixRouting(input, output);
+        float initGain = _viewModel.GetMatrixGain(input, output);
+        bool initInverted = _viewModel.GetMatrixInvert(input, output);
+
+        // Gain text (above circle) — scroll to adjust per-route gain
         var gainText = new TextBlock
         {
-            Text = "0 dB",
+            Text = FormatGain(initGain),
             FontSize = 11,
             FontFamily = new FontFamily("Cascadia Code, Consolas"),
             Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(140, 255, 255, 255)),
             HorizontalAlignment = HorizontalAlignment.Center
         };
+        gainText.PointerWheelChanged += (s, e) =>
+        {
+            e.Handled = true;
+            int delta = e.GetCurrentPoint(gainText).Properties.MouseWheelDelta;
+            float step = delta > 0 ? 0.5f : -0.5f;
+            float current = _viewModel.GetMatrixGain(input, output);
+            float newGain = Math.Clamp(current + step, -60f, 12f);
+            bool enabled = _viewModel.GetMatrixRouting(input, output);
+            bool inv = _viewModel.GetMatrixInvert(input, output);
+            _viewModel.SetMatrixRoute(input, output, enabled, newGain, inv);
+        };
         _routeGainTexts[(input, output)] = gainText;
         panel.Children.Add(gainText);
 
         // Connection circle — clickable toggle
-        _routeConnected[(input, output)] = false;
+        _routeConnected[(input, output)] = initConnected;
         var circle = new Border
         {
             Width = 22,
             Height = 22,
             CornerRadius = new CornerRadius(11),
-            BorderThickness = new Thickness(2),
+            BorderThickness = initConnected ? new Thickness(0) : new Thickness(2),
             BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(90, 160, 160, 170)),
-            Background = new SolidColorBrush(Colors.Transparent),
+            Background = initConnected
+                ? new SolidColorBrush(inputColor)
+                : new SolidColorBrush(Colors.Transparent),
             HorizontalAlignment = HorizontalAlignment.Center,
             Tag = (input, output, inputColor)
         };
@@ -483,15 +534,18 @@ public sealed partial class MatrixMixerWindow : Window
         {
             var key = (input, output);
             bool nowConnected = !_routeConnected[key];
-            _routeConnected[key] = nowConnected;
-            SetRouteConnected(input, output, nowConnected);
+            float gain = _viewModel.GetMatrixGain(input, output);
+            bool inv = _viewModel.GetMatrixInvert(input, output);
+            _viewModel.SetMatrixRoute(input, output, nowConnected, gain, inv);
         };
         _routeCircles[(input, output)] = circle;
         panel.Children.Add(circle);
 
         // INV text (below circle) — dims when off, illuminates when on, fades on hover
-        _routeInverted[(input, output)] = false;
-        var invColor = Color.FromArgb(60, 200, 200, 220);
+        _routeInverted[(input, output)] = initInverted;
+        var invColor = initInverted
+            ? Color.FromArgb(175, 255, 255, 255)
+            : Color.FromArgb(60, 200, 200, 220);
         var invBrush = new SolidColorBrush(invColor);
         var invText = new TextBlock
         {
@@ -520,10 +574,9 @@ public sealed partial class MatrixMixerWindow : Window
         invText.Tapped += (s, e) =>
         {
             bool nowInverted = !_routeInverted[(input, output)];
-            _routeInverted[(input, output)] = nowInverted;
-            AnimateInvColor(
-                nowInverted ? Color.FromArgb(175, 255, 255, 255) : Color.FromArgb(60, 200, 200, 220),
-                120);
+            bool enabled = _viewModel.GetMatrixRouting(input, output);
+            float gain = _viewModel.GetMatrixGain(input, output);
+            _viewModel.SetMatrixRoute(input, output, enabled, gain, nowInverted);
         };
         invText.PointerEntered += (s, e) =>
         {
@@ -586,9 +639,8 @@ public sealed partial class MatrixMixerWindow : Window
 
     /// <summary>
     /// Toggles a route circle between connected (solid fill) and disconnected (hollow ring).
-    /// Ready for future ViewModel hookup.
     /// </summary>
-    public void SetRouteConnected(int input, int output, bool connected)
+    private void SetRouteConnected(int input, int output, bool connected)
     {
         if (!_routeCircles.TryGetValue((input, output), out var circle))
             return;
@@ -608,4 +660,73 @@ public sealed partial class MatrixMixerWindow : Window
             circle.BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(90, 160, 160, 170));
         }
     }
+
+    // ── Sync helpers: update UI from ViewModel state ──
+
+    private void SyncRouteUI(int input, int output)
+    {
+        bool connected = _viewModel.GetMatrixRouting(input, output);
+        _routeConnected[(input, output)] = connected;
+        SetRouteConnected(input, output, connected);
+
+        float gain = _viewModel.GetMatrixGain(input, output);
+        if (_routeGainTexts.TryGetValue((input, output), out var gt))
+            gt.Text = FormatGain(gain);
+
+        bool inverted = _viewModel.GetMatrixInvert(input, output);
+        _routeInverted[(input, output)] = inverted;
+        if (_routeInvButtons.TryGetValue((input, output), out var inv) &&
+            inv.Foreground is SolidColorBrush invBrush)
+        {
+            invBrush.Color = inverted
+                ? Color.FromArgb(175, 255, 255, 255)
+                : Color.FromArgb(60, 200, 200, 220);
+        }
+    }
+
+    private void SyncOutputGainUI(int output)
+    {
+        if (_outputGainTexts.TryGetValue(output, out var text))
+            text.Text = FormatGain(_viewModel.GetOutputGainDb(output));
+    }
+
+    private void SyncOutputMuteUI(int output)
+    {
+        bool muted = _viewModel.GetOutputMuted(output);
+        _outputMuted[output] = muted;
+        if (_outputMuteButtons.TryGetValue(output, out var btn) && btn.Content is FontIcon icon)
+        {
+            icon.Glyph = muted ? "\uE74F" : "\uE767";
+            icon.Foreground = muted
+                ? new SolidColorBrush(Windows.UI.Color.FromArgb(200, 210, 70, 70))
+                : new SolidColorBrush(Windows.UI.Color.FromArgb(120, 200, 200, 220));
+        }
+    }
+
+    private void SyncOutputDelayUI(int output)
+    {
+        if (_outputDelayTexts.TryGetValue(output, out var text))
+            text.Text = FormatDelay(_viewModel.GetOutputDelayMs(output));
+    }
+
+    private void SyncOutputEnableUI(int output)
+    {
+        bool enabled = _viewModel.IsOutputEnabled(output);
+        if (_outputEnableButtons.TryGetValue(output, out var btn))
+        {
+            if (btn.Content is FontIcon icon)
+                icon.Foreground = enabled
+                    ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 74, 143, 227))
+                    : new SolidColorBrush(Windows.UI.Color.FromArgb(120, 200, 200, 220));
+            btn.Background = enabled
+                ? new SolidColorBrush(Windows.UI.Color.FromArgb(40, 74, 143, 227))
+                : new SolidColorBrush(Colors.Transparent);
+        }
+    }
+
+    private static string FormatGain(float db) =>
+        db == 0f ? "0 dB" : $"{db:+0.#;-0.#} dB";
+
+    private static string FormatDelay(float ms) =>
+        ms == 0f ? "0 ms" : $"{ms:0.#} ms";
 }
