@@ -46,11 +46,11 @@ public class Channel
     }
 
     public static readonly Channel MasterLeft = new(
-        ChannelId.MasterLeft, "Master L", "ML", "USB",
+        ChannelId.MasterLeft, "Master L", "ML", "IN1",
         10, false, Color.FromArgb(255, 74, 143, 227)); // Blue
 
     public static readonly Channel MasterRight = new(
-        ChannelId.MasterRight, "Master R", "MR", "USB",
+        ChannelId.MasterRight, "Master R", "MR", "IN2",
         10, false, Color.FromArgb(255, 245, 115, 115)); // Red
 
     public static readonly Channel Spdif1L = new(

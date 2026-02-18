@@ -34,6 +34,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // Channel mutes: Dictionary<ChannelId, bool> (output channels only)
     private readonly Dictionary<int, bool> _channelMutes = new();
 
+    // Output enabled in matrix mixer: Dictionary<outputIndex, bool>
+    private readonly Dictionary<int, bool> _outputEnabled = new();
+
     [ObservableProperty]
     private float _preampDb;
 
@@ -112,6 +115,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _channelNames[(int)channel.Id] = name;
         ChannelNameChanged?.Invoke((int)channel.Id);
     }
+
+    // Output enabled state for matrix mixer / sidebar filtering
+    public bool IsOutputEnabled(int outputIndex) =>
+        _outputEnabled.TryGetValue(outputIndex, out var v) && v;
+
+    public void SetOutputEnabled(int outputIndex, bool enabled)
+    {
+        _outputEnabled[outputIndex] = enabled;
+        OutputEnabledChanged?.Invoke(outputIndex, enabled);
+    }
+
+    public event Action<int, bool>? OutputEnabledChanged;
 
     // Event for notifying UI when graph needs redraw
     public event Action<int>? ChannelNameChanged;

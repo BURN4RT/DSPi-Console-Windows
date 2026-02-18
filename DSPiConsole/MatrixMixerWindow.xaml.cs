@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using DSPiConsole.Core.Models;
 using DSPiConsole.ViewModels;
 using Microsoft.UI;
@@ -13,6 +14,12 @@ namespace DSPiConsole;
 
 public sealed partial class MatrixMixerWindow : Window
 {
+    private const int SM_CYCAPTION = 4;
+    private const int SM_CYFRAME = 33;
+    private const int SM_CXPADDEDBORDER = 92;
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetricsForDpi(int nIndex, uint dpi);
     private readonly MainViewModel _viewModel;
 
     // Route UI controls: key = (inputIndex, outputIndex)
@@ -27,7 +34,6 @@ public sealed partial class MatrixMixerWindow : Window
 
     // Output controls: key = outputIndex
     private readonly Dictionary<int, Button> _outputEnableButtons = new();
-    private readonly Dictionary<int, bool> _outputEnabled = new();
     private readonly Dictionary<int, TextBlock> _outputGainTexts = new();
     private readonly Dictionary<int, TextBlock> _outputDelayTexts = new();
     private readonly Dictionary<int, Button> _outputMuteButtons = new();
@@ -50,6 +56,10 @@ public sealed partial class MatrixMixerWindow : Window
         var appWindow = AppWindow.GetFromWindowId(windowId);
 
         appWindow!.Title = "Matrix Mixer";
+
+        // Start at a minimal size so the later ResizeToContent expands rather
+        // than shrinking from the OS default — avoids a visible flash.
+        appWindow.Resize(new Windows.Graphics.SizeInt32(1, 1));
 
         if (appWindow.TitleBar is { } titleBar)
         {
@@ -94,7 +104,10 @@ public sealed partial class MatrixMixerWindow : Window
             if (sized) return;
             sized = true;
             double scale = RootGrid.XamlRoot?.RasterizationScale ?? 1.0;
-            _nonClientH = appWindow.Size.Height - (int)Math.Round(RootGrid.ActualHeight * scale);
+            int dpi = (int)(96 * scale);
+            _nonClientH = GetSystemMetricsForDpi(SM_CYCAPTION, (uint)dpi)
+                        + 2 * GetSystemMetricsForDpi(SM_CYFRAME, (uint)dpi)
+                        + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, (uint)dpi);
             ResizeToContent();
         };
     }
@@ -223,12 +236,16 @@ public sealed partial class MatrixMixerWindow : Window
         AddOutputDataRow(grid, 6, "ENABLE", outputCount, isLast: false,
             makeCell: o =>
             {
-                _outputEnabled[o] = false;
+                bool isEnabled = _viewModel.IsOutputEnabled(o);
                 var btn = new Button
                 {
                     Content = new FontIcon { Glyph = "\uE7E8", FontSize = 15,
-                        Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(120, 200, 200, 220)) },
-                    Background = new SolidColorBrush(Colors.Transparent),
+                        Foreground = new SolidColorBrush(isEnabled
+                            ? Windows.UI.Color.FromArgb(255, 74, 143, 227)
+                            : Windows.UI.Color.FromArgb(120, 200, 200, 220)) },
+                    Background = new SolidColorBrush(isEnabled
+                        ? Windows.UI.Color.FromArgb(40, 74, 143, 227)
+                        : Colors.Transparent),
                     BorderThickness = new Thickness(0),
                     Padding = new Thickness(8, 4, 8, 4),
                     HorizontalAlignment = HorizontalAlignment.Center,
@@ -236,8 +253,8 @@ public sealed partial class MatrixMixerWindow : Window
                 };
                 btn.Click += (s, e) =>
                 {
-                    bool nowEnabled = !_outputEnabled[o];
-                    _outputEnabled[o] = nowEnabled;
+                    bool nowEnabled = !_viewModel.IsOutputEnabled(o);
+                    _viewModel.SetOutputEnabled(o, nowEnabled);
                     if (btn.Content is FontIcon icon)
                         icon.Foreground = nowEnabled
                             ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 74, 143, 227))
@@ -350,7 +367,6 @@ public sealed partial class MatrixMixerWindow : Window
         _routeInverted.Clear();
         _headerNameTexts.Clear();
         _outputEnableButtons.Clear();
-        _outputEnabled.Clear();
         _outputGainTexts.Clear();
         _outputDelayTexts.Clear();
         _outputMuteButtons.Clear();

@@ -44,6 +44,10 @@ public sealed partial class MainWindow : Window
     private readonly List<ListViewItem> _channelListItems = new();
     private readonly Dictionary<int, TextBlock> _channelNameTexts = new();
 
+    // Pre-built output channel items: keyed by output index
+    private readonly Dictionary<int, ListViewItem> _outputChannelItems = new();
+
+
     // Acrylic backdrop
     private DesktopAcrylicController? _acrylicController;
     private SystemBackdropConfiguration? _configurationSource;
@@ -101,7 +105,10 @@ public sealed partial class MainWindow : Window
         };
 
         ViewModel.ActiveOutputsChanged += (s, e) =>
-            DispatcherQueue.TryEnqueue(InitializeChannelLists);
+            DispatcherQueue.TryEnqueue(() => { InitializeChannelLists(); InitializeLegend(); });
+
+        ViewModel.OutputEnabledChanged += (outputIndex, enabled) =>
+            DispatcherQueue.TryEnqueue(() => { OnOutputEnabledChanged(outputIndex, enabled); InitializeLegend(); });
 
         // Right-click preamp slider to reset to 0 dB
         PreampSlider.RightTapped += (s, e) => { e.Handled = true; ViewModel.PreampDb = 0; };
@@ -159,8 +166,9 @@ public sealed partial class MainWindow : Window
     private void InitializeChannelLists()
     {
         // Build channel list items programmatically
-        // Index 0 = dashboard (no item), 1-5 = channels
+        // Index 0 = dashboard (no item), 1+ = channels
         _channelListItems.Clear();
+        _outputChannelItems.Clear();
 
         InputChannelsList.Items.Clear();
         int index = 1;
@@ -171,13 +179,56 @@ public sealed partial class MainWindow : Window
             InputChannelsList.Items.Add(item);
         }
 
+        // Pre-build all output items and add enabled ones
         OutputChannelsList.Items.Clear();
-        foreach (var channel in ViewModel.ActiveOutputs)
+        for (int o = 0; o < ViewModel.ActiveOutputs.Count; o++)
         {
-            var item = CreateChannelListItem(channel, index++);
-            _channelListItems.Add(item);
-            OutputChannelsList.Items.Add(item);
+            var channel = ViewModel.ActiveOutputs[o];
+            var item = CreateChannelListItem(channel, index);
+            _outputChannelItems[o] = item;
+            if (ViewModel.IsOutputEnabled(o))
+            {
+                item.Tag = (channel, index++);
+                _channelListItems.Add(item);
+                OutputChannelsList.Items.Add(item);
+            }
         }
+    }
+
+    private void OnOutputEnabledChanged(int outputIndex, bool enabled)
+    {
+        if (!_outputChannelItems.TryGetValue(outputIndex, out var item)) return;
+
+        if (enabled)
+        {
+            // Insert at the correct position to maintain output order
+            int insertAt = 0;
+            for (int o = 0; o < outputIndex; o++)
+            {
+                if (ViewModel.IsOutputEnabled(o) && OutputChannelsList.Items.Contains(_outputChannelItems[o]))
+                    insertAt++;
+            }
+            OutputChannelsList.Items.Insert(insertAt, item);
+        }
+        else
+        {
+            OutputChannelsList.Items.Remove(item);
+        }
+
+        // Re-index the flat list for selection tracking
+        int inputCount = Channel.Inputs.Count;
+        if (_channelListItems.Count > inputCount)
+            _channelListItems.RemoveRange(inputCount, _channelListItems.Count - inputCount);
+
+        int index = inputCount + 1;
+        for (int o = 0; o < ViewModel.ActiveOutputs.Count; o++)
+        {
+            if (!ViewModel.IsOutputEnabled(o) || !_outputChannelItems.TryGetValue(o, out var outItem)) continue;
+            outItem.Tag = (ViewModel.ActiveOutputs[o], index++);
+            _channelListItems.Add(outItem);
+        }
+
+        UpdateChannelListSelection();
     }
 
     private ListViewItem CreateChannelListItem(Channel channel, int index)
@@ -316,48 +367,59 @@ public sealed partial class MainWindow : Window
     {
         LegendPanel.Children.Clear();
 
-        foreach (var channel in Channel.All)
+        // Input channels are always shown
+        foreach (var channel in Channel.Inputs)
+            AddLegendButton(channel);
+
+        // Only show enabled output channels
+        for (int o = 0; o < ViewModel.ActiveOutputs.Count; o++)
         {
-            var btn = new Button
-            {
-                Tag = channel,
-                Padding = new Thickness(8, 4, 8, 4),
-                Background = new SolidColorBrush(Colors.Transparent),
-                BorderThickness = new Thickness(0)
-            };
-
-            var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-
-            var indicator = new Ellipse
-            {
-                Width = 6,
-                Height = 6,
-                Fill = new SolidColorBrush(channel.Color)
-            };
-
-            var label = new TextBlock
-            {
-                Text = channel.ShortName,
-                FontSize = 10,
-                FontWeight = Microsoft.UI.Text.FontWeights.Bold
-            };
-
-            panel.Children.Add(indicator);
-            panel.Children.Add(label);
-            btn.Content = panel;
-
-            btn.Click += (s, e) =>
-            {
-                if (s is Button b && b.Tag is Channel ch)
-                {
-                    ViewModel.ToggleChannelVisibility(ch);
-                }
-            };
-
-            LegendPanel.Children.Add(btn);
+            if (!ViewModel.IsOutputEnabled(o)) continue;
+            AddLegendButton(ViewModel.ActiveOutputs[o]);
         }
 
         UpdateLegend();
+    }
+
+    private void AddLegendButton(Channel channel)
+    {
+        var btn = new Button
+        {
+            Tag = channel,
+            Padding = new Thickness(8, 4, 8, 4),
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0)
+        };
+
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+
+        var indicator = new Ellipse
+        {
+            Width = 6,
+            Height = 6,
+            Fill = new SolidColorBrush(channel.Color)
+        };
+
+        var label = new TextBlock
+        {
+            Text = channel.Descriptor,
+            FontSize = 10,
+            FontWeight = Microsoft.UI.Text.FontWeights.Bold
+        };
+
+        panel.Children.Add(indicator);
+        panel.Children.Add(label);
+        btn.Content = panel;
+
+        btn.Click += (s, e) =>
+        {
+            if (s is Button b && b.Tag is Channel ch)
+            {
+                ViewModel.ToggleChannelVisibility(ch);
+            }
+        };
+
+        LegendPanel.Children.Add(btn);
     }
 
     private void UpdateLegend()
@@ -1448,8 +1510,21 @@ public sealed partial class MainWindow : Window
         _crossfeedWindow.Activate();
     }
 
-    private void OnMatrixMixerClick(object sender, RoutedEventArgs e)
+    private async void OnMatrixMixerClick(object sender, RoutedEventArgs e)
     {
+        if (!ViewModel.IsDeviceConnected)
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "Device Not Connected",
+                Content = "Please connect a DSPi device first.",
+                CloseButtonText = "OK",
+                XamlRoot = Content.XamlRoot
+            };
+            await dialog.ShowAsync();
+            return;
+        }
+
         if (_matrixMixerWindow == null)
         {
             _matrixMixerWindow = new MatrixMixerWindow(ViewModel);

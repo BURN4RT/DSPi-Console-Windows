@@ -183,7 +183,13 @@ public partial class DspDevice : ObservableObject, IDisposable
         {
             if (_device != null && IsConnected)
             {
-                // Already connected, verify still valid
+                // Verify the device is still present in the system
+                bool stillPresent = UsbDevice.AllDevices
+                    .Any(r => r.Vid == VendorId && r.Pid == ProductId);
+                if (stillPresent) return;
+
+                // Device was removed
+                HandleDisconnect();
                 return;
             }
 
@@ -217,24 +223,26 @@ public partial class DspDevice : ObservableObject, IDisposable
 
                 if (_device == null)
                 {
-                    var allDevices = UsbDevice.AllDevices;
-                    if (allDevices.Count == 0)
-                    {
-                        ErrorMessage = "No USB devices visible to LibUsbDotNet. Install libusb-win32 filter driver.";
-                    }
-                    else
-                    {
-                        bool found = allDevices.Any(r => r.Vid == VendorId && r.Pid == ProductId);
-                        if (!found)
-                        {
-                            ErrorMessage = $"Device VID:{VendorId:X4} PID:{ProductId:X4} not found. {allDevices.Count} other device(s) visible.";
-                        }
-                        // else ErrorMessage was already set above
-                    }
-
                     if (IsConnected)
                     {
                         HandleDisconnect();
+                    }
+                    else if (ErrorMessage == null || ErrorMessage == "Disconnected")
+                    {
+                        // Only show detailed diagnostics if we've never connected
+                        var allDevices = UsbDevice.AllDevices;
+                        if (allDevices.Count == 0)
+                        {
+                            ErrorMessage = "No USB devices visible to LibUsbDotNet. Install libusb-win32 filter driver.";
+                        }
+                        else
+                        {
+                            bool found = allDevices.Any(r => r.Vid == VendorId && r.Pid == ProductId);
+                            if (!found)
+                            {
+                                ErrorMessage = "Disconnected";
+                            }
+                        }
                     }
                     return;
                 }
@@ -315,10 +323,9 @@ public partial class DspDevice : ObservableObject, IDisposable
 
         IsConnected = false;
 
-        // Only say "Device Removed" if we were previously connected
         if (wasConnected)
         {
-            ErrorMessage = "Device Removed";
+            ErrorMessage = "Disconnected";
             DeviceDisconnected?.Invoke(this, EventArgs.Empty);
         }
     }
