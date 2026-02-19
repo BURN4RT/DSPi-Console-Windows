@@ -42,6 +42,7 @@ public sealed partial class MatrixMixerWindow : Window
 
     private Border? _card;
     private int _nonClientH;
+    private bool _closed;
 
     // Shared cell border brush (reused across all cells)
     private static readonly SolidColorBrush CellBorderBrush =
@@ -78,8 +79,11 @@ public sealed partial class MatrixMixerWindow : Window
 
         BuildUI();
 
+        Closed += (s, e) => _closed = true;
+
         _viewModel.ChannelNameChanged += channelId =>
         {
+            if (_closed) return;
             var active = _viewModel.ActiveOutputs;
             for (int o = 0; o < active.Count; o++)
             {
@@ -93,22 +97,40 @@ public sealed partial class MatrixMixerWindow : Window
         };
 
         _viewModel.ActiveOutputsChanged += (s, e) =>
-            DispatcherQueue.TryEnqueue(RebuildUI);
+        {
+            if (_closed) return;
+            DispatcherQueue.TryEnqueue(() => { if (!_closed) RebuildUI(); });
+        };
 
         _viewModel.MatrixRouteChanged += (input, output) =>
-            DispatcherQueue.TryEnqueue(() => SyncRouteUI(input, output));
+        {
+            if (_closed) return;
+            DispatcherQueue.TryEnqueue(() => { if (!_closed) SyncRouteUI(input, output); });
+        };
 
         _viewModel.MatrixOutputGainChanged += output =>
-            DispatcherQueue.TryEnqueue(() => SyncOutputGainUI(output));
+        {
+            if (_closed) return;
+            DispatcherQueue.TryEnqueue(() => { if (!_closed) SyncOutputGainUI(output); });
+        };
 
         _viewModel.MatrixOutputMuteChanged += output =>
-            DispatcherQueue.TryEnqueue(() => SyncOutputMuteUI(output));
+        {
+            if (_closed) return;
+            DispatcherQueue.TryEnqueue(() => { if (!_closed) SyncOutputMuteUI(output); });
+        };
 
         _viewModel.MatrixOutputDelayChanged += output =>
-            DispatcherQueue.TryEnqueue(() => SyncOutputDelayUI(output));
+        {
+            if (_closed) return;
+            DispatcherQueue.TryEnqueue(() => { if (!_closed) SyncOutputDelayUI(output); });
+        };
 
         _viewModel.OutputEnabledChanged += (output, enabled) =>
-            DispatcherQueue.TryEnqueue(() => SyncOutputEnableUI(output));
+        {
+            if (_closed) return;
+            DispatcherQueue.TryEnqueue(() => { if (!_closed) SyncOutputEnableUI(output); });
+        };
 
         // Size window to content after first layout: fonts are measured and DPI scale is known.
         // DesiredSize is in DIPs; AppWindow.Resize takes physical pixels.

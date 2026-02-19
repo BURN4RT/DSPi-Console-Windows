@@ -207,6 +207,7 @@ public sealed partial class MainWindow : Window
 
         if (enabled)
         {
+            if (OutputChannelsList.Items.Contains(item)) return;
             // Insert at the correct position to maintain output order
             int insertAt = 0;
             for (int o = 0; o < outputIndex; o++)

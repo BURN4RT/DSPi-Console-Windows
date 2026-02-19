@@ -99,8 +99,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public event EventHandler? ActiveOutputsChanged;
 
-    partial void OnPlatformChanged(string value) =>
+    partial void OnPlatformChanged(string value)
+    {
+        _outputEnabled.Clear();
         ActiveOutputsChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     public IReadOnlyDictionary<int, ObservableCollection<FilterParams>> ChannelData => _channelData;
     public IReadOnlyDictionary<int, bool> ChannelVisibility => _channelVisibility;
@@ -274,7 +277,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (output < 0 || output >= outputs.Count) return 0f;
         return _channelGains.TryGetValue((int)outputs[output].Id, out var g) ? g : 0f;
     }
-    public bool GetOutputMuted(int output) => _outputMuted[output];
+    public bool GetOutputMuted(int output) =>
+        output >= 0 && output < _outputMuted.Length && _outputMuted[output];
     public float GetOutputDelayMs(int output)
     {
         var outputs = ActiveOutputs;
@@ -301,6 +305,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public void SetOutputMuted(int output, bool muted)
     {
+        if (output < 0 || output >= _outputMuted.Length) return;
         _outputMuted[output] = muted;
         _device.SetOutputMute(output, muted);
         MatrixOutputMuteChanged?.Invoke(output);
@@ -323,47 +328,55 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     private void FetchAll()
     {
-        if (!FetchPreamp()) return;
-        FetchBypass();
-
-        foreach (var channel in Channel.All)
+        try
         {
-            for (int band = 0; band < channel.BandCount; band++)
+            if (!FetchPreamp()) return;
+            FetchBypass();
+
+            foreach (var channel in Channel.All)
             {
-                FetchFilter((int)channel.Id, band);
+                for (int band = 0; band < channel.BandCount; band++)
+                {
+                    FetchFilter((int)channel.Id, band);
+                }
             }
+
+            foreach (var channel in ActiveOutputs)
+            {
+                FetchDelay((int)channel.Id);
+                FetchChannelGain((int)channel.Id);
+                FetchChannelMute((int)channel.Id);
+            }
+
+            FetchLoudness();
+            FetchCrossfeed();
+
+            // Fetch matrix mixer state
+            FetchMatrixRoutes();
+            var outputCount = ActiveOutputs.Count;
+            for (int o = 0; o < outputCount; o++)
+            {
+                FetchOutputEnable(o);
+                FetchOutputMuteState(o);
+            }
+
+            // Dispatch FiltersChanged to run after all filter updates are processed
+            _dispatcher.TryEnqueue(() => FiltersChanged?.Invoke(this, EventArgs.Empty));
         }
-
-        foreach (var channel in ActiveOutputs)
-        {
-            FetchDelay((int)channel.Id);
-            FetchChannelGain((int)channel.Id);
-            FetchChannelMute((int)channel.Id);
-        }
-
-        FetchLoudness();
-        FetchCrossfeed();
-
-        // Fetch matrix mixer state
-        FetchMatrixRoutes();
-        var outputCount = ActiveOutputs.Count;
-        for (int o = 0; o < outputCount; o++)
-        {
-            FetchOutputEnable(o);
-            FetchOutputMuteState(o);
-        }
-
-        // Dispatch FiltersChanged to run after all filter updates are processed
-        _dispatcher.TryEnqueue(() => FiltersChanged?.Invoke(this, EventArgs.Empty));
+        catch { }
     }
 
     private void FetchStatus()
     {
-        var status = _device.GetStatus();
-        if (status != null)
+        try
         {
-            _dispatcher.TryEnqueue(() => Status = status);
+            var status = _device.GetStatus();
+            if (status != null)
+            {
+                _dispatcher.TryEnqueue(() => Status = status);
+            }
         }
+        catch { }
     }
 
     public void SetFilter(int channel, int band, FilterParams p)
@@ -553,6 +566,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     private void FetchOutputMuteState(int output)
     {
+        if (output < 0 || output >= _outputMuted.Length) return;
         var muted = _device.GetOutputMute(output);
         if (muted.HasValue)
             _outputMuted[output] = muted.Value;
