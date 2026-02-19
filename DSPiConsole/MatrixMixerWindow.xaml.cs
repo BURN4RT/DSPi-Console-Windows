@@ -78,8 +78,15 @@ public sealed partial class MatrixMixerWindow : Window
         }
 
         BuildUI();
+        UpdateDisconnectOverlay();
 
         Closed += (s, e) => _closed = true;
+
+        _viewModel.PropertyChanged += (s, e) =>
+        {
+            if (_closed || e.PropertyName != nameof(MainViewModel.IsDeviceConnected)) return;
+            DispatcherQueue.TryEnqueue(() => { if (!_closed) UpdateDisconnectOverlay(); });
+        };
 
         _viewModel.ChannelNameChanged += channelId =>
         {
@@ -397,6 +404,10 @@ public sealed partial class MatrixMixerWindow : Window
 
         _card = card;
         RootGrid.Children.Add(card);
+
+        // Keep overlay on top of card content
+        RootGrid.Children.Remove(DisconnectOverlay);
+        RootGrid.Children.Add(DisconnectOverlay);
     }
 
     private void ResizeToContent()
@@ -410,6 +421,43 @@ public sealed partial class MatrixMixerWindow : Window
         appWindow?.Resize(new Windows.Graphics.SizeInt32(
             (int)Math.Ceiling((desired.Width + 40) * scale),
             (int)Math.Ceiling(desired.Height * scale) + _nonClientH));
+    }
+
+    private void UpdateDisconnectOverlay()
+    {
+        if (_viewModel.IsDeviceConnected)
+        {
+            var fadeOut = new DoubleAnimation
+            {
+                To = 0, Duration = new Duration(TimeSpan.FromMilliseconds(250)),
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            };
+            var sb = new Storyboard();
+            sb.Children.Add(fadeOut);
+            Storyboard.SetTarget(fadeOut, DisconnectOverlay);
+            Storyboard.SetTargetProperty(fadeOut, "Opacity");
+            sb.Completed += (s, e) =>
+            {
+                DisconnectOverlay.Visibility = Visibility.Collapsed;
+                DisconnectOverlay.Opacity = 1;
+            };
+            sb.Begin();
+        }
+        else
+        {
+            DisconnectOverlay.Opacity = 0;
+            DisconnectOverlay.Visibility = Visibility.Visible;
+            var fadeIn = new DoubleAnimation
+            {
+                To = 1, Duration = new Duration(TimeSpan.FromMilliseconds(250)),
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            };
+            var sb = new Storyboard();
+            sb.Children.Add(fadeIn);
+            Storyboard.SetTarget(fadeIn, DisconnectOverlay);
+            Storyboard.SetTargetProperty(fadeIn, "Opacity");
+            sb.Begin();
+        }
     }
 
     private void RebuildUI()

@@ -194,7 +194,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                     }
                     else
                     {
-                        Platform = "";
+                        // Keep Platform so the UI layout stays until a new device connects
                     }
                 });
             }

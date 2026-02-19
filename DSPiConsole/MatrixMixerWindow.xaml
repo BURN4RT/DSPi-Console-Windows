@@ -33,5 +33,12 @@
 
         <Border x:Name="FocusSink" IsTabStop="True" Background="Transparent"
                 Width="0" Height="0" Opacity="0" />
+
+        <Grid x:Name="DisconnectOverlay" Visibility="Collapsed">
+            <Border Background="#C0101010" />
+            <TextBlock Text="Please connect a DSPi device"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       FontSize="16" Foreground="#BBFFFFFF" />
+        </Grid>
     </Grid>
 </Window>
