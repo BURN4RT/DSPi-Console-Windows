@@ -55,6 +55,8 @@ public static class VendorCommands
     public const byte GetOutputMute = 0x77;
     public const byte SetOutputDelay = 0x78;
     public const byte GetOutputDelay = 0x79;
+    public const byte SetOutputPin = 0x7C;
+    public const byte GetOutputPin = 0x7D;
     public const byte GetSerial   = 0x7E;
     public const byte GetPlatform = 0x7F;
 }
@@ -68,6 +70,18 @@ public static class FlashResult
     public const byte ErrWrite = 1;
     public const byte ErrNoData = 2;
     public const byte ErrCrc = 3;
+}
+
+/// <summary>
+/// Pin configuration result codes from firmware.
+/// </summary>
+public static class PinConfigResult
+{
+    public const byte Success = 0x00;
+    public const byte InvalidPin = 0x01;
+    public const byte PinInUse = 0x02;
+    public const byte InvalidOutput = 0x03;
+    public const byte OutputActive = 0x04;
 }
 
 /// <summary>
@@ -924,6 +938,28 @@ public partial class DspDevice : ObservableObject, IDisposable
         var minor = response[2] >> 4;
         var patch = response[2] & 0x0F;
         return (platform, $"v{major}.{minor}.{patch}");
+    }
+
+    /// <summary>
+    /// Set output pin assignment. wValue = (pin &lt;&lt; 8) | outputIndex.
+    /// Returns status byte (PinConfigResult), or 0xFF on transfer failure.
+    /// </summary>
+    public byte SetOutputPin(int output, byte pin)
+    {
+        ushort wValue = (ushort)((pin << 8) | output);
+        var response = ControlTransferIn(VendorCommands.SetOutputPin, wValue, 1);
+        return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
+    }
+
+    /// <summary>
+    /// Get current GPIO pin for an output. wValue = outputIndex.
+    /// Returns pin number, or null on failure.
+    /// </summary>
+    public byte? GetOutputPin(int output)
+    {
+        var response = ControlTransferIn(VendorCommands.GetOutputPin, (ushort)output, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0];
     }
 
     #endregion

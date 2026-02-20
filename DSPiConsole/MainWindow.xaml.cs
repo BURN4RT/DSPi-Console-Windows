@@ -1739,7 +1739,7 @@ public sealed partial class MainWindow : Window
 
     private async void OnSettingsClick(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsDialog(ViewModel.Platform) { XamlRoot = Content.XamlRoot };
+        var dialog = new SettingsDialog(ViewModel) { XamlRoot = Content.XamlRoot };
         await dialog.ShowAsync();
     }
 

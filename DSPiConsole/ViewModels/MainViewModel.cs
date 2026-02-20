@@ -45,6 +45,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // Per-output matrix mixer state (indexed by output position in ActiveOutputs)
     private readonly bool[] _outputMuted = new bool[9];
 
+    // Output pin assignments: Dictionary<pinOutputId, byte>
+    private readonly Dictionary<int, byte> _outputPins = new();
+
     [ObservableProperty]
     private float _preampDb;
 
@@ -135,6 +138,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         _outputEnabled[outputIndex] = enabled;
         OutputEnabledChanged?.Invoke(outputIndex, enabled);
+        VisibilityChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public event Action<int, bool>? OutputEnabledChanged;
@@ -274,8 +278,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
         VisibilityChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    public bool GetChannelVisibility(Channel channel) => 
-        _channelVisibility.TryGetValue((int)channel.Id, out var v) && v;
+    public bool GetChannelVisibility(Channel channel)
+    {
+        if (!_channelVisibility.TryGetValue((int)channel.Id, out var v) || !v)
+            return false;
+        if (channel.IsOutput)
+        {
+            int outputIndex = GetOutputIndex((int)channel.Id);
+            if (outputIndex >= 0 && !IsOutputEnabled(outputIndex))
+                return false;
+        }
+        return true;
+    }
 
     public float GetChannelDelay(Channel channel) =>
         _channelDelays.TryGetValue((int)channel.Id, out var d) ? d : 0;
@@ -347,6 +361,26 @@ public partial class MainViewModel : ObservableObject, IDisposable
         Task.Run(() => _device.SetOutputEnable(output, enabled));
     }
 
+    // ── Pin assignment accessors ──
+
+    public byte GetOutputPinValue(int pinOutputId) =>
+        _outputPins.TryGetValue(pinOutputId, out var v) ? v : (byte)0;
+
+    public void FetchOutputPin(int pinOutputId)
+    {
+        var pin = _device.GetOutputPin(pinOutputId);
+        if (pin.HasValue)
+            _outputPins[pinOutputId] = pin.Value;
+    }
+
+    public byte SetOutputPinValue(int pinOutputId, byte pin)
+    {
+        var status = _device.SetOutputPin(pinOutputId, pin);
+        if (status == Usb.PinConfigResult.Success)
+            _outputPins[pinOutputId] = pin;
+        return status;
+    }
+
     #region USB Commands
 
     private void FetchAll()
@@ -382,6 +416,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 FetchOutputEnable(o);
                 FetchOutputMuteState(o);
             }
+
+            // Fetch pin assignments
+            int pinCount = Platform == "RP2350" ? 5 : 3;
+            for (int p = 0; p < pinCount; p++)
+                FetchOutputPin(p);
 
             // Dispatch FiltersChanged to run after all filter updates are processed
             _dispatcher.TryEnqueue(() => FiltersChanged?.Invoke(this, EventArgs.Empty));
@@ -583,7 +622,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (enabled.HasValue)
         {
             _outputEnabled[output] = enabled.Value;
-            _dispatcher.TryEnqueue(() => OutputEnabledChanged?.Invoke(output, enabled.Value));
+            _dispatcher.TryEnqueue(() =>
+            {
+                OutputEnabledChanged?.Invoke(output, enabled.Value);
+                VisibilityChanged?.Invoke(this, EventArgs.Empty);
+            });
         }
     }
 
