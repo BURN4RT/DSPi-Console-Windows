@@ -339,7 +339,14 @@
 
                 <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Hidden">
                     <Grid>
-                        <StackPanel x:Name="DashboardPanel" Spacing="16" />
+                        <StackPanel x:Name="DashboardPanel" Spacing="16">
+                            <StackPanel.ChildrenTransitions>
+                                <TransitionCollection>
+                                    <AddDeleteThemeTransition />
+                                    <RepositionThemeTransition />
+                                </TransitionCollection>
+                            </StackPanel.ChildrenTransitions>
+                        </StackPanel>
                         <StackPanel x:Name="ChannelEditorPanel" Visibility="Collapsed" Spacing="12" />
                     </Grid>
                 </ScrollViewer>

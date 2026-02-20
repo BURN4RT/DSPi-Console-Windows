@@ -189,12 +189,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
                             var newPlatform = info?.Platform ?? "";
                             _dispatcher.TryEnqueue(() => Platform = newPlatform);
                             System.Threading.Thread.Sleep(100);
-                            _dispatcher.TryEnqueue(FetchAll);
+                            FetchAll();
                         });
                     }
                     else
                     {
                         // Keep Platform so the UI layout stays until a new device connects
+                        ResetChannelData();
                     }
                 });
             }
@@ -218,6 +219,28 @@ public partial class MainViewModel : ObservableObject, IDisposable
         // Start device monitoring
         _device.StartMonitoring();
         _pollTimer.Start();
+    }
+
+    private void ResetChannelData()
+    {
+        foreach (var channel in Channel.All)
+        {
+            var id = (int)channel.Id;
+            if (_channelData.TryGetValue(id, out var filters))
+            {
+                for (int i = 0; i < filters.Count; i++)
+                    filters[i] = new FilterParams();
+            }
+            _channelDelays[id] = 0.0f;
+            if (channel.IsOutput)
+            {
+                _channelGains[id] = 0.0f;
+                _channelMutes[id] = false;
+            }
+        }
+        PreampDb = 0;
+        Bypass = false;
+        FiltersChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void UpdateChannelSelection(Channel? channel)
@@ -291,7 +314,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _matrixRouting[input, output] = enabled;
         _matrixGain[input, output] = gain;
         _matrixInvert[input, output] = invert;
-        _device.SetMatrixRoute(input, output, enabled, invert, gain);
+        Task.Run(() => _device.SetMatrixRoute(input, output, enabled, invert, gain));
         MatrixRouteChanged?.Invoke(input, output);
     }
 
@@ -307,7 +330,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         if (output < 0 || output >= _outputMuted.Length) return;
         _outputMuted[output] = muted;
-        _device.SetOutputMute(output, muted);
+        Task.Run(() => _device.SetOutputMute(output, muted));
         MatrixOutputMuteChanged?.Invoke(output);
     }
 
@@ -321,7 +344,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public void SetOutputEnableUsb(int output, bool enabled)
     {
-        _device.SetOutputEnable(output, enabled);
+        Task.Run(() => _device.SetOutputEnable(output, enabled));
     }
 
     #region USB Commands
@@ -385,7 +408,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             filters[band] = p;
         }
-        _device.SetFilter(channel, band, p);
+        Task.Run(() => _device.SetFilter(channel, band, p));
         FiltersChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -406,7 +429,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _channelDelays[channel] = ms;
         int outputIndex = GetOutputIndex(channel);
         if (outputIndex >= 0)
-            _device.SetOutputDelay(outputIndex, ms);
+            Task.Run(() => _device.SetOutputDelay(outputIndex, ms));
         OnPropertyChanged(nameof(ChannelDelays));
         if (outputIndex >= 0)
             MatrixOutputDelayChanged?.Invoke(outputIndex);
@@ -445,7 +468,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _channelGains[channelId] = db;
         int outputIndex = GetOutputIndex(channelId);
         if (outputIndex < 0) return;
-        _device.SetOutputGain(outputIndex, db);
+        Task.Run(() => _device.SetOutputGain(outputIndex, db));
         OnPropertyChanged(nameof(ChannelGains));
         MatrixOutputGainChanged?.Invoke(outputIndex);
     }
@@ -475,7 +498,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _channelMutes[channelId] = muted;
         int outputIndex = GetOutputIndex(channelId);
         if (outputIndex < 0) return;
-        _device.SetOutputMute(outputIndex, muted);
+        Task.Run(() => _device.SetOutputMute(outputIndex, muted));
         OnPropertyChanged(nameof(ChannelMutes));
     }
 
@@ -572,50 +595,32 @@ public partial class MainViewModel : ObservableObject, IDisposable
             _outputMuted[output] = muted.Value;
     }
 
-    partial void OnLoudnessEnabledChanged(bool value)
-    {
-        _device.SetLoudnessEnabled(value);
-    }
+    partial void OnLoudnessEnabledChanged(bool value) =>
+        Task.Run(() => _device.SetLoudnessEnabled(value));
 
-    partial void OnLoudnessRefSPLChanged(float value)
-    {
-        _device.SetLoudnessRefSPL(value);
-    }
+    partial void OnLoudnessRefSPLChanged(float value) =>
+        Task.Run(() => _device.SetLoudnessRefSPL(value));
 
-    partial void OnLoudnessIntensityChanged(float value)
-    {
-        _device.SetLoudnessIntensity(value);
-    }
+    partial void OnLoudnessIntensityChanged(float value) =>
+        Task.Run(() => _device.SetLoudnessIntensity(value));
 
-    partial void OnCrossfeedEnabledChanged(bool value)
-    {
-        _device.SetCrossfeedEnabled(value);
-    }
+    partial void OnCrossfeedEnabledChanged(bool value) =>
+        Task.Run(() => _device.SetCrossfeedEnabled(value));
 
-    partial void OnCrossfeedPresetChanged(int value)
-    {
-        _device.SetCrossfeedPreset(value);
-    }
+    partial void OnCrossfeedPresetChanged(int value) =>
+        Task.Run(() => _device.SetCrossfeedPreset(value));
 
-    partial void OnCrossfeedFreqChanged(float value)
-    {
-        _device.SetCrossfeedFreq(value);
-    }
+    partial void OnCrossfeedFreqChanged(float value) =>
+        Task.Run(() => _device.SetCrossfeedFreq(value));
 
-    partial void OnCrossfeedFeedChanged(float value)
-    {
-        _device.SetCrossfeedFeed(value);
-    }
+    partial void OnCrossfeedFeedChanged(float value) =>
+        Task.Run(() => _device.SetCrossfeedFeed(value));
 
-    partial void OnCrossfeedItdChanged(bool value)
-    {
-        _device.SetCrossfeedItd(value);
-    }
+    partial void OnCrossfeedItdChanged(bool value) =>
+        Task.Run(() => _device.SetCrossfeedItd(value));
 
-    partial void OnPreampDbChanged(float value)
-    {
-        _device.SetPreamp(value);
-    }
+    partial void OnPreampDbChanged(float value) =>
+        Task.Run(() => _device.SetPreamp(value));
 
     private bool FetchPreamp()
     {
@@ -634,7 +639,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnBypassChanged(bool value)
     {
-        _device.SetBypass(value);
+        Task.Run(() => _device.SetBypass(value));
         FiltersChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -668,44 +673,50 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void Reconnect()
     {
-        _device.Reconnect();
+        Task.Run(() => _device.Reconnect());
     }
 
     /// <summary>
     /// Save current parameters to device flash.
     /// </summary>
-    public byte SaveParams()
+    public async Task<byte> SaveParams()
     {
         if (!IsDeviceConnected) return FlashResult.ErrWrite;
-        return _device.SaveParams();
+        return await Task.Run(() => _device.SaveParams());
     }
 
     /// <summary>
     /// Load parameters from device flash, refreshing UI.
     /// </summary>
-    public byte LoadParams()
+    public async Task<byte> LoadParams()
     {
         if (!IsDeviceConnected) return FlashResult.ErrWrite;
-        var result = _device.LoadParams();
-        if (result == FlashResult.Ok)
+        return await Task.Run(() =>
         {
-            FetchAll();
-        }
-        return result;
+            var result = _device.LoadParams();
+            if (result == FlashResult.Ok)
+            {
+                FetchAll();
+            }
+            return result;
+        });
     }
 
     /// <summary>
     /// Reset all parameters to factory defaults, refreshing UI.
     /// </summary>
-    public byte FactoryResetParams()
+    public async Task<byte> FactoryResetParams()
     {
         if (!IsDeviceConnected) return FlashResult.ErrWrite;
-        var result = _device.FactoryReset();
-        if (result == FlashResult.Ok)
+        return await Task.Run(() =>
         {
-            FetchAll();
-        }
-        return result;
+            var result = _device.FactoryReset();
+            if (result == FlashResult.Ok)
+            {
+                FetchAll();
+            }
+            return result;
+        });
     }
 
     #endregion

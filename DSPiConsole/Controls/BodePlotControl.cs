@@ -30,6 +30,9 @@ public sealed class BodePlotControl : UserControl
     private readonly DispatcherTimer _animTimer;
     private bool _isAnimating;
 
+    // Curve fade opacity (1 = visible, 0 = hidden)
+    private double _curveOpacity = 1.0;
+
     // Cached polyline references per channel (for glow: 3 per channel, otherwise 1)
     private readonly Dictionary<int, List<Polyline>> _channelPolylines = new();
 
@@ -205,6 +208,18 @@ public sealed class BodePlotControl : UserControl
         StartAnimation();
     }
 
+    public double GetCurveOpacity() => _curveOpacity;
+
+    public void SetCurveOpacity(double opacity)
+    {
+        _curveOpacity = Math.Clamp(opacity, 0.0, 1.0);
+        foreach (var polylines in _channelPolylines.Values)
+        {
+            foreach (var p in polylines)
+                p.Opacity = _curveOpacity;
+        }
+    }
+
     private void Redraw()
     {
         if (_canvas == null) return;
@@ -280,6 +295,8 @@ public sealed class BodePlotControl : UserControl
             _canvas.Children.Add(mainLine);
             polylines.Add(mainLine);
 
+            foreach (var p in polylines)
+                p.Opacity = _curveOpacity;
             _channelPolylines[id] = polylines;
         }
     }

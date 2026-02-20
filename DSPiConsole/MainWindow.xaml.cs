@@ -1,3 +1,4 @@
+using System.Linq;
 using DSPiConsole.Controls;
 using DSPiConsole.Core.Models;
 using DSPiConsole.Dialogs;
@@ -11,6 +12,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.Storage.Pickers;
 using Windows.UI;
@@ -43,6 +45,9 @@ public sealed partial class MainWindow : Window
     private int _selectedChannelIndex = 0;
     private readonly List<ListViewItem> _channelListItems = new();
     private readonly Dictionary<int, TextBlock> _channelNameTexts = new();
+
+    // Dashboard rebuild debounce
+    private DispatcherTimer? _dashboardDebounce;
 
     // Pre-built output channel items: keyed by output index
     private readonly Dictionary<int, ListViewItem> _outputChannelItems = new();
@@ -86,11 +91,7 @@ public sealed partial class MainWindow : Window
         ViewModel.FiltersChanged += (_, _) =>
         {
             BodePlot.Invalidate();
-            // Refresh dashboard if it's visible
-            if (DashboardPanel.Visibility == Visibility.Visible)
-            {
-                InitializeDashboard();
-            }
+            ScheduleDashboardRefresh();
         };
         ViewModel.VisibilityChanged += (_, _) =>
         {
@@ -108,7 +109,7 @@ public sealed partial class MainWindow : Window
             DispatcherQueue.TryEnqueue(() => { InitializeChannelLists(); InitializeLegend(); });
 
         ViewModel.OutputEnabledChanged += (outputIndex, enabled) =>
-            DispatcherQueue.TryEnqueue(() => { OnOutputEnabledChanged(outputIndex, enabled); InitializeLegend(); });
+            DispatcherQueue.TryEnqueue(() => { OnOutputEnabledChanged(outputIndex, enabled); InitializeLegend(); if (DashboardPanel.Visibility == Visibility.Visible) UpdateDashboardCards(); });
 
         ViewModel.MatrixOutputGainChanged += outputIndex =>
             DispatcherQueue.TryEnqueue(() => SyncGainFromViewModel(outputIndex));
@@ -177,6 +178,10 @@ public sealed partial class MainWindow : Window
         _outputChannelItems.Clear();
 
         InputChannelsList.Items.Clear();
+        OutputChannelsList.Items.Clear();
+
+        if (!ViewModel.IsDeviceConnected) return;
+
         int index = 1;
         foreach (var channel in Channel.Inputs)
         {
@@ -186,7 +191,6 @@ public sealed partial class MainWindow : Window
         }
 
         // Pre-build all output items and add enabled ones
-        OutputChannelsList.Items.Clear();
         for (int o = 0; o < ViewModel.ActiveOutputs.Count; o++)
         {
             var channel = ViewModel.ActiveOutputs[o];
@@ -460,28 +464,113 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void ScheduleDashboardRefresh()
+    {
+        if (DashboardPanel.Visibility != Visibility.Visible) return;
+        _dashboardDebounce?.Stop();
+        _dashboardDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+        _dashboardDebounce.Tick += (s, e) =>
+        {
+            _dashboardDebounce!.Stop();
+            InitializeDashboard();
+        };
+        _dashboardDebounce.Start();
+    }
+
     private void InitializeDashboard()
     {
+        var savedTransitions = DashboardPanel.ChildrenTransitions;
+        DashboardPanel.ChildrenTransitions = new Microsoft.UI.Xaml.Media.Animation.TransitionCollection();
+
         DashboardPanel.Children.Clear();
 
-        // Stereo Input Card
-        DashboardPanel.Children.Add(CreateStereoDashboardCard("STEREO INPUT (USB)", Channel.MasterLeft, Channel.MasterRight, false));
+        if (!ViewModel.IsDeviceConnected)
+        {
+            DashboardPanel.ChildrenTransitions = savedTransitions;
+            return;
+        }
 
-        // Bottom row with SPDIF and Sub
-        var bottomRow = new Grid();
-        bottomRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        bottomRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
-        bottomRow.ColumnSpacing = 16;
+        foreach (var (key, card) in BuildDashboardCards())
+        {
+            card.Tag = key;
+            DashboardPanel.Children.Add(card);
+        }
 
-        var spdifCard = CreateStereoDashboardCard("STEREO OUTPUT (SPDIF)", Channel.Spdif1L, Channel.Spdif1R, true);
-        Grid.SetColumn(spdifCard, 0);
-        bottomRow.Children.Add(spdifCard);
+        DashboardPanel.ChildrenTransitions = savedTransitions;
+    }
 
-        var subCard = CreateMonoDashboardCard(Channel.Pdm);
-        Grid.SetColumn(subCard, 1);
-        bottomRow.Children.Add(subCard);
+    private void UpdateDashboardCards()
+    {
+        if (!ViewModel.IsDeviceConnected) return;
 
-        DashboardPanel.Children.Add(bottomRow);
+        var desired = BuildDashboardCards();
+        var desiredKeys = desired.Select(d => d.key).ToList();
+
+        // Remove cards that should no longer exist
+        for (int i = DashboardPanel.Children.Count - 1; i >= 0; i--)
+        {
+            var key = ((FrameworkElement)DashboardPanel.Children[i]).Tag as string;
+            if (key == null || !desiredKeys.Contains(key))
+                DashboardPanel.Children.RemoveAt(i);
+        }
+
+        // Get current keys after removal
+        var currentKeys = DashboardPanel.Children
+            .Cast<FrameworkElement>()
+            .Select(c => c.Tag as string)
+            .ToList();
+
+        // Add missing cards at correct positions
+        for (int i = 0; i < desired.Count; i++)
+        {
+            var (key, card) = desired[i];
+            if (!currentKeys.Contains(key))
+            {
+                card.Tag = key;
+                DashboardPanel.Children.Insert(Math.Min(i, DashboardPanel.Children.Count), card);
+                currentKeys.Insert(Math.Min(i, currentKeys.Count), key);
+            }
+        }
+    }
+
+    private List<(string key, FrameworkElement card)> BuildDashboardCards()
+    {
+        var cards = new List<(string key, FrameworkElement card)>();
+
+        // Stereo Input Card (always shown when connected)
+        cards.Add(("input", CreateStereoDashboardCard("STEREO INPUT (USB)", Channel.MasterLeft, Channel.MasterRight, false)));
+
+        // Build output cards for enabled channels, pairing stereo L/R
+        var outputs = ViewModel.ActiveOutputs;
+        var processed = new HashSet<int>();
+
+        for (int o = 0; o < outputs.Count; o++)
+        {
+            if (!ViewModel.IsOutputEnabled(o) || processed.Contains(o)) continue;
+
+            var ch = outputs[o];
+
+            // Check for stereo pair: consecutive L/R channels with adjacent IDs
+            int pairIndex = -1;
+            if (o + 1 < outputs.Count && (int)outputs[o + 1].Id == (int)ch.Id + 1 && ViewModel.IsOutputEnabled(o + 1))
+                pairIndex = o + 1;
+
+            if (pairIndex >= 0)
+            {
+                var left = ch;
+                var right = outputs[pairIndex];
+                cards.Add(($"{left.ShortName}-{right.ShortName}", CreateStereoDashboardCard($"{left.Name} / {right.Name}", left, right, true)));
+                processed.Add(o);
+                processed.Add(pairIndex);
+            }
+            else
+            {
+                cards.Add((ch.ShortName, CreateMonoDashboardCard(ch)));
+                processed.Add(o);
+            }
+        }
+
+        return cards;
     }
 
     private Border CreateStereoDashboardCard(string title, Channel left, Channel right, bool showDelay)
@@ -1098,6 +1187,72 @@ public sealed partial class MainWindow : Window
     {
         ConnectionIndicator.Fill = new SolidColorBrush(ViewModel.IsDeviceConnected ? Colors.LimeGreen : Colors.Red);
         ConnectionStatusText.Text = ViewModel.IsDeviceConnected ? "Connected" : (ViewModel.ErrorMessage ?? "Disconnected");
+
+        if (!ViewModel.IsDeviceConnected)
+        {
+            InputChannelsList.Items.Clear();
+            OutputChannelsList.Items.Clear();
+            _channelListItems.Clear();
+            _outputChannelItems.Clear();
+
+            FadeCurves(0);
+            FadeElement(LegendPanel, 0);
+
+            // Return to empty dashboard view
+            _selectedChannel = null;
+            ChannelEditorPanel.Visibility = Visibility.Collapsed;
+            ChannelEditorPanel.Children.Clear();
+            DashboardPanel.Visibility = Visibility.Visible;
+            DashboardPanel.Children.Clear();
+        }
+        else
+        {
+            InitializeChannelLists();
+            InitializeLegend();
+
+            FadeCurves(1);
+            FadeElement(LegendPanel, 1);
+        }
+    }
+
+    private DispatcherTimer? _curveFadeTimer;
+    private double _curveFadeTarget;
+
+    private void FadeCurves(double targetOpacity)
+    {
+        _curveFadeTarget = targetOpacity;
+        _curveFadeTimer?.Stop();
+        _curveFadeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _curveFadeTimer.Tick += (s, e) =>
+        {
+            double current = BodePlot.GetCurveOpacity();
+            double diff = _curveFadeTarget - current;
+            if (Math.Abs(diff) < 0.02)
+            {
+                BodePlot.SetCurveOpacity(_curveFadeTarget);
+                _curveFadeTimer.Stop();
+            }
+            else
+            {
+                BodePlot.SetCurveOpacity(current + diff * 0.15);
+            }
+        };
+        _curveFadeTimer.Start();
+    }
+
+    private void FadeElement(UIElement element, double targetOpacity)
+    {
+        var animation = new DoubleAnimation
+        {
+            To = targetOpacity,
+            Duration = new Duration(TimeSpan.FromMilliseconds(250)),
+            EasingFunction = new CubicEase { EasingMode = targetOpacity == 0 ? EasingMode.EaseOut : EasingMode.EaseIn }
+        };
+        var sb = new Storyboard();
+        sb.Children.Add(animation);
+        Storyboard.SetTarget(animation, element);
+        Storyboard.SetTargetProperty(animation, "Opacity");
+        sb.Begin();
     }
 
     private void UpdatePreampDisplay()
@@ -1408,7 +1563,7 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            var flashResult = ViewModel.SaveParams();
+            var flashResult = await ViewModel.SaveParams();
             if (flashResult == Usb.FlashResult.Ok)
             {
                 await ShowSuccessDialog("Parameters saved successfully");
@@ -1441,7 +1596,7 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            var flashResult = ViewModel.LoadParams();
+            var flashResult = await ViewModel.LoadParams();
             switch (flashResult)
             {
                 case Usb.FlashResult.Ok:
@@ -1481,7 +1636,7 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            var flashResult = ViewModel.FactoryResetParams();
+            var flashResult = await ViewModel.FactoryResetParams();
             if (flashResult == Usb.FlashResult.Ok)
             {
                 await ShowSuccessDialog("Factory reset complete");
