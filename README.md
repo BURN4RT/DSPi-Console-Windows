@@ -145,17 +145,6 @@ DSPiConsole-Windows/
     └── DspDevice.cs                 # LibUsbDotNet device handling
 ```
 
-## USB Driver Setup
-
-If the device is not detected:
-
-1. Download and run [Zadig](https://zadig.akeo.ie/)
-2. Select **Options > List All Devices**
-3. Select **Weeb Labs DSPi (Interface 2)** from the dropdown
-4. Select **WinUSB** as the target driver
-5. Click **Install Driver**
-6. Click the reconnect button in the application
-
 ## License
 
 GNU General Public License v3.0
