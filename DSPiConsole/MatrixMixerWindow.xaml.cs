@@ -348,9 +348,9 @@ public sealed partial class MatrixMixerWindow : Window
                 {
                     e.Handled = true;
                     int delta = e.GetCurrentPoint(text).Properties.MouseWheelDelta;
-                    float step = delta > 0 ? 0.1f : -0.1f;
+                    float step = delta > 0 ? 1f : -1f;
                     float current = _viewModel.GetOutputDelayMs(o);
-                    float newDelay = Math.Max(0f, MathF.Round((current + step) * 10f) / 10f);
+                    float newDelay = Math.Max(0f, MathF.Round(current + step));
                     _viewModel.SetOutputDelayMs(o, newDelay);
                 };
                 _outputDelayTexts[o] = text;
@@ -941,7 +941,7 @@ public sealed partial class MatrixMixerWindow : Window
         db == 0f ? "0 dB" : $"{db:+0.#;-0.#} dB";
 
     private static string FormatDelay(float ms) =>
-        ms == 0f ? "0 ms" : $"{ms:0.#} ms";
+        ms == 0f ? "0 ms" : $"{ms:0} ms";
 
     private static bool ParseGainText(string text, out float value)
     {

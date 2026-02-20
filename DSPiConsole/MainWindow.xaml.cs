@@ -49,6 +49,9 @@ public sealed partial class MainWindow : Window
     // Dashboard rebuild debounce
     private DispatcherTimer? _dashboardDebounce;
 
+    // Dashboard header stats TextBlocks: keyed by channelId
+    private readonly Dictionary<int, TextBlock> _dashboardHeaderStats = new();
+
     // Pre-built output channel items: keyed by output index
     private readonly Dictionary<int, ListViewItem> _outputChannelItems = new();
 
@@ -479,6 +482,8 @@ public sealed partial class MainWindow : Window
 
     private void InitializeDashboard()
     {
+        _dashboardHeaderStats.Clear();
+
         var savedTransitions = DashboardPanel.ChildrenTransitions;
         DashboardPanel.ChildrenTransitions = new Microsoft.UI.Xaml.Media.Animation.TransitionCollection();
 
@@ -503,6 +508,7 @@ public sealed partial class MainWindow : Window
     {
         if (!ViewModel.IsDeviceConnected) return;
 
+        _dashboardHeaderStats.Clear();
         var desired = BuildDashboardCards();
         var desiredKeys = desired.Select(d => d.key).ToList();
 
@@ -651,14 +657,16 @@ public sealed partial class MainWindow : Window
             var gain = ViewModel.GetChannelGain(channel);
             var isMuted = ViewModel.GetChannelMute(channel);
 
-            panel.Children.Add(new TextBlock
+            var statsText = new TextBlock
             {
                 Text = $"{gain:F1}dB  {ViewModel.GetChannelDelay(channel):F0}ms{(isMuted ? "  MUTED" : "")}",
                 FontSize = 9,
                 FontFamily = new FontFamily("Cascadia Code, Consolas"),
                 Foreground = new SolidColorBrush(isMuted ? Color.FromArgb(255, 200, 80, 80) : Colors.Gray),
                 Margin = new Thickness(8, 0, 0, 0)
-            });
+            };
+            _dashboardHeaderStats[(int)channel.Id] = statsText;
+            panel.Children.Add(statsText);
         }
 
         header.Child = panel;
@@ -818,29 +826,12 @@ public sealed partial class MainWindow : Window
 
         ChannelEditorPanel.Children.Clear();
 
-        // Title
-        var titleRow = new Grid();
-        titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var title = new TextBlock
-        {
-            Text = $"{channel.Name} Filters",
-            FontSize = 20,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
-        };
-        Grid.SetColumn(title, 0);
-        titleRow.Children.Add(title);
-
         if (channel.Id == ChannelId.MasterLeft || channel.Id == ChannelId.MasterRight)
         {
-            var clearBtn = new Button { Content = "Clear All Master PEQ" };
+            var clearBtn = new Button { Content = "Clear All Master PEQ", HorizontalAlignment = HorizontalAlignment.Right };
             clearBtn.Click += (s, e) => ViewModel.ClearAllMasterCommand.Execute(null);
-            Grid.SetColumn(clearBtn, 1);
-            titleRow.Children.Add(clearBtn);
+            ChannelEditorPanel.Children.Add(clearBtn);
         }
-
-        ChannelEditorPanel.Children.Add(titleRow);
 
         // Output channel controls: Gain, Delay, Mute
         if (channel.IsOutput)
@@ -1437,34 +1428,52 @@ public sealed partial class MainWindow : Window
 
     private void SyncGainFromViewModel(int outputIndex)
     {
-        if (_selectedChannel == null || !_selectedChannel.IsOutput) return;
         var outputs = ViewModel.ActiveOutputs;
         if (outputIndex < 0 || outputIndex >= outputs.Count) return;
-        if (_selectedChannel.Id != outputs[outputIndex].Id) return;
+        var channel = outputs[outputIndex];
 
-        float gain = ViewModel.GetChannelGain(_selectedChannel);
-        _isUpdatingGain = true;
-        if (_currentGainSlider != null)
-            _currentGainSlider.Value = gain;
-        if (_currentGainTextBox != null)
-            _currentGainTextBox.Text = gain.ToString("F1");
-        _isUpdatingGain = false;
+        RefreshDashboardHeaderStats(channel);
+
+        if (_selectedChannel != null && _selectedChannel.Id == channel.Id)
+        {
+            float gain = ViewModel.GetChannelGain(_selectedChannel);
+            _isUpdatingGain = true;
+            if (_currentGainSlider != null)
+                _currentGainSlider.Value = gain;
+            if (_currentGainTextBox != null)
+                _currentGainTextBox.Text = gain.ToString("F1");
+            _isUpdatingGain = false;
+        }
     }
 
     private void SyncDelayFromViewModel(int outputIndex)
     {
-        if (_selectedChannel == null || !_selectedChannel.IsOutput) return;
         var outputs = ViewModel.ActiveOutputs;
         if (outputIndex < 0 || outputIndex >= outputs.Count) return;
-        if (_selectedChannel.Id != outputs[outputIndex].Id) return;
+        var channel = outputs[outputIndex];
 
-        float delay = ViewModel.GetChannelDelay(_selectedChannel);
-        _isUpdatingDelay = true;
-        if (_currentDelaySlider != null)
-            _currentDelaySlider.Value = delay;
-        if (_currentDelayTextBox != null)
-            _currentDelayTextBox.Text = delay.ToString("F0");
-        _isUpdatingDelay = false;
+        RefreshDashboardHeaderStats(channel);
+
+        if (_selectedChannel != null && _selectedChannel.Id == channel.Id)
+        {
+            float delay = ViewModel.GetChannelDelay(_selectedChannel);
+            _isUpdatingDelay = true;
+            if (_currentDelaySlider != null)
+                _currentDelaySlider.Value = delay;
+            if (_currentDelayTextBox != null)
+                _currentDelayTextBox.Text = delay.ToString("F0");
+            _isUpdatingDelay = false;
+        }
+    }
+
+    private void RefreshDashboardHeaderStats(Channel channel)
+    {
+        if (!_dashboardHeaderStats.TryGetValue((int)channel.Id, out var tb)) return;
+        float gain = ViewModel.GetChannelGain(channel);
+        float delay = ViewModel.GetChannelDelay(channel);
+        bool muted = ViewModel.GetChannelMute(channel);
+        tb.Text = $"{gain:F1}dB  {delay:F0}ms{(muted ? "  MUTED" : "")}";
+        tb.Foreground = new SolidColorBrush(muted ? Color.FromArgb(255, 200, 80, 80) : Colors.Gray);
     }
 
     private void OnMuteToggleClick(object sender, RoutedEventArgs e)
@@ -1482,6 +1491,8 @@ public sealed partial class MainWindow : Window
                     ? new SolidColorBrush(Color.FromArgb(255, 80, 80, 80))
                     : new SolidColorBrush(Color.FromArgb(200, 200, 200, 200));
             }
+
+            RefreshDashboardHeaderStats(channel);
         }
     }
 
