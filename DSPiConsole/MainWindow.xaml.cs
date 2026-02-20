@@ -1872,7 +1872,7 @@ public sealed partial class MainWindow : Window
     private async Task ImportSingleChannelFilters(List<FilterParams> filters)
     {
         var dialog = new ChannelSelectionDialog { XamlRoot = Content.XamlRoot };
-        dialog.ConfigureForSingleChannel(filters.Count);
+        dialog.ConfigureForSingleChannel(filters.Count, ViewModel.ActiveOutputs, ViewModel.IsOutputEnabled);
 
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)
@@ -1893,7 +1893,7 @@ public sealed partial class MainWindow : Window
     private async Task ImportMultiChannelFilters(Dictionary<int, List<FilterParams>> channelFilters)
     {
         var dialog = new ChannelSelectionDialog { XamlRoot = Content.XamlRoot };
-        dialog.ConfigureForMultiChannel(channelFilters.Keys);
+        dialog.ConfigureForMultiChannel(channelFilters.Keys, ViewModel.ActiveOutputs, ViewModel.IsOutputEnabled);
 
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)

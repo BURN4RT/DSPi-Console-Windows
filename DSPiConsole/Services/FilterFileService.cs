@@ -22,14 +22,15 @@ public static class FilterFileService
 
         foreach (var channel in Channel.All)
         {
-            sb.AppendLine($"[{channel.Name}]");
+            if (!channelData.TryGetValue((int)channel.Id, out var filters))
+                continue;
+            if (!filters.Any(f => f.Type != FilterType.Flat))
+                continue;
 
-            if (channelData.TryGetValue((int)channel.Id, out var filters))
+            sb.AppendLine($"[{channel.Name}]");
+            for (int i = 0; i < filters.Count; i++)
             {
-                for (int i = 0; i < filters.Count; i++)
-                {
-                    sb.AppendLine(FormatFilter(i + 1, filters[i]));
-                }
+                sb.AppendLine(FormatFilter(i + 1, filters[i]));
             }
             sb.AppendLine();
         }

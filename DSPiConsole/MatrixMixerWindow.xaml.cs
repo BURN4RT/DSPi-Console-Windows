@@ -36,8 +36,8 @@ public sealed partial class MatrixMixerWindow : Window
 
     // Output controls: key = outputIndex
     private readonly Dictionary<int, Button> _outputEnableButtons = new();
-    private readonly Dictionary<int, TextBlock> _outputGainTexts = new();
-    private readonly Dictionary<int, TextBlock> _outputDelayTexts = new();
+    private readonly Dictionary<int, TextBox> _outputGainTexts = new();
+    private readonly Dictionary<int, TextBox> _outputDelayTexts = new();
     private readonly Dictionary<int, Button> _outputMuteButtons = new();
     private readonly Dictionary<int, bool> _outputMuted = new();
 
@@ -309,14 +309,15 @@ public sealed partial class MatrixMixerWindow : Window
             makeCell: o =>
             {
                 float initGain = _viewModel.GetOutputGainDb(o);
-                var text = new TextBlock
+                var text = new TextBox
                 {
                     Text = FormatGain(initGain),
-                    FontSize = 12,
+                    FontSize = 11,
                     FontFamily = new FontFamily("Cascadia Code, Consolas"),
                     Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(180, 255, 255, 255)),
                     HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center
+                    Style = (Style)RootGrid.Resources["InlineTextBoxStyle"],
+                    Width = 60
                 };
                 text.PointerWheelChanged += (s, e) =>
                 {
@@ -327,6 +328,33 @@ public sealed partial class MatrixMixerWindow : Window
                     float newGain = Math.Clamp(current + step, -60f, 12f);
                     _viewModel.SetOutputGainDb(o, newGain);
                 };
+                text.KeyDown += (s, e) =>
+                {
+                    if (e.Key == Windows.System.VirtualKey.Enter)
+                    {
+                        e.Handled = true;
+                        if (ParseGainText(text.Text, out float val))
+                            _viewModel.SetOutputGainDb(o, Math.Clamp(val, -60f, 12f));
+                        FocusSink.Focus(FocusState.Programmatic);
+                    }
+                    else if (e.Key == Windows.System.VirtualKey.Escape)
+                    {
+                        text.Text = FormatGain(_viewModel.GetOutputGainDb(o));
+                        FocusSink.Focus(FocusState.Programmatic);
+                    }
+                };
+                text.LostFocus += (s, e) =>
+                {
+                    if (ParseGainText(text.Text, out float val))
+                        _viewModel.SetOutputGainDb(o, Math.Clamp(val, -60f, 12f));
+                    else
+                        text.Text = FormatGain(_viewModel.GetOutputGainDb(o));
+                };
+                text.RightTapped += (s, e) =>
+                {
+                    e.Handled = true;
+                    _viewModel.SetOutputGainDb(o, 0f);
+                };
                 _outputGainTexts[o] = text;
                 return text;
             });
@@ -335,14 +363,15 @@ public sealed partial class MatrixMixerWindow : Window
             makeCell: o =>
             {
                 float initDelay = _viewModel.GetOutputDelayMs(o);
-                var text = new TextBlock
+                var text = new TextBox
                 {
                     Text = FormatDelay(initDelay),
-                    FontSize = 12,
+                    FontSize = 11,
                     FontFamily = new FontFamily("Cascadia Code, Consolas"),
                     Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(180, 255, 255, 255)),
                     HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center
+                    Style = (Style)RootGrid.Resources["InlineTextBoxStyle"],
+                    Width = 60
                 };
                 text.PointerWheelChanged += (s, e) =>
                 {
@@ -352,6 +381,33 @@ public sealed partial class MatrixMixerWindow : Window
                     float current = _viewModel.GetOutputDelayMs(o);
                     float newDelay = Math.Max(0f, MathF.Round(current + step));
                     _viewModel.SetOutputDelayMs(o, newDelay);
+                };
+                text.KeyDown += (s, e) =>
+                {
+                    if (e.Key == Windows.System.VirtualKey.Enter)
+                    {
+                        e.Handled = true;
+                        if (ParseDelayText(text.Text, out float val))
+                            _viewModel.SetOutputDelayMs(o, Math.Max(0f, MathF.Round(val)));
+                        FocusSink.Focus(FocusState.Programmatic);
+                    }
+                    else if (e.Key == Windows.System.VirtualKey.Escape)
+                    {
+                        text.Text = FormatDelay(_viewModel.GetOutputDelayMs(o));
+                        FocusSink.Focus(FocusState.Programmatic);
+                    }
+                };
+                text.LostFocus += (s, e) =>
+                {
+                    if (ParseDelayText(text.Text, out float val))
+                        _viewModel.SetOutputDelayMs(o, Math.Max(0f, MathF.Round(val)));
+                    else
+                        text.Text = FormatDelay(_viewModel.GetOutputDelayMs(o));
+                };
+                text.RightTapped += (s, e) =>
+                {
+                    e.Handled = true;
+                    _viewModel.SetOutputDelayMs(o, 0f);
                 };
                 _outputDelayTexts[o] = text;
                 return text;
@@ -810,7 +866,8 @@ public sealed partial class MatrixMixerWindow : Window
 
     private void SyncOutputGainUI(int output)
     {
-        if (_outputGainTexts.TryGetValue(output, out var text))
+        if (_outputGainTexts.TryGetValue(output, out var text) &&
+            text.FocusState == FocusState.Unfocused)
             text.Text = FormatGain(_viewModel.GetOutputGainDb(output));
     }
 
@@ -829,7 +886,8 @@ public sealed partial class MatrixMixerWindow : Window
 
     private void SyncOutputDelayUI(int output)
     {
-        if (_outputDelayTexts.TryGetValue(output, out var text))
+        if (_outputDelayTexts.TryGetValue(output, out var text) &&
+            text.FocusState == FocusState.Unfocused)
             text.Text = FormatDelay(_viewModel.GetOutputDelayMs(output));
     }
 
@@ -945,8 +1003,13 @@ public sealed partial class MatrixMixerWindow : Window
 
     private static bool ParseGainText(string text, out float value)
     {
-        // Strip " dB" suffix and whitespace, then parse the number
         var s = text.Replace("dB", "").Trim();
+        return float.TryParse(s, out value);
+    }
+
+    private static bool ParseDelayText(string text, out float value)
+    {
+        var s = text.Replace("ms", "").Trim();
         return float.TryParse(s, out value);
     }
 }
