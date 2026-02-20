@@ -108,6 +108,49 @@ public partial class MainViewModel : ObservableObject, IDisposable
         ActiveOutputsChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    // ── PDM / EQ-worker conflict helpers ──
+
+    public int PdmOutputIndex => Platform == "RP2040" ? 4 : 8;
+    private int EqWorkerStart => 2;
+    private int EqWorkerEnd => Platform == "RP2040" ? 4 : 8; // exclusive
+
+    public bool WouldConflict(int outputIndex)
+    {
+        if (outputIndex == PdmOutputIndex)
+        {
+            for (int i = EqWorkerStart; i < EqWorkerEnd; i++)
+                if (IsOutputEnabled(i)) return true;
+            return false;
+        }
+        if (outputIndex >= EqWorkerStart && outputIndex < EqWorkerEnd)
+            return IsOutputEnabled(PdmOutputIndex);
+        return false;
+    }
+
+    public async Task SwitchToPdmAsync()
+    {
+        await Task.Run(() =>
+        {
+            for (int i = EqWorkerStart; i < EqWorkerEnd; i++)
+                _device.SetOutputEnable(i, false);
+            _device.SetOutputEnable(PdmOutputIndex, true);
+            for (int i = EqWorkerStart; i < EqWorkerEnd; i++)
+                FetchOutputEnable(i);
+            FetchOutputEnable(PdmOutputIndex);
+        });
+    }
+
+    public async Task SwitchFromPdmAsync(int enabling)
+    {
+        await Task.Run(() =>
+        {
+            _device.SetOutputEnable(PdmOutputIndex, false);
+            _device.SetOutputEnable(enabling, true);
+            FetchOutputEnable(PdmOutputIndex);
+            FetchOutputEnable(enabling);
+        });
+    }
+
     public IReadOnlyDictionary<int, ObservableCollection<FilterParams>> ChannelData => _channelData;
     public IReadOnlyDictionary<int, bool> ChannelVisibility => _channelVisibility;
     public IReadOnlyDictionary<int, float> ChannelDelays => _channelDelays;

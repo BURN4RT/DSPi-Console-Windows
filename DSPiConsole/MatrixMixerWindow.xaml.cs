@@ -29,6 +29,7 @@ public sealed partial class MatrixMixerWindow : Window
     private readonly Dictionary<(int, int), TextBlock> _routeInvButtons = new();
     private readonly Dictionary<(int, int), bool> _routeConnected = new();
     private readonly Dictionary<(int, int), bool> _routeInverted = new();
+    private readonly Dictionary<(int, int), StackPanel> _routeCells = new();
 
     // Column header name TextBoxes: key = outputIndex
     private readonly Dictionary<int, TextBox> _headerNameTexts = new();
@@ -282,12 +283,15 @@ public sealed partial class MatrixMixerWindow : Window
             makeCell: o =>
             {
                 bool isEnabled = _viewModel.IsOutputEnabled(o);
+                bool conflict = !isEnabled && _viewModel.WouldConflict(o);
                 var btn = new Button
                 {
                     Content = new FontIcon { Glyph = "\uE7E8", FontSize = 15,
                         Foreground = new SolidColorBrush(isEnabled
                             ? Windows.UI.Color.FromArgb(255, 74, 143, 227)
-                            : Windows.UI.Color.FromArgb(120, 200, 200, 220)) },
+                            : conflict
+                                ? Windows.UI.Color.FromArgb(220, 230, 180, 50)
+                                : Windows.UI.Color.FromArgb(120, 200, 200, 220)) },
                     Background = new SolidColorBrush(isEnabled
                         ? Windows.UI.Color.FromArgb(40, 74, 143, 227)
                         : Colors.Transparent),
@@ -296,19 +300,7 @@ public sealed partial class MatrixMixerWindow : Window
                     HorizontalAlignment = HorizontalAlignment.Center,
                     Tag = o
                 };
-                btn.Click += (s, e) =>
-                {
-                    bool nowEnabled = !_viewModel.IsOutputEnabled(o);
-                    _viewModel.SetOutputEnabled(o, nowEnabled);
-                    _viewModel.SetOutputEnableUsb(o, nowEnabled);
-                    if (btn.Content is FontIcon icon)
-                        icon.Foreground = nowEnabled
-                            ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 74, 143, 227))
-                            : new SolidColorBrush(Windows.UI.Color.FromArgb(120, 200, 200, 220));
-                    btn.Background = nowEnabled
-                        ? new SolidColorBrush(Windows.UI.Color.FromArgb(40, 74, 143, 227))
-                        : new SolidColorBrush(Colors.Transparent);
-                };
+                btn.Click += OnEnableClick;
                 _outputEnableButtons[o] = btn;
                 return btn;
             });
@@ -391,6 +383,22 @@ public sealed partial class MatrixMixerWindow : Window
                 return btn;
             });
 
+        // ── Initial route cell dimming for disabled outputs ──────────
+        for (int o = 0; o < outputCount; o++)
+        {
+            if (!_viewModel.IsOutputEnabled(o))
+            {
+                for (int input = 0; input < 2; input++)
+                {
+                    if (_routeCells.TryGetValue((input, o), out var cell))
+                    {
+                        cell.Opacity = 0.25;
+                        cell.IsHitTestVisible = false;
+                    }
+                }
+            }
+        }
+
         // ── Card wrapper ─────────────────────────────────────────────
         var card = new Border
         {
@@ -468,6 +476,7 @@ public sealed partial class MatrixMixerWindow : Window
         _routeInvButtons.Clear();
         _routeConnected.Clear();
         _routeInverted.Clear();
+        _routeCells.Clear();
         _headerNameTexts.Clear();
         _outputEnableButtons.Clear();
         _outputGainTexts.Clear();
@@ -704,6 +713,7 @@ public sealed partial class MatrixMixerWindow : Window
         _routeInvButtons[(input, output)] = invText;
         panel.Children.Add(invText);
 
+        _routeCells[(input, output)] = panel;
         return panel;
     }
 
@@ -828,13 +838,102 @@ public sealed partial class MatrixMixerWindow : Window
         bool enabled = _viewModel.IsOutputEnabled(output);
         if (_outputEnableButtons.TryGetValue(output, out var btn))
         {
+            bool conflict = !enabled && _viewModel.WouldConflict(output);
             if (btn.Content is FontIcon icon)
-                icon.Foreground = enabled
-                    ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 74, 143, 227))
-                    : new SolidColorBrush(Windows.UI.Color.FromArgb(120, 200, 200, 220));
+                icon.Foreground = new SolidColorBrush(enabled
+                    ? Windows.UI.Color.FromArgb(255, 74, 143, 227)
+                    : conflict
+                        ? Windows.UI.Color.FromArgb(220, 230, 180, 50)
+                        : Windows.UI.Color.FromArgb(120, 200, 200, 220));
             btn.Background = enabled
                 ? new SolidColorBrush(Windows.UI.Color.FromArgb(40, 74, 143, 227))
                 : new SolidColorBrush(Colors.Transparent);
+        }
+
+        // Dim / un-dim route cells for this output
+        for (int input = 0; input < 2; input++)
+        {
+            if (_routeCells.TryGetValue((input, output), out var cell))
+            {
+                cell.Opacity = enabled ? 1.0 : 0.25;
+                cell.IsHitTestVisible = enabled;
+            }
+        }
+
+        // Refresh conflict styling on all enable buttons
+        RefreshConflictStyling();
+    }
+
+    private async void OnEnableClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not int o) return;
+
+        bool currentlyEnabled = _viewModel.IsOutputEnabled(o);
+        if (currentlyEnabled)
+        {
+            // Disabling — always allowed, no conflict check
+            _viewModel.SetOutputEnabled(o, false);
+            _viewModel.SetOutputEnableUsb(o, false);
+            return;
+        }
+
+        // Enabling — check for conflict
+        if (_viewModel.WouldConflict(o))
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "Output Conflict",
+                Content = GetConflictMessage(o),
+                PrimaryButtonText = "Proceed",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = Content.XamlRoot
+            };
+
+            var result = await dialog.ShowAsync();
+            if (result != ContentDialogResult.Primary) return;
+
+            // Perform the switch
+            if (o == _viewModel.PdmOutputIndex)
+                await _viewModel.SwitchToPdmAsync();
+            else
+                await _viewModel.SwitchFromPdmAsync(o);
+            return;
+        }
+
+        // No conflict — enable directly
+        _viewModel.SetOutputEnabled(o, true);
+        _viewModel.SetOutputEnableUsb(o, true);
+    }
+
+    private string GetConflictMessage(int outputIndex)
+    {
+        bool isPdm = outputIndex == _viewModel.PdmOutputIndex;
+        bool isRp2040 = _viewModel.Platform == "RP2040";
+
+        if (isPdm)
+            return isRp2040
+                ? "Enabling PDM will disable SPDIF 2. Do you wish to proceed?"
+                : "Enabling PDM will disable SPDIF 2, 3 and 4. Do you wish to proceed?";
+        else
+            return isRp2040
+                ? "Enabling SPDIF 2 will disable PDM. Do you wish to proceed?"
+                : "Enabling SPDIF 2, 3 or 4 will disable PDM. Do you wish to proceed?";
+    }
+
+    private void RefreshConflictStyling()
+    {
+        var outputs = _viewModel.ActiveOutputs;
+        for (int o = 0; o < outputs.Count; o++)
+        {
+            if (!_outputEnableButtons.TryGetValue(o, out var btn)) continue;
+            if (btn.Content is not FontIcon icon) continue;
+            bool enabled = _viewModel.IsOutputEnabled(o);
+            if (enabled) continue; // active outputs keep blue — already set
+            bool conflict = _viewModel.WouldConflict(o);
+            icon.Foreground = new SolidColorBrush(conflict
+                ? Windows.UI.Color.FromArgb(220, 230, 180, 50)
+                : Windows.UI.Color.FromArgb(120, 200, 200, 220));
         }
     }
 
