@@ -52,6 +52,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private ushort _clipLatched;
     private DateTime? _clipTimestamp;
 
+    // Preset system state
+    private int _activePresetSlot = -1;
+    private ushort _presetOccupiedMask;
+    private readonly string[] _presetNames = new string[10];
+    private byte _presetStartupMode;
+    private byte _presetDefaultSlot;
+    private bool _presetIncludePins;
+    private PresetSnapshot? _savedSnapshot;
+
     [ObservableProperty]
     private float _preampDb;
 
@@ -95,6 +104,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private bool _crossfeedItd = true; // Inter-aural Time Delay
 
     [ObservableProperty]
+    private int _activePreset = -1;
+
+    [ObservableProperty]
+    private bool _presetsDirty;
+
+    [ObservableProperty]
     private string _platform = "";
 
     public IReadOnlyList<Channel> ActiveOutputs => Platform switch
@@ -105,6 +120,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
     };
 
     public event EventHandler? ActiveOutputsChanged;
+
+    // Preset events and accessors
+    public event EventHandler? PresetsChanged;
+    public const int PresetSlotCount = 10;
+
+    public bool IsPresetOccupied(int slot) => (_presetOccupiedMask & (1 << slot)) != 0;
+    public ushort PresetOccupiedMask => _presetOccupiedMask;
+    public string GetPresetName(int slot) => !string.IsNullOrEmpty(_presetNames[slot]) ? _presetNames[slot] : $"Preset {slot + 1}";
+    public string GetPresetDisplayName(int slot) => IsPresetOccupied(slot) ? GetPresetName(slot) : $"Preset {slot + 1} (empty)";
+    public byte PresetStartupMode => _presetStartupMode;
+    public byte PresetDefaultSlot => _presetDefaultSlot;
+    public bool PresetIncludePins => _presetIncludePins;
 
     partial void OnPlatformChanged(string value)
     {
@@ -174,7 +201,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
         name = name.Trim();
         if (string.IsNullOrEmpty(name) || name == GetChannelName(channel)) return;
         _channelNames[(int)channel.Id] = name;
+        Task.Run(() => _device.SetChannelNameOnDevice((int)channel.Id, name));
         ChannelNameChanged?.Invoke((int)channel.Id);
+        PresetsDirty = true;
     }
 
     // Output enabled state for matrix mixer / sidebar filtering
@@ -243,12 +272,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
                             _dispatcher.TryEnqueue(() => Platform = newPlatform);
                             System.Threading.Thread.Sleep(100);
                             FetchAll();
+                            FetchPresetInfo();
+                            _dispatcher.TryEnqueue(() => UpdateSavedSnapshot());
                         });
                     }
                     else
                     {
                         // Keep Platform so the UI layout stays until a new device connects
                         ResetChannelData();
+                        _presetsChecked = false;
+                        ActivePreset = -1;
+                        PresetsDirty = false;
                     }
                 });
             }
@@ -379,6 +413,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _matrixInvert[input, output] = invert;
         Task.Run(() => _device.SetMatrixRoute(input, output, enabled, invert, gain));
         MatrixRouteChanged?.Invoke(input, output);
+        PresetsDirty = true;
     }
 
     public void SetOutputGainDb(int output, float db)
@@ -395,6 +430,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _outputMuted[output] = muted;
         Task.Run(() => _device.SetOutputMute(output, muted));
         MatrixOutputMuteChanged?.Invoke(output);
+        PresetsDirty = true;
     }
 
     public void SetOutputDelayMs(int output, float ms)
@@ -408,6 +444,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public void SetOutputEnableUsb(int output, bool enabled)
     {
         Task.Run(() => _device.SetOutputEnable(output, enabled));
+        PresetsDirty = true;
     }
 
     // ── Pin assignment accessors ──
@@ -436,45 +473,160 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         try
         {
-            if (!FetchPreamp()) return;
-            FetchBypass();
-
-            foreach (var channel in Channel.All)
+            // Try bulk fetch first (firmware v2+ with 0xA0 support)
+            var bulk = _device.GetAllParams();
+            if (bulk != null)
             {
-                for (int band = 0; band < channel.BandCount; band++)
+                var parsed = BulkParamsParser.Parse(bulk);
+                if (parsed != null)
                 {
-                    FetchFilter((int)channel.Id, band);
+                    ApplyBulkParams(parsed);
+                    return;
                 }
             }
 
-            foreach (var channel in ActiveOutputs)
-            {
-                FetchDelay((int)channel.Id);
-                FetchChannelGain((int)channel.Id);
-                FetchChannelMute((int)channel.Id);
-            }
-
-            FetchLoudness();
-            FetchCrossfeed();
-
-            // Fetch matrix mixer state
-            FetchMatrixRoutes();
-            var outputCount = ActiveOutputs.Count;
-            for (int o = 0; o < outputCount; o++)
-            {
-                FetchOutputEnable(o);
-                FetchOutputMuteState(o);
-            }
-
-            // Fetch pin assignments
-            int pinCount = Platform == "RP2350" ? 5 : 3;
-            for (int p = 0; p < pinCount; p++)
-                FetchOutputPin(p);
-
-            // Dispatch FiltersChanged to run after all filter updates are processed
-            _dispatcher.TryEnqueue(() => FiltersChanged?.Invoke(this, EventArgs.Empty));
+            // Fallback to legacy per-command fetching
+            FetchAllLegacy();
         }
         catch { }
+    }
+
+    private void ApplyBulkParams(BulkParams bp)
+    {
+        var outputs = ActiveOutputs;
+
+        // EQ bands — apply first BandCount bands per channel
+        foreach (var channel in Channel.All)
+        {
+            int ch = (int)channel.Id;
+            if (_channelData.TryGetValue(ch, out var filters))
+            {
+                for (int band = 0; band < channel.BandCount && band < bp.MaxBands; band++)
+                {
+                    var fp = bp.Eq[ch, band];
+                    int b = band; // capture for closure
+                    if (!filters[b].Equals(fp))
+                        _dispatcher.TryEnqueue(() => filters[b] = fp);
+                }
+            }
+        }
+
+        // Output channel gains, mutes, delays, and enable states
+        for (int o = 0; o < outputs.Count && o < bp.Outputs.Length; o++)
+        {
+            var (enabled, muted, gain, delay) = bp.Outputs[o];
+            int channelId = (int)outputs[o].Id;
+
+            _channelGains[channelId] = gain;
+            _channelMutes[channelId] = muted;
+            _channelDelays[channelId] = delay;
+            _outputEnabled[o] = enabled;
+            if (o < _outputMuted.Length)
+                _outputMuted[o] = muted;
+        }
+
+        // Matrix crosspoints
+        for (int inp = 0; inp < 2; inp++)
+        {
+            for (int o = 0; o < outputs.Count && o < 9; o++)
+            {
+                var (enabled, invert, gain) = bp.Crosspoints[inp, o];
+                _matrixRouting[inp, o] = enabled;
+                _matrixInvert[inp, o] = invert;
+                _matrixGain[inp, o] = gain;
+            }
+        }
+
+        // Pin assignments
+        for (int i = 0; i < bp.Pins.Length; i++)
+            _outputPins[i] = bp.Pins[i];
+
+        // Channel names
+        for (int ch = 0; ch < bp.ChannelNames.Length; ch++)
+        {
+            var name = bp.ChannelNames[ch];
+            if (!string.IsNullOrEmpty(name))
+                _channelNames[ch] = name;
+        }
+
+        // Dispatch all UI updates
+        _dispatcher.TryEnqueue(() =>
+        {
+            PreampDb = bp.PreampGainDb;
+            Bypass = bp.Bypass;
+            LoudnessEnabled = bp.LoudnessEnabled;
+            LoudnessRefSPL = bp.LoudnessRefSpl;
+            LoudnessIntensity = bp.LoudnessIntensityPct;
+            CrossfeedEnabled = bp.CrossfeedEnabled;
+            CrossfeedPreset = bp.CrossfeedPreset;
+            CrossfeedItd = bp.CrossfeedItd;
+            CrossfeedFreq = bp.CrossfeedFreq;
+            CrossfeedFeed = bp.CrossfeedFeedDb;
+
+            OnPropertyChanged(nameof(ChannelDelays));
+            OnPropertyChanged(nameof(ChannelGains));
+            OnPropertyChanged(nameof(ChannelMutes));
+
+            for (int o = 0; o < outputs.Count; o++)
+            {
+                OutputEnabledChanged?.Invoke(o, _outputEnabled.TryGetValue(o, out var v) && v);
+                MatrixOutputGainChanged?.Invoke(o);
+                MatrixOutputMuteChanged?.Invoke(o);
+                MatrixOutputDelayChanged?.Invoke(o);
+                for (int inp = 0; inp < 2; inp++)
+                    MatrixRouteChanged?.Invoke(inp, o);
+            }
+
+            for (int ch = 0; ch < bp.ChannelNames.Length; ch++)
+            {
+                if (!string.IsNullOrEmpty(bp.ChannelNames[ch]))
+                    ChannelNameChanged?.Invoke(ch);
+            }
+
+            VisibilityChanged?.Invoke(this, EventArgs.Empty);
+            FiltersChanged?.Invoke(this, EventArgs.Empty);
+        });
+    }
+
+    private void FetchAllLegacy()
+    {
+        if (!FetchPreamp()) return;
+        FetchBypass();
+
+        foreach (var channel in Channel.All)
+        {
+            for (int band = 0; band < channel.BandCount; band++)
+            {
+                FetchFilter((int)channel.Id, band);
+            }
+        }
+
+        foreach (var channel in ActiveOutputs)
+        {
+            FetchDelay((int)channel.Id);
+            FetchChannelGain((int)channel.Id);
+            FetchChannelMute((int)channel.Id);
+        }
+
+        FetchLoudness();
+        FetchCrossfeed();
+
+        // Fetch matrix mixer state
+        FetchMatrixRoutes();
+        var outputCount = ActiveOutputs.Count;
+        for (int o = 0; o < outputCount; o++)
+        {
+            FetchOutputEnable(o);
+            FetchOutputMuteState(o);
+        }
+
+        // Fetch pin assignments
+        int pinCount = Platform == "RP2350" ? 5 : 3;
+        for (int p = 0; p < pinCount; p++)
+            FetchOutputPin(p);
+
+        // Dispatch FiltersChanged to run after all filter updates are processed
+        _dispatcher.TryEnqueue(() => FiltersChanged?.Invoke(this, EventArgs.Empty));
     }
 
     private void FetchStatus()
@@ -518,6 +670,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
         Task.Run(() => _device.SetFilter(channel, band, p));
         FiltersChanged?.Invoke(this, EventArgs.Empty);
+        PresetsDirty = true;
     }
 
     private void FetchFilter(int channel, int band)
@@ -541,6 +694,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ChannelDelays));
         if (outputIndex >= 0)
             MatrixOutputDelayChanged?.Invoke(outputIndex);
+        PresetsDirty = true;
     }
 
     private void FetchDelay(int channel)
@@ -579,6 +733,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         Task.Run(() => _device.SetOutputGain(outputIndex, db));
         OnPropertyChanged(nameof(ChannelGains));
         MatrixOutputGainChanged?.Invoke(outputIndex);
+        PresetsDirty = true;
     }
 
     private void FetchChannelGain(int channelId)
@@ -608,6 +763,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (outputIndex < 0) return;
         Task.Run(() => _device.SetOutputMute(outputIndex, muted));
         OnPropertyChanged(nameof(ChannelMutes));
+        PresetsDirty = true;
     }
 
     private void FetchChannelMute(int channelId)
@@ -707,32 +863,59 @@ public partial class MainViewModel : ObservableObject, IDisposable
             _outputMuted[output] = muted.Value;
     }
 
-    partial void OnLoudnessEnabledChanged(bool value) =>
+    partial void OnLoudnessEnabledChanged(bool value)
+    {
         Task.Run(() => _device.SetLoudnessEnabled(value));
+        PresetsDirty = true;
+    }
 
-    partial void OnLoudnessRefSPLChanged(float value) =>
+    partial void OnLoudnessRefSPLChanged(float value)
+    {
         Task.Run(() => _device.SetLoudnessRefSPL(value));
+        PresetsDirty = true;
+    }
 
-    partial void OnLoudnessIntensityChanged(float value) =>
+    partial void OnLoudnessIntensityChanged(float value)
+    {
         Task.Run(() => _device.SetLoudnessIntensity(value));
+        PresetsDirty = true;
+    }
 
-    partial void OnCrossfeedEnabledChanged(bool value) =>
+    partial void OnCrossfeedEnabledChanged(bool value)
+    {
         Task.Run(() => _device.SetCrossfeedEnabled(value));
+        PresetsDirty = true;
+    }
 
-    partial void OnCrossfeedPresetChanged(int value) =>
+    partial void OnCrossfeedPresetChanged(int value)
+    {
         Task.Run(() => _device.SetCrossfeedPreset(value));
+        PresetsDirty = true;
+    }
 
-    partial void OnCrossfeedFreqChanged(float value) =>
+    partial void OnCrossfeedFreqChanged(float value)
+    {
         Task.Run(() => _device.SetCrossfeedFreq(value));
+        PresetsDirty = true;
+    }
 
-    partial void OnCrossfeedFeedChanged(float value) =>
+    partial void OnCrossfeedFeedChanged(float value)
+    {
         Task.Run(() => _device.SetCrossfeedFeed(value));
+        PresetsDirty = true;
+    }
 
-    partial void OnCrossfeedItdChanged(bool value) =>
+    partial void OnCrossfeedItdChanged(bool value)
+    {
         Task.Run(() => _device.SetCrossfeedItd(value));
+        PresetsDirty = true;
+    }
 
-    partial void OnPreampDbChanged(float value) =>
+    partial void OnPreampDbChanged(float value)
+    {
         Task.Run(() => _device.SetPreamp(value));
+        PresetsDirty = true;
+    }
 
     private bool FetchPreamp()
     {
@@ -753,6 +936,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         Task.Run(() => _device.SetBypass(value));
         FiltersChanged?.Invoke(this, EventArgs.Empty);
+        PresetsDirty = true;
     }
 
     private void FetchBypass()
@@ -794,7 +978,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public async Task<byte> SaveParams()
     {
         if (!IsDeviceConnected) return FlashResult.ErrWrite;
-        return await Task.Run(() => _device.SaveParams());
+        return await Task.Run(() =>
+        {
+            var result = _device.SaveParams();
+            if (result == FlashResult.Ok)
+                _dispatcher.TryEnqueue(() => { PresetsDirty = false; UpdateSavedSnapshot(); });
+            return result;
+        });
     }
 
     /// <summary>
@@ -809,6 +999,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             if (result == FlashResult.Ok)
             {
                 FetchAll();
+                _dispatcher.TryEnqueue(() => { PresetsDirty = false; UpdateSavedSnapshot(); });
             }
             return result;
         });
@@ -826,10 +1017,256 @@ public partial class MainViewModel : ObservableObject, IDisposable
             if (result == FlashResult.Ok)
             {
                 FetchAll();
+                _dispatcher.TryEnqueue(() => { PresetsDirty = false; UpdateSavedSnapshot(); });
             }
             return result;
         });
     }
+
+    #endregion
+
+    #region Preset Operations
+
+    /// <summary>
+    /// Fetch preset metadata from the device: occupied mask, names, active slot, startup info.
+    /// Called after FetchAll() in the connect flow.
+    /// </summary>
+    public void FetchPresetInfo()
+    {
+        try
+        {
+            _presetsChecked = true;
+
+            // Fetch directory (occupied mask, startup config, active slot, include-pins)
+            var dir = _device.GetPresetDirectory();
+            if (dir != null)
+            {
+                _presetOccupiedMask = dir.Value.OccupiedMask;
+                _presetStartupMode = dir.Value.StartupMode;
+                _presetDefaultSlot = dir.Value.DefaultSlot;
+                _activePresetSlot = dir.Value.LastActiveSlot == 0xFF ? -1 : dir.Value.LastActiveSlot;
+                _presetIncludePins = dir.Value.IncludePins;
+            }
+
+            // Fetch names for occupied slots
+            for (int i = 0; i < PresetSlotCount; i++)
+            {
+                if (IsPresetOccupied(i))
+                {
+                    var name = _device.GetPresetName(i);
+                    _presetNames[i] = name ?? "";
+                }
+                else
+                {
+                    _presetNames[i] = "";
+                }
+            }
+
+            _dispatcher.TryEnqueue(() =>
+            {
+                ActivePreset = _activePresetSlot;
+                PresetsDirty = false;
+                PresetsChanged?.Invoke(this, EventArgs.Empty);
+            });
+        }
+        catch { }
+    }
+
+    private void RefreshPresetMetadata()
+    {
+        var dir = _device.GetPresetDirectory();
+        if (dir == null) return;
+
+        _presetOccupiedMask = dir.Value.OccupiedMask;
+        _presetStartupMode = dir.Value.StartupMode;
+        _presetDefaultSlot = dir.Value.DefaultSlot;
+        _activePresetSlot = dir.Value.LastActiveSlot == 0xFF ? -1 : dir.Value.LastActiveSlot;
+        _presetIncludePins = dir.Value.IncludePins;
+
+        for (int i = 0; i < PresetSlotCount; i++)
+        {
+            if (IsPresetOccupied(i))
+            {
+                var name = _device.GetPresetName(i);
+                _presetNames[i] = name ?? "";
+            }
+            else
+            {
+                _presetNames[i] = "";
+            }
+        }
+
+        _dispatcher.TryEnqueue(() =>
+        {
+            ActivePreset = _activePresetSlot;
+            PresetsChanged?.Invoke(this, EventArgs.Empty);
+        });
+    }
+
+    /// <summary>
+    /// Save current parameters to a preset slot, optionally setting a name.
+    /// </summary>
+    public async Task<byte> SavePreset(int slot, string? name)
+    {
+        if (!IsDeviceConnected) return PresetResult.FlashWriteError;
+        return await Task.Run(() =>
+        {
+            if (!string.IsNullOrEmpty(name))
+                _device.SetPresetName(slot, name);
+
+            var result = _device.SavePreset(slot);
+            if (result == PresetResult.Ok)
+            {
+                RefreshPresetMetadata();
+                _dispatcher.TryEnqueue(() =>
+                {
+                    PresetsDirty = false;
+                    UpdateSavedSnapshot();
+                });
+            }
+            return result;
+        });
+    }
+
+    /// <summary>
+    /// Load a preset slot, resync all parameters from device.
+    /// </summary>
+    public async Task<byte> LoadPreset(int slot)
+    {
+        if (!IsDeviceConnected) return PresetResult.FlashWriteError;
+        return await Task.Run(() =>
+        {
+            var result = _device.LoadPreset(slot);
+            if (result == PresetResult.Ok)
+            {
+                // Wait for firmware mute period to end before re-syncing
+                System.Threading.Thread.Sleep(10);
+                FetchAll();
+                _activePresetSlot = slot;
+                _dispatcher.TryEnqueue(() =>
+                {
+                    ActivePreset = slot;
+                    PresetsDirty = false;
+                    UpdateSavedSnapshot();
+                    PresetsChanged?.Invoke(this, EventArgs.Empty);
+                });
+            }
+            return result;
+        });
+    }
+
+    /// <summary>
+    /// Delete a preset slot.
+    /// </summary>
+    public async Task<byte> DeletePreset(int slot)
+    {
+        if (!IsDeviceConnected) return PresetResult.FlashWriteError;
+        return await Task.Run(() =>
+        {
+            var result = _device.DeletePreset(slot);
+            if (result == PresetResult.Ok)
+            {
+                RefreshPresetMetadata();
+            }
+            return result;
+        });
+    }
+
+    /// <summary>
+    /// Rename a preset slot.
+    /// </summary>
+    public async Task<bool> RenamePreset(int slot, string name)
+    {
+        if (!IsDeviceConnected) return false;
+        return await Task.Run(() =>
+        {
+            var ok = _device.SetPresetName(slot, name);
+            if (ok)
+            {
+                _presetNames[slot] = name;
+                _dispatcher.TryEnqueue(() => PresetsChanged?.Invoke(this, EventArgs.Empty));
+            }
+            return ok;
+        });
+    }
+
+    /// <summary>
+    /// Clear all presets from flash.
+    /// </summary>
+    public async Task<byte> ClearAllPresets()
+    {
+        if (!IsDeviceConnected) return PresetResult.FlashWriteError;
+        return await Task.Run(() =>
+        {
+            var result = _device.ClearAllPresets();
+            if (result == PresetResult.Ok)
+            {
+                _presetOccupiedMask = 0;
+                _activePresetSlot = -1;
+                for (int i = 0; i < PresetSlotCount; i++)
+                    _presetNames[i] = "";
+                _dispatcher.TryEnqueue(() =>
+                {
+                    ActivePreset = -1;
+                    PresetsDirty = false;
+                    PresetsChanged?.Invoke(this, EventArgs.Empty);
+                });
+            }
+            return result;
+        });
+    }
+
+    public async Task<bool> SetPresetStartup(byte mode, byte defaultSlot)
+    {
+        if (!IsDeviceConnected) return false;
+        return await Task.Run(() =>
+        {
+            var ok = _device.SetPresetStartup(mode, defaultSlot);
+            if (ok)
+            {
+                _presetStartupMode = mode;
+                _presetDefaultSlot = defaultSlot;
+            }
+            return ok;
+        });
+    }
+
+    public async Task<bool> SetPresetIncludePins(bool include)
+    {
+        if (!IsDeviceConnected) return false;
+        return await Task.Run(() =>
+        {
+            var ok = _device.SetPresetIncludePins(include);
+            if (ok) _presetIncludePins = include;
+            return ok;
+        });
+    }
+
+    /// <summary>
+    /// Capture the current state as the "saved" baseline for change detection.
+    /// </summary>
+    public void UpdateSavedSnapshot()
+    {
+        _savedSnapshot = PresetSnapshot.Capture(this);
+    }
+
+    /// <summary>
+    /// Get a human-readable summary of changes since the last save/load.
+    /// Returns null if no snapshot is available or no changes detected.
+    /// </summary>
+    public string? GetChangeSummary()
+    {
+        if (_savedSnapshot == null) return null;
+        var current = PresetSnapshot.Capture(this);
+        var changes = PresetDiff.Diff(_savedSnapshot, current, this);
+        return changes.Count > 0 ? PresetDiff.FormatSummary(changes) : null;
+    }
+
+    /// <summary>
+    /// Whether the device firmware supports presets (GetPresetDirectory succeeded).
+    /// </summary>
+    public bool PresetsSupported => _presetsChecked;
+    private bool _presetsChecked;
 
     #endregion
 

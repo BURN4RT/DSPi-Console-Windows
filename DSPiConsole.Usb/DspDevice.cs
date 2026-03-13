@@ -60,6 +60,22 @@ public static class VendorCommands
     public const byte GetSerial   = 0x7E;
     public const byte GetPlatform = 0x7F;
     public const byte ClearClips = 0x83;
+    public const byte GetAllParams = 0xA0;
+
+    // Preset system (firmware v3+)
+    public const byte PresetSave           = 0x90;
+    public const byte PresetLoad           = 0x91;
+    public const byte PresetDelete         = 0x92;
+    public const byte PresetGetName        = 0x93;
+    public const byte PresetSetName        = 0x94;
+    public const byte PresetGetDir         = 0x95;
+    public const byte PresetSetStartup     = 0x96;
+    public const byte PresetGetStartup     = 0x97;
+    public const byte PresetSetIncludePins = 0x98;
+    public const byte PresetGetIncludePins = 0x99;
+    public const byte PresetGetActive      = 0x9A;
+    public const byte SetChannelName       = 0x9B;
+    public const byte GetChannelName       = 0x9C;
 }
 
 /// <summary>
@@ -83,6 +99,30 @@ public static class PinConfigResult
     public const byte PinInUse = 0x02;
     public const byte InvalidOutput = 0x03;
     public const byte OutputActive = 0x04;
+}
+
+/// <summary>
+/// Preset operation result codes from firmware.
+/// </summary>
+public static class PresetResult
+{
+    public const byte Ok = 0x00;
+    public const byte InvalidSlot = 0x01;
+    public const byte SlotEmpty = 0x02;
+    public const byte CrcFailure = 0x03;
+    public const byte FlashWriteError = 0x04;
+}
+
+/// <summary>
+/// Directory info returned by PresetGetDir (0x95): 6 bytes.
+/// </summary>
+public struct PresetDirectoryInfo
+{
+    public ushort OccupiedMask;   // bit N = slot N occupied
+    public byte StartupMode;     // 0=last used, 1=specific slot, 2=factory defaults
+    public byte DefaultSlot;
+    public byte LastActiveSlot;   // 0xFF if none
+    public bool IncludePins;
 }
 
 /// <summary>
@@ -989,6 +1029,155 @@ public partial class DspDevice : ObservableObject, IDisposable
         if (response == null || response.Length < 1) return null;
         return response[0];
     }
+
+    /// <summary>
+    /// Fetch all DSP parameters in a single bulk transfer (firmware v2+).
+    /// Returns 2832-byte packet, or null if unsupported/failed.
+    /// </summary>
+    public byte[]? GetAllParams()
+    {
+        return ControlTransferIn(VendorCommands.GetAllParams, 0, 2832);
+    }
+
+    #region Preset Commands
+
+    /// <summary>
+    /// Save current parameters to a preset slot (0-9).
+    /// Returns PresetResult code.
+    /// </summary>
+    public byte SavePreset(int slot)
+    {
+        var response = ControlTransferIn(VendorCommands.PresetSave, (ushort)slot, 1);
+        return response != null && response.Length >= 1 ? response[0] : PresetResult.FlashWriteError;
+    }
+
+    /// <summary>
+    /// Load a preset slot (0-9) into active parameters.
+    /// Returns PresetResult code.
+    /// </summary>
+    public byte LoadPreset(int slot)
+    {
+        var response = ControlTransferIn(VendorCommands.PresetLoad, (ushort)slot, 1);
+        return response != null && response.Length >= 1 ? response[0] : PresetResult.FlashWriteError;
+    }
+
+    /// <summary>
+    /// Delete a preset slot (0-9).
+    /// Returns PresetResult code.
+    /// </summary>
+    public byte DeletePreset(int slot)
+    {
+        var response = ControlTransferIn(VendorCommands.PresetDelete, (ushort)slot, 1);
+        return response != null && response.Length >= 1 ? response[0] : PresetResult.FlashWriteError;
+    }
+
+    /// <summary>
+    /// Set the name for a preset slot. Max 31 chars (32-byte UTF-8 buffer, null-terminated).
+    /// </summary>
+    public bool SetPresetName(int slot, string name)
+    {
+        var data = new byte[32];
+        var bytes = System.Text.Encoding.UTF8.GetBytes(name);
+        Array.Copy(bytes, data, Math.Min(bytes.Length, 31));
+        return ControlTransferOut(VendorCommands.PresetSetName, (ushort)slot, data);
+    }
+
+    /// <summary>
+    /// Get the name for a preset slot. Returns null on failure.
+    /// </summary>
+    public string? GetPresetName(int slot)
+    {
+        var response = ControlTransferIn(VendorCommands.PresetGetName, (ushort)slot, 32);
+        if (response == null || response.Length < 1) return null;
+        return System.Text.Encoding.UTF8.GetString(response).TrimEnd('\0');
+    }
+
+    /// <summary>
+    /// Get the currently active preset slot. Returns -1 if no preset is active.
+    /// </summary>
+    public int GetActivePreset()
+    {
+        var response = ControlTransferIn(VendorCommands.PresetGetActive, 0, 1);
+        if (response == null || response.Length < 1) return -1;
+        return response[0] == 0xFF ? -1 : response[0];
+    }
+
+    /// <summary>
+    /// Get the full preset directory: occupied mask, startup config, last active, include-pins.
+    /// Uses GET_DIR (0x95) which returns 6 bytes.
+    /// </summary>
+    public PresetDirectoryInfo? GetPresetDirectory()
+    {
+        var response = ControlTransferIn(VendorCommands.PresetGetDir, 0, 6);
+        if (response == null || response.Length < 6) return null;
+        return new PresetDirectoryInfo
+        {
+            OccupiedMask = BitConverter.ToUInt16(response, 0),
+            StartupMode = response[2],
+            DefaultSlot = response[3],
+            LastActiveSlot = response[4],
+            IncludePins = response[5] != 0
+        };
+    }
+
+    /// <summary>
+    /// Set preset startup mode and default slot.
+    /// Mode: 0=last used, 1=specific slot, 2=factory defaults.
+    /// </summary>
+    public bool SetPresetStartup(byte mode, byte defaultSlot)
+    {
+        return ControlTransferOut(VendorCommands.PresetSetStartup, 0, new[] { mode, defaultSlot });
+    }
+
+    /// <summary>
+    /// Set whether pin assignments are included in presets.
+    /// </summary>
+    public bool SetPresetIncludePins(bool include)
+    {
+        return ControlTransferOut(VendorCommands.PresetSetIncludePins, 0, new[] { (byte)(include ? 1 : 0) });
+    }
+
+    /// <summary>
+    /// Clear all presets by deleting each slot individually.
+    /// Returns PresetResult code (first failure, or Ok if all succeed).
+    /// </summary>
+    public byte ClearAllPresets()
+    {
+        for (int i = 0; i < 10; i++)
+        {
+            var result = DeletePreset(i);
+            if (result != PresetResult.Ok && result != PresetResult.SlotEmpty)
+                return result;
+        }
+        return PresetResult.Ok;
+    }
+
+    #endregion
+
+    #region Channel Name Commands
+
+    /// <summary>
+    /// Set a channel name on the device. wValue = channel index, 32-byte UTF-8 buffer.
+    /// </summary>
+    public bool SetChannelNameOnDevice(int channel, string name)
+    {
+        var data = new byte[32];
+        var bytes = System.Text.Encoding.UTF8.GetBytes(name);
+        Array.Copy(bytes, data, Math.Min(bytes.Length, 31));
+        return ControlTransferOut(VendorCommands.SetChannelName, (ushort)channel, data);
+    }
+
+    /// <summary>
+    /// Get a channel name from the device. wValue = channel index. Returns null on failure.
+    /// </summary>
+    public string? GetChannelNameFromDevice(int channel)
+    {
+        var response = ControlTransferIn(VendorCommands.GetChannelName, (ushort)channel, 32);
+        if (response == null || response.Length < 1) return null;
+        return System.Text.Encoding.UTF8.GetString(response).TrimEnd('\0');
+    }
+
+    #endregion
 
     #endregion
 

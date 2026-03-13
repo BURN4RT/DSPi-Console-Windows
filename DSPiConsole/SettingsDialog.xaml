@@ -67,6 +67,32 @@
                 </ScrollViewer>
             </TabViewItem>
 
+            <TabViewItem Header="Presets" IsClosable="False">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="PresetsPanel" Spacing="16" Padding="12,16,12,0">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Startup Mode" FontSize="12"/>
+                            <ComboBox x:Name="StartupModeCombo" HorizontalAlignment="Stretch"
+                                      SelectionChanged="OnStartupModeChanged">
+                                <ComboBoxItem Content="Last Used" Tag="0"/>
+                                <ComboBoxItem Content="Default Preset" Tag="1"/>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Default Startup Preset" FontSize="12"/>
+                            <ComboBox x:Name="DefaultPresetCombo" HorizontalAlignment="Stretch"
+                                      IsEnabled="False"
+                                      SelectionChanged="OnDefaultPresetChanged"/>
+                        </StackPanel>
+
+                        <ToggleSwitch x:Name="IncludePinsToggle" Header="Include Pin Assignments in Presets"
+                                      OnContent="On" OffContent="Off"
+                                      Toggled="OnIncludePinsToggled"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabViewItem>
+
             <TabViewItem Header="Hardware" IsClosable="False">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel x:Name="HardwarePanel" Spacing="12" Padding="12,16,12,0"/>

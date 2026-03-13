@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.UI;
+using System.Linq;
 
 namespace DSPiConsole;
 
@@ -40,7 +41,77 @@ public sealed partial class SettingsDialog : ContentDialog
 
         PrimaryButtonClick += OnSave;
 
+        InitializePresetsTab();
         BuildPinAssignmentTable();
+    }
+
+    private bool _suppressPresetEvents;
+
+    private void InitializePresetsTab()
+    {
+        if (!_vm.PresetsSupported)
+        {
+            PresetsPanel.Children.Clear();
+            PresetsPanel.Children.Add(new TextBlock
+            {
+                Text = "Presets are not supported by this firmware version.",
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 40, 0, 0)
+            });
+            return;
+        }
+
+        _suppressPresetEvents = true;
+
+        // Startup mode
+        StartupModeCombo.SelectedIndex = _vm.PresetStartupMode;
+
+        // Default preset combo
+        DefaultPresetCombo.Items.Clear();
+        for (int i = 0; i < MainViewModel.PresetSlotCount; i++)
+        {
+            DefaultPresetCombo.Items.Add(new ComboBoxItem
+            {
+                Content = _vm.GetPresetDisplayName(i),
+                Tag = i
+            });
+        }
+        DefaultPresetCombo.SelectedIndex = _vm.PresetDefaultSlot;
+        DefaultPresetCombo.IsEnabled = _vm.PresetStartupMode == 1;
+
+        // Include pins
+        IncludePinsToggle.IsOn = _vm.PresetIncludePins;
+
+        _suppressPresetEvents = false;
+    }
+
+    private async void OnStartupModeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressPresetEvents) return;
+        if (StartupModeCombo.SelectedIndex < 0) return;
+
+        byte mode = (byte)StartupModeCombo.SelectedIndex;
+        DefaultPresetCombo.IsEnabled = mode == 1;
+
+        byte defaultSlot = DefaultPresetCombo.SelectedItem is ComboBoxItem di && di.Tag is int ds ? (byte)ds : (byte)0;
+        await _vm.SetPresetStartup(mode, defaultSlot);
+    }
+
+    private async void OnDefaultPresetChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressPresetEvents) return;
+        if (DefaultPresetCombo.SelectedItem is not ComboBoxItem item || item.Tag is not int slot) return;
+
+        byte mode = (byte)StartupModeCombo.SelectedIndex;
+        await _vm.SetPresetStartup(mode, (byte)slot);
+    }
+
+    private async void OnIncludePinsToggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressPresetEvents) return;
+        await _vm.SetPresetIncludePins(IncludePinsToggle.IsOn);
     }
 
 

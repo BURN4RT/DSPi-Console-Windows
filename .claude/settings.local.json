@@ -15,7 +15,10 @@
       "Bash(cmd:*)",
       "Bash(powershell:*)",
       "Bash(cmd.exe:*)",
-      "Bash(powershell.exe:*)"
+      "Bash(powershell.exe:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "WebFetch(domain:api.github.com)"
     ]
   }
 }

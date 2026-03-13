@@ -129,18 +129,25 @@
                 </ScrollViewer>
 
                 <StackPanel Grid.Row="1" Padding="12" Spacing="12">
-                    <TextBlock Text="GLOBAL" FontSize="12" FontWeight="SemiBold" 
+                    <TextBlock Text="GLOBAL" FontSize="12" FontWeight="SemiBold"
                                Foreground="{ThemeResource TextFillColorGhostlyBrush}" />
+
+                    <StackPanel x:Name="PresetSection" Spacing="4" Visibility="Collapsed">
+                        <TextBlock Text="Preset" FontSize="12"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <ComboBox x:Name="PresetComboBox" HorizontalAlignment="Stretch"
+                                  SelectionChanged="OnPresetSelectionChanged" />
+                    </StackPanel>
 
                     <StackPanel Spacing="4">
                         <Grid>
-                            <TextBlock Text="Preamp" FontSize="12" 
+                            <TextBlock Text="Preamp" FontSize="12"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                             <TextBlock x:Name="PreampValueText" HorizontalAlignment="Right"
                                        FontSize="12" FontFamily="Cascadia Code, Consolas"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </Grid>
-                        <Slider x:Name="PreampSlider" Minimum="-60" Maximum="10" 
+                        <Slider x:Name="PreampSlider" Minimum="-60" Maximum="10"
                                 ValueChanged="OnPreampSliderChanged" />
                     </StackPanel>
 
@@ -247,12 +254,12 @@
                                 </MenuFlyoutItem>
                                 <MenuFlyoutItem Text="Settings..." Click="OnSettingsClick"/>
                                 <MenuFlyoutSeparator/>
-                                <MenuFlyoutItem Text="Commit Parameters..." Click="OnCommitParametersClick">
+                                <MenuFlyoutItem Text="Save Preset" Click="OnSavePresetClick">
                                     <MenuFlyoutItem.KeyboardAccelerators>
                                         <KeyboardAccelerator Modifiers="Control" Key="S"/>
                                     </MenuFlyoutItem.KeyboardAccelerators>
                                 </MenuFlyoutItem>
-                                <MenuFlyoutItem Text="Revert to Saved..." Click="OnRevertToSavedClick"/>
+                                <MenuFlyoutItem Text="Revert Preset..." Click="OnRevertPresetClick"/>
                                 <MenuFlyoutItem Text="Factory Reset..." Click="OnFactoryResetClick"/>
                                 <MenuFlyoutSeparator/>
                                 <MenuFlyoutItem Text="Exit" Click="OnExitClick">

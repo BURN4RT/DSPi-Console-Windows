@@ -30,6 +30,7 @@ public sealed partial class MainWindow : Window
     private Channel? _selectedChannel;
     private bool _isUpdatingDelay;
     private bool _isUpdatingGain;
+    private bool _closeConfirmed;
     private StatsWindow? _statsWindow;
     private LoudnessWindow? _loudnessWindow;
     private CrossfeedWindow? _crossfeedWindow;
@@ -48,6 +49,9 @@ public sealed partial class MainWindow : Window
 
     // Inline per-channel meters: keyed by ChannelId
     private readonly Dictionary<int, HorizontalMeterBar> _channelMeters = new();
+
+    // Preset combo guard
+    private bool _isUpdatingPresetCombo;
 
     // Dashboard rebuild debounce
     private DispatcherTimer? _dashboardDebounce;
@@ -80,6 +84,7 @@ public sealed partial class MainWindow : Window
         {
             appWindow.Resize(new Windows.Graphics.SizeInt32(1000, 825));
             appWindow.Title = "DSPi Console";
+            appWindow.Closing += OnAppWindowClosing;
         }
 
 
@@ -122,6 +127,12 @@ public sealed partial class MainWindow : Window
 
         ViewModel.MatrixOutputDelayChanged += outputIndex =>
             DispatcherQueue.TryEnqueue(() => SyncDelayFromViewModel(outputIndex));
+
+        ViewModel.PresetsChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(RefreshPresetComboBox);
+
+        // Right-click context menu on preset combo
+        PresetComboBox.RightTapped += OnPresetComboRightTapped;
 
         // Right-click preamp slider to reset to 0 dB
         PreampSlider.RightTapped += (s, e) => { e.Handled = true; ViewModel.PreampDb = 0; };
@@ -1208,6 +1219,9 @@ public sealed partial class MainWindow : Window
             FadeCurves(0);
             FadeElement(LegendPanel, 0);
 
+            // Hide preset section
+            PresetSection.Visibility = Visibility.Collapsed;
+
             // Return to empty dashboard view
             _selectedChannel = null;
             ChannelEditorPanel.Visibility = Visibility.Collapsed;
@@ -1565,85 +1579,454 @@ public sealed partial class MainWindow : Window
 
     #region Menu Handlers
 
-    private async void OnCommitParametersClick(object sender, RoutedEventArgs e)
+    #region Preset Handlers
+
+    private void RefreshPresetComboBox()
     {
+        _isUpdatingPresetCombo = true;
+        PresetComboBox.Items.Clear();
+
+        if (!ViewModel.PresetsSupported)
+        {
+            PresetSection.Visibility = Visibility.Collapsed;
+            _isUpdatingPresetCombo = false;
+            return;
+        }
+
+        PresetSection.Visibility = ViewModel.IsDeviceConnected ? Visibility.Visible : Visibility.Collapsed;
+
+        for (int i = 0; i < MainViewModel.PresetSlotCount; i++)
+        {
+            PresetComboBox.Items.Add(new ComboBoxItem
+            {
+                Content = ViewModel.GetPresetDisplayName(i),
+                Tag = i
+            });
+        }
+
+        if (ViewModel.ActivePreset >= 0 && ViewModel.ActivePreset < MainViewModel.PresetSlotCount)
+            PresetComboBox.SelectedIndex = ViewModel.ActivePreset;
+        else
+            PresetComboBox.SelectedIndex = -1;
+
+        _isUpdatingPresetCombo = false;
+    }
+
+    private async void OnPresetSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isUpdatingPresetCombo) return;
+        if (PresetComboBox.SelectedItem is not ComboBoxItem item || item.Tag is not int slot) return;
+
+        if (!ViewModel.IsDeviceConnected) return;
+
+        // Selecting an empty slot → offer to save
+        if (!ViewModel.IsPresetOccupied(slot))
+        {
+            await SaveToPresetSlot(slot);
+            return;
+        }
+
+        // If dirty, ask about unsaved changes
+        if (ViewModel.PresetsDirty && ViewModel.ActivePreset >= 0)
+        {
+            var summary = ViewModel.GetChangeSummary();
+            var message = summary != null
+                ? $"You have unsaved changes to the current preset:\n\n{summary}"
+                : "You have unsaved changes to the current preset.";
+
+            var dialog = new ContentDialog
+            {
+                Title = "Unsaved Changes",
+                Content = message,
+                PrimaryButtonText = "Save & Switch",
+                SecondaryButtonText = "Discard & Switch",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = Content.XamlRoot
+            };
+
+            var result = await dialog.ShowAsync();
+            if (result == ContentDialogResult.Primary)
+            {
+                // Save current preset first
+                var saveResult = await ViewModel.SavePreset(ViewModel.ActivePreset, null);
+                if (saveResult != Usb.PresetResult.Ok)
+                {
+                    await ShowErrorDialog("Failed to save current preset");
+                    RevertPresetCombo();
+                    return;
+                }
+            }
+            else if (result == ContentDialogResult.None)
+            {
+                // Cancel — revert combo
+                RevertPresetCombo();
+                return;
+            }
+        }
+
+        // Load the selected preset
+        var loadResult = await ViewModel.LoadPreset(slot);
+        if (loadResult != Usb.PresetResult.Ok)
+        {
+            await ShowErrorDialog("Failed to load preset");
+            RevertPresetCombo();
+        }
+    }
+
+    private void RevertPresetCombo()
+    {
+        _isUpdatingPresetCombo = true;
+        if (ViewModel.ActivePreset >= 0 && ViewModel.ActivePreset < PresetComboBox.Items.Count)
+            PresetComboBox.SelectedIndex = ViewModel.ActivePreset;
+        else
+            PresetComboBox.SelectedIndex = -1;
+        _isUpdatingPresetCombo = false;
+    }
+
+    private void OnPresetComboRightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        e.Handled = true;
+        var flyout = new MenuFlyout();
+
+        flyout.Items.Add(new MenuFlyoutItem
+        {
+            Text = "Save",
+            Icon = new FontIcon { Glyph = "\uE74E" }
+        });
+        ((MenuFlyoutItem)flyout.Items[0]).Click += async (s, _) => await QuickSavePreset();
+
+        if (ViewModel.ActivePreset >= 0 && ViewModel.IsPresetOccupied(ViewModel.ActivePreset))
+        {
+            flyout.Items.Add(new MenuFlyoutItem
+            {
+                Text = "Rename...",
+                Icon = new FontIcon { Glyph = "\uE8AC" }
+            });
+            ((MenuFlyoutItem)flyout.Items[^1]).Click += async (s, _) => await ShowRenamePresetDialog(ViewModel.ActivePreset);
+
+            flyout.Items.Add(new MenuFlyoutItem
+            {
+                Text = "Clear This Preset",
+                Icon = new FontIcon { Glyph = "\uE74D" }
+            });
+            ((MenuFlyoutItem)flyout.Items[^1]).Click += async (s, _) =>
+            {
+                var dialog = new ContentDialog
+                {
+                    Title = "Clear Preset",
+                    Content = $"Delete \"{ViewModel.GetPresetName(ViewModel.ActivePreset)}\"?",
+                    PrimaryButtonText = "Delete",
+                    CloseButtonText = "Cancel",
+                    DefaultButton = ContentDialogButton.Close,
+                    XamlRoot = Content.XamlRoot
+                };
+                if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                {
+                    var result = await ViewModel.DeletePreset(ViewModel.ActivePreset);
+                    if (result != Usb.PresetResult.Ok)
+                        await ShowErrorDialog("Failed to delete preset");
+                }
+            };
+        }
+
+        flyout.Items.Add(new MenuFlyoutSeparator());
+
+        flyout.Items.Add(new MenuFlyoutItem
+        {
+            Text = "Clear All Presets",
+            Icon = new FontIcon { Glyph = "\uE750" }
+        });
+        ((MenuFlyoutItem)flyout.Items[^1]).Click += async (s, _) =>
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "Clear All Presets",
+                Content = "Delete all presets from device flash? This cannot be undone.",
+                PrimaryButtonText = "Delete All",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = Content.XamlRoot
+            };
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                var result = await ViewModel.ClearAllPresets();
+                if (result != Usb.PresetResult.Ok)
+                    await ShowErrorDialog("Failed to clear presets");
+            }
+        };
+
+        flyout.ShowAt(PresetComboBox, new FlyoutShowOptions
+        {
+            Position = e.GetPosition(PresetComboBox)
+        });
+    }
+
+    private async Task QuickSavePreset()
+    {
+        if (!ViewModel.IsDeviceConnected) return;
+
+        if (ViewModel.ActivePreset >= 0)
+        {
+            // Quick-save to active slot
+            var result = await ViewModel.SavePreset(ViewModel.ActivePreset, null);
+            if (result != Usb.PresetResult.Ok)
+                await ShowErrorDialog("Failed to save preset");
+        }
+        else
+        {
+            // No active preset — show slot picker
+            await ShowSaveToSlotDialog();
+        }
+    }
+
+    private async Task SaveToPresetSlot(int slot)
+    {
+        // Prompt for name
+        var nameBox = new TextBox
+        {
+            PlaceholderText = $"Preset {slot + 1}",
+            MaxLength = 31,
+            Text = ViewModel.IsPresetOccupied(slot) ? ViewModel.GetPresetName(slot) : ""
+        };
+
         var dialog = new ContentDialog
         {
-            Title = "Commit Parameters",
-            Content = "Save current parameters to device?\n\nThis may cause a brief audio interruption.",
+            Title = $"Save to Preset {slot + 1}",
+            Content = nameBox,
             PrimaryButtonText = "Save",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = Content.XamlRoot
         };
 
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary)
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
         {
-            if (!ViewModel.IsDeviceConnected)
-            {
-                await ShowErrorDialog("Not connected to device");
-                return;
-            }
+            var name = string.IsNullOrWhiteSpace(nameBox.Text) ? $"Preset {slot + 1}" : nameBox.Text.Trim();
+            var result = await ViewModel.SavePreset(slot, name);
+            if (result != Usb.PresetResult.Ok)
+                await ShowErrorDialog("Failed to save preset");
+        }
+        else
+        {
+            RevertPresetCombo();
+        }
+    }
 
-            var flashResult = await ViewModel.SaveParams();
-            if (flashResult == Usb.FlashResult.Ok)
+    private async Task ShowSaveToSlotDialog()
+    {
+        var panel = new StackPanel { Spacing = 12 };
+
+        var slotCombo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+        for (int i = 0; i < MainViewModel.PresetSlotCount; i++)
+        {
+            slotCombo.Items.Add(new ComboBoxItem
             {
-                await ShowSuccessDialog("Parameters saved successfully");
-            }
-            else
+                Content = ViewModel.GetPresetDisplayName(i),
+                Tag = i
+            });
+        }
+        slotCombo.SelectedIndex = 0;
+
+        var nameBox = new TextBox
+        {
+            PlaceholderText = "Preset name",
+            MaxLength = 31
+        };
+
+        panel.Children.Add(new TextBlock { Text = "Save to slot:" });
+        panel.Children.Add(slotCombo);
+        panel.Children.Add(nameBox);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Save Preset",
+            Content = panel,
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot
+        };
+
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            if (slotCombo.SelectedItem is ComboBoxItem item && item.Tag is int slot)
             {
-                await ShowErrorDialog("Failed to save parameters");
+                var name = string.IsNullOrWhiteSpace(nameBox.Text) ? $"Preset {slot + 1}" : nameBox.Text.Trim();
+                var result = await ViewModel.SavePreset(slot, name);
+                if (result != Usb.PresetResult.Ok)
+                    await ShowErrorDialog("Failed to save preset");
             }
         }
     }
 
-    private async void OnRevertToSavedClick(object sender, RoutedEventArgs e)
+    private async Task ShowRenamePresetDialog(int slot)
     {
+        var nameBox = new TextBox
+        {
+            Text = ViewModel.GetPresetName(slot),
+            MaxLength = 31
+        };
+        nameBox.SelectAll();
+
         var dialog = new ContentDialog
         {
-            Title = "Revert to Saved",
-            Content = "Revert to last saved parameters?\n\nCurrent unsaved changes will be lost.",
-            PrimaryButtonText = "Revert",
+            Title = "Rename Preset",
+            Content = nameBox,
+            PrimaryButtonText = "Rename",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot
+        };
+
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            var name = nameBox.Text.Trim();
+            if (!string.IsNullOrEmpty(name))
+            {
+                var ok = await ViewModel.RenamePreset(slot, name);
+                if (!ok) await ShowErrorDialog("Failed to rename preset");
+            }
+        }
+    }
+
+    private async void OnSavePresetClick(object sender, RoutedEventArgs e)
+    {
+        if (!ViewModel.IsDeviceConnected)
+        {
+            await ShowErrorDialog("Not connected to device");
+            return;
+        }
+
+        if (ViewModel.PresetsSupported)
+        {
+            await QuickSavePreset();
+        }
+        else
+        {
+            // Legacy: fall back to SaveParams
+            var flashResult = await ViewModel.SaveParams();
+            if (flashResult == Usb.FlashResult.Ok)
+                await ShowSuccessDialog("Parameters saved successfully");
+            else
+                await ShowErrorDialog("Failed to save parameters");
+        }
+    }
+
+    private async void OnRevertPresetClick(object sender, RoutedEventArgs e)
+    {
+        if (!ViewModel.IsDeviceConnected)
+        {
+            await ShowErrorDialog("Not connected to device");
+            return;
+        }
+
+        if (ViewModel.PresetsSupported && ViewModel.ActivePreset >= 0)
+        {
+            var summary = ViewModel.GetChangeSummary();
+            var message = summary != null
+                ? $"Revert to saved \"{ViewModel.GetPresetName(ViewModel.ActivePreset)}\"?\n\nPending changes:\n{summary}"
+                : $"Revert to saved \"{ViewModel.GetPresetName(ViewModel.ActivePreset)}\"?";
+
+            var dialog = new ContentDialog
+            {
+                Title = "Revert Preset",
+                Content = message,
+                PrimaryButtonText = "Revert",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = Content.XamlRoot
+            };
+
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                var result = await ViewModel.LoadPreset(ViewModel.ActivePreset);
+                if (result != Usb.PresetResult.Ok)
+                    await ShowErrorDialog("Failed to revert preset");
+            }
+        }
+        else
+        {
+            // Legacy: fall back to LoadParams
+            var dialog = new ContentDialog
+            {
+                Title = "Revert to Saved",
+                Content = "Revert to last saved parameters?\n\nCurrent unsaved changes will be lost.",
+                PrimaryButtonText = "Revert",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = Content.XamlRoot
+            };
+
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                var flashResult = await ViewModel.LoadParams();
+                switch (flashResult)
+                {
+                    case Usb.FlashResult.Ok:
+                        break;
+                    case Usb.FlashResult.ErrNoData:
+                        await ShowInfoDialog("No saved parameters found.\n\nThe device is using factory defaults.");
+                        break;
+                    default:
+                        await ShowErrorDialog("Failed to load parameters");
+                        break;
+                }
+            }
+        }
+    }
+
+    private async void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        if (_closeConfirmed) return;
+
+        if (!ViewModel.PresetsDirty || !ViewModel.IsDeviceConnected)
+            return;
+
+        args.Cancel = true;
+
+        var summary = ViewModel.GetChangeSummary();
+        var message = summary != null
+            ? $"You have unsaved changes:\n\n{summary}"
+            : "You have unsaved changes.";
+
+        var dialog = new ContentDialog
+        {
+            Title = "Unsaved Changes",
+            Content = message,
+            PrimaryButtonText = ViewModel.PresetsSupported && ViewModel.ActivePreset >= 0 ? "Save & Quit" : "Quit",
+            SecondaryButtonText = ViewModel.PresetsSupported && ViewModel.ActivePreset >= 0 ? "Discard & Quit" : null,
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = Content.XamlRoot
         };
 
         var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary)
+        if (result == ContentDialogResult.Primary && ViewModel.PresetsSupported && ViewModel.ActivePreset >= 0)
         {
-            if (!ViewModel.IsDeviceConnected)
+            var saveResult = await ViewModel.SavePreset(ViewModel.ActivePreset, null);
+            if (saveResult != Usb.PresetResult.Ok)
             {
-                await ShowErrorDialog("Not connected to device");
-                return;
+                await ShowErrorDialog("Failed to save preset. Close anyway?");
             }
-
-            var flashResult = await ViewModel.LoadParams();
-            switch (flashResult)
-            {
-                case Usb.FlashResult.Ok:
-                    await ShowSuccessDialog("Parameters reverted successfully");
-                    break;
-                case Usb.FlashResult.ErrNoData:
-                    await ShowInfoDialog("No saved parameters found.\n\nThe device is using factory defaults.");
-                    break;
-                case Usb.FlashResult.ErrCrc:
-                    await ShowErrorDialog("Saved data is corrupted");
-                    break;
-                default:
-                    await ShowErrorDialog("Failed to load parameters");
-                    break;
-            }
+            _closeConfirmed = true;
+            Close();
+        }
+        else if (result == ContentDialogResult.Primary || result == ContentDialogResult.Secondary)
+        {
+            _closeConfirmed = true;
+            Close();
         }
     }
+
+    #endregion
 
     private async void OnFactoryResetClick(object sender, RoutedEventArgs e)
     {
         var dialog = new ContentDialog
         {
             Title = "Factory Reset",
-            Content = "Do you wish to clear all active parameters?\n\nThis will not overwrite your saved parameters unless you run 'Commit Parameters'.",
+            Content = "Do you wish to clear all active parameters?\n\nThis will not overwrite your saved presets.",
             PrimaryButtonText = "Reset",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
