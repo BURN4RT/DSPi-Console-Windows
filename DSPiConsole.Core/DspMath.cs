@@ -152,7 +152,7 @@ public static class DspMath
     public static (float[] frequencies, float[] magnitudes) GenerateResponseCurve(
         IEnumerable<FilterParams> filters,
         int numPoints = 201,
-        float minFreq = 20.0f,
+        float minFreq = 10.0f,
         float maxFreq = 20000.0f,
         float sampleRate = SampleRate)
     {

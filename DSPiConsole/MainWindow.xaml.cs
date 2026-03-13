@@ -1700,6 +1700,18 @@ public sealed partial class MainWindow : Window
         {
             flyout.Items.Add(new MenuFlyoutItem
             {
+                Text = "Reload",
+                Icon = new FontIcon { Glyph = "\uE72C" }
+            });
+            ((MenuFlyoutItem)flyout.Items[^1]).Click += async (s, _) =>
+            {
+                var result = await ViewModel.LoadPreset(ViewModel.ActivePreset);
+                if (result != Usb.PresetResult.Ok)
+                    await ShowErrorDialog("Failed to reload preset");
+            };
+
+            flyout.Items.Add(new MenuFlyoutItem
+            {
                 Text = "Rename...",
                 Icon = new FontIcon { Glyph = "\uE8AC" }
             });

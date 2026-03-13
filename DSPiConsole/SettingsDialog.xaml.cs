@@ -39,6 +39,30 @@ public sealed partial class SettingsDialog : ContentDialog
         LineWidthSlider.ValueChanged += (s, e) => LineWidthText.Text = e.NewValue.ToString("F1");
         AnimSpeedSlider.ValueChanged += (s, e) => AnimSpeedText.Text = e.NewValue.ToString("F2");
 
+        // Graph scale controls
+        DbRangeSlider.Value = settings.GraphDbRange;
+        DbCenterSlider.Value = settings.GraphDbCenter;
+        UpdateDbRangeText(settings.GraphDbRange);
+        UpdateDbCenterText(settings.GraphDbCenter, settings.GraphDbRange);
+
+        DbRangeSlider.ValueChanged += (s, e) =>
+        {
+            UpdateDbRangeText(e.NewValue);
+            UpdateDbCenterText(DbCenterSlider.Value, e.NewValue);
+        };
+        DbCenterSlider.ValueChanged += (s, e) =>
+        {
+            UpdateDbCenterText(e.NewValue, DbRangeSlider.Value);
+        };
+
+        SelectComboByTag(MinFreqCombo, settings.GraphMinFrequency);
+        SelectComboByTag(MaxFreqCombo, settings.GraphMaxFrequency);
+
+        FreqGridToggle.IsOn = settings.ShowFrequencyGrid;
+        FreqLabelsToggle.IsOn = settings.ShowFrequencyLabels;
+        DbGridToggle.IsOn = settings.ShowDbGrid;
+        DbLabelsToggle.IsOn = settings.ShowDbLabels;
+
         PrimaryButtonClick += OnSave;
 
         InitializePresetsTab();
@@ -122,8 +146,52 @@ public sealed partial class SettingsDialog : ContentDialog
         settings.GraphLineWidth = LineWidthSlider.Value;
         settings.GraphAnimationSpeed = AnimSpeedSlider.Value;
         settings.ShowDebugInfo = DebugToggle.IsOn;
+
+        settings.GraphDbRange = DbRangeSlider.Value;
+        settings.GraphDbCenter = DbCenterSlider.Value;
+        settings.GraphMinFrequency = ReadComboTagDouble(MinFreqCombo, 20.0);
+        settings.GraphMaxFrequency = ReadComboTagDouble(MaxFreqCombo, 20000.0);
+
+        settings.ShowFrequencyGrid = FreqGridToggle.IsOn;
+        settings.ShowFrequencyLabels = FreqLabelsToggle.IsOn;
+        settings.ShowDbGrid = DbGridToggle.IsOn;
+        settings.ShowDbLabels = DbLabelsToggle.IsOn;
+
         settings.Save();
         settings.NotifyChanged();
+    }
+
+    private void UpdateDbRangeText(double range)
+    {
+        DbRangeText.Text = $"\u00b1{range / 2:0} dB";
+    }
+
+    private void UpdateDbCenterText(double center, double range)
+    {
+        double bottom = center - range / 2;
+        double top = center + range / 2;
+        DbCenterText.Text = $"{bottom:0} to {top:+0;-0;0} dB";
+    }
+
+    private static void SelectComboByTag(ComboBox combo, double value)
+    {
+        string valStr = value.ToString("0");
+        for (int i = 0; i < combo.Items.Count; i++)
+        {
+            if (combo.Items[i] is ComboBoxItem item && item.Tag is string tag && tag == valStr)
+            {
+                combo.SelectedIndex = i;
+                return;
+            }
+        }
+        combo.SelectedIndex = 0;
+    }
+
+    private static double ReadComboTagDouble(ComboBox combo, double fallback)
+    {
+        if (combo.SelectedItem is ComboBoxItem item && item.Tag is string tag && double.TryParse(tag, out var val))
+            return val;
+        return fallback;
     }
 
     // --- Pin Assignment table ---

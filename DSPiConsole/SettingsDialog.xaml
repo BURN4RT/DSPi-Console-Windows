@@ -63,6 +63,61 @@
                                            FontSize="12" VerticalAlignment="Center" Margin="8,0,0,0" Width="30"/>
                             </Grid>
                         </StackPanel>
+
+                        <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="0,4,0,4"/>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Vertical Range" FontSize="12"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Slider x:Name="DbRangeSlider" Minimum="10" Maximum="100" StepFrequency="5"/>
+                                <TextBlock Grid.Column="1" x:Name="DbRangeText" FontFamily="Cascadia Code, Consolas"
+                                           FontSize="12" VerticalAlignment="Center" Margin="8,0,0,0" Width="50"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Center Offset" FontSize="12"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Slider x:Name="DbCenterSlider" Minimum="-40" Maximum="20" StepFrequency="1"/>
+                                <TextBlock Grid.Column="1" x:Name="DbCenterText" FontFamily="Cascadia Code, Consolas"
+                                           FontSize="12" VerticalAlignment="Center" Margin="8,0,0,0" Width="100"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Min Frequency" FontSize="12"/>
+                            <ComboBox x:Name="MinFreqCombo" HorizontalAlignment="Stretch">
+                                <ComboBoxItem Content="10 Hz" Tag="10"/>
+                                <ComboBoxItem Content="15 Hz" Tag="15"/>
+                                <ComboBoxItem Content="20 Hz" Tag="20"/>
+                                <ComboBoxItem Content="50 Hz" Tag="50"/>
+                                <ComboBoxItem Content="100 Hz" Tag="100"/>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Max Frequency" FontSize="12"/>
+                            <ComboBox x:Name="MaxFreqCombo" HorizontalAlignment="Stretch">
+                                <ComboBoxItem Content="5 kHz" Tag="5000"/>
+                                <ComboBoxItem Content="10 kHz" Tag="10000"/>
+                                <ComboBoxItem Content="20 kHz" Tag="20000"/>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="0,4,0,4"/>
+
+                        <ToggleSwitch x:Name="FreqGridToggle" Header="Show Frequency Grid" OnContent="On" OffContent="Off"/>
+                        <ToggleSwitch x:Name="FreqLabelsToggle" Header="Show Frequency Labels" OnContent="On" OffContent="Off"/>
+                        <ToggleSwitch x:Name="DbGridToggle" Header="Show dB Grid" OnContent="On" OffContent="Off"/>
+                        <ToggleSwitch x:Name="DbLabelsToggle" Header="Show dB Labels" OnContent="On" OffContent="Off"/>
                     </StackPanel>
                 </ScrollViewer>
             </TabViewItem>

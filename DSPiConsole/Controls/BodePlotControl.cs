@@ -12,17 +12,33 @@ namespace DSPiConsole.Controls;
 
 /// <summary>
 /// Custom control for rendering Bode plot frequency response curves.
-/// Uses XAML Polyline for rendering with optional glow and animation.
+/// Uses a dual-canvas layout: _plotCanvas (clipped) for grid/curves, _labelCanvas (unclipped) for axis labels.
 /// </summary>
 public sealed class BodePlotControl : UserControl
 {
-    private Canvas? _canvas;
+    private Grid? _rootGrid;
+    private Canvas? _plotCanvas;
+    private Canvas? _labelCanvas;
     private MainViewModel? _viewModel;
 
-    private const float MinFreq = 20.0f;
-    private const float MaxFreq = 20000.0f;
-    private const float DbRange = 20.0f;
     private const int NumPoints = 201;
+
+    // Plot area margins (px)
+    private const double LeftMargin = 36;
+    private const double BottomMargin = 16;
+    private const double TopMargin = 9;
+    private const double RightMargin = 8;
+
+    // Settings-derived properties
+    private float MinFreq => (float)AppSettings.Instance.GraphMinFrequency;
+    private float MaxFreq => (float)AppSettings.Instance.GraphMaxFrequency;
+    private float DbTop => (float)(AppSettings.Instance.GraphDbCenter + AppSettings.Instance.GraphDbRange / 2.0);
+    private float DbBottom => (float)(AppSettings.Instance.GraphDbCenter - AppSettings.Instance.GraphDbRange / 2.0);
+    private float DbSpan => (float)AppSettings.Instance.GraphDbRange;
+
+    // Fixed frequency set for the data pipeline (201 points, 20–20kHz log-spaced)
+    private const float DataMinFreq = 10.0f;
+    private const float DataMaxFreq = 20000.0f;
 
     // Animation state
     private readonly Dictionary<int, float[]> _currentMagnitudes = new();
@@ -38,11 +54,17 @@ public sealed class BodePlotControl : UserControl
 
     public BodePlotControl()
     {
-        _canvas = new Canvas
+        _rootGrid = new Grid
         {
             Background = new SolidColorBrush(Color.FromArgb(128, 32, 32, 36))
         };
-        Content = _canvas;
+
+        _plotCanvas = new Canvas();
+        _labelCanvas = new Canvas { IsHitTestVisible = false };
+
+        _rootGrid.Children.Add(_plotCanvas);
+        _rootGrid.Children.Add(_labelCanvas);
+        Content = _rootGrid;
 
         _animTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
         _animTimer.Tick += OnAnimationTick;
@@ -62,7 +84,6 @@ public sealed class BodePlotControl : UserControl
             _viewModel.PropertyChanged += OnViewModelPropertyChanged;
             AppSettings.Instance.SettingsChanged += OnSettingsChanged;
 
-            // Initialize magnitudes
             foreach (var channel in Channel.All)
             {
                 var id = (int)channel.Id;
@@ -71,13 +92,12 @@ public sealed class BodePlotControl : UserControl
             }
 
             UpdateTargets();
-            // Snap current to target on first load (no animation)
             foreach (var channel in Channel.All)
             {
                 var id = (int)channel.Id;
                 Array.Copy(_targetMagnitudes[id], _currentMagnitudes[id], NumPoints);
             }
-            Redraw();
+            Redraw(gridChanged: true);
         }
     }
 
@@ -100,8 +120,8 @@ public sealed class BodePlotControl : UserControl
         StartAnimation();
     }
 
-    private void OnVisibilityChanged(object? sender, EventArgs e) => Redraw();
-    private void OnSettingsChanged(object? sender, EventArgs e) => Redraw();
+    private void OnVisibilityChanged(object? sender, EventArgs e) => Redraw(gridChanged: true);
+    private void OnSettingsChanged(object? sender, EventArgs e) => Redraw(gridChanged: true);
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
@@ -112,7 +132,28 @@ public sealed class BodePlotControl : UserControl
         }
     }
 
-    private void OnSizeChanged(object sender, SizeChangedEventArgs e) => Redraw();
+    private void OnSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdatePlotClip();
+        Redraw(gridChanged: true);
+    }
+
+    private void UpdatePlotClip()
+    {
+        if (_plotCanvas == null) return;
+        double w = ActualWidth;
+        double h = ActualHeight;
+        if (w <= 0 || h <= 0) return;
+
+        double plotWidth = w - LeftMargin - RightMargin;
+        double plotHeight = h - TopMargin - BottomMargin;
+        if (plotWidth <= 0 || plotHeight <= 0) return;
+
+        _plotCanvas.Clip = new RectangleGeometry
+        {
+            Rect = new Windows.Foundation.Rect(LeftMargin, TopMargin, plotWidth, plotHeight)
+        };
+    }
 
     private void UpdateTargets()
     {
@@ -128,7 +169,6 @@ public sealed class BodePlotControl : UserControl
             }
             else if (magnitudes.Length > 0)
             {
-                // Resize if needed
                 for (int i = 0; i < NumPoints; i++)
                 {
                     float pct = i / (float)(NumPoints - 1);
@@ -179,7 +219,7 @@ public sealed class BodePlotControl : UserControl
             }
         }
 
-        Redraw();
+        Redraw(gridChanged: false);
 
         if (allDone)
         {
@@ -188,18 +228,18 @@ public sealed class BodePlotControl : UserControl
         }
     }
 
-    private double XPos(float freq, double width)
+    private double XPos(float freq, double plotWidth)
     {
         float logMin = MathF.Log10(MinFreq);
         float logMax = MathF.Log10(MaxFreq);
         float logVal = MathF.Log10(freq);
-        return (logVal - logMin) / (logMax - logMin) * width;
+        return LeftMargin + (logVal - logMin) / (logMax - logMin) * plotWidth;
     }
 
-    private double YPos(float db, double height)
+    private double YPos(float db, double plotHeight)
     {
-        float normalized = (db + DbRange) / (2.0f * DbRange);
-        return height - (normalized * height);
+        float normalized = (db - DbBottom) / DbSpan;
+        return TopMargin + plotHeight - (normalized * plotHeight);
     }
 
     public void Invalidate()
@@ -220,20 +260,183 @@ public sealed class BodePlotControl : UserControl
         }
     }
 
-    private void Redraw()
+    /// <summary>
+    /// Compute the frequency for a given data point index (0..NumPoints-1) in the 20–20kHz log space.
+    /// </summary>
+    private static float DataFreqAt(int index)
     {
-        if (_canvas == null) return;
+        float t = index / (float)(NumPoints - 1);
+        float logMin = MathF.Log10(DataMinFreq);
+        float logMax = MathF.Log10(DataMaxFreq);
+        return MathF.Pow(10, logMin + t * (logMax - logMin));
+    }
 
-        _canvas.Children.Clear();
-        _channelPolylines.Clear();
+    private void Redraw(bool gridChanged)
+    {
+        if (_plotCanvas == null || _labelCanvas == null) return;
 
         double width = ActualWidth;
         double height = ActualHeight;
-
         if (width <= 0 || height <= 0) return;
 
-        DrawGrid(width, height);
+        double plotWidth = width - LeftMargin - RightMargin;
+        double plotHeight = height - TopMargin - BottomMargin;
+        if (plotWidth <= 0 || plotHeight <= 0) return;
 
+        if (gridChanged)
+        {
+            _plotCanvas.Children.Clear();
+            _labelCanvas.Children.Clear();
+            _channelPolylines.Clear();
+
+            DrawGrid(plotWidth, plotHeight);
+            DrawLabels(plotWidth, plotHeight);
+            DrawCurves(plotWidth, plotHeight);
+        }
+        else
+        {
+            UpdateCurvePoints(plotWidth, plotHeight);
+        }
+    }
+
+    private void DrawGrid(double plotWidth, double plotHeight)
+    {
+        var settings = AppSettings.Instance;
+
+        // Frequency grid (vertical lines)
+        if (settings.ShowFrequencyGrid)
+        {
+            var minorColor = Color.FromArgb(15, 255, 255, 255);
+            var majorColor = Color.FromArgb(38, 255, 255, 255);
+
+            // All decade subdivisions from 10 to 20000
+            float[] decades = { 10, 100, 1000, 10000 };
+            foreach (var decade in decades)
+            {
+                for (int m = 1; m <= 9; m++)
+                {
+                    float freq = decade * m;
+                    if (freq < MinFreq || freq > MaxFreq) continue;
+
+                    bool isMajor = m == 1 && freq >= 100;
+                    double x = XPos(freq, plotWidth);
+
+                    _plotCanvas!.Children.Add(new Line
+                    {
+                        X1 = x, Y1 = TopMargin,
+                        X2 = x, Y2 = TopMargin + plotHeight,
+                        Stroke = new SolidColorBrush(isMajor ? majorColor : minorColor),
+                        StrokeThickness = 1
+                    });
+                }
+            }
+            // Also draw 20kHz if in range
+            if (20000 <= MaxFreq && 20000 >= MinFreq)
+            {
+                double x = XPos(20000, plotWidth);
+                _plotCanvas!.Children.Add(new Line
+                {
+                    X1 = x, Y1 = TopMargin,
+                    X2 = x, Y2 = TopMargin + plotHeight,
+                    Stroke = new SolidColorBrush(minorColor),
+                    StrokeThickness = 1
+                });
+            }
+        }
+
+        // dB grid (horizontal lines)
+        if (settings.ShowDbGrid)
+        {
+            var gridColor = Color.FromArgb(25, 255, 255, 255);
+            var zeroLineColor = Color.FromArgb(76, 255, 255, 255);
+
+            double step = GetDbStep();
+            // Find first grid line at or above DbBottom
+            double firstDb = Math.Ceiling(DbBottom / step) * step;
+
+            for (double db = firstDb; db <= DbTop; db += step)
+            {
+                double y = YPos((float)db, plotHeight);
+                bool isZero = Math.Abs(db) < 0.01;
+                _plotCanvas!.Children.Add(new Line
+                {
+                    X1 = LeftMargin, Y1 = y,
+                    X2 = LeftMargin + plotWidth, Y2 = y,
+                    Stroke = new SolidColorBrush(isZero ? zeroLineColor : gridColor),
+                    StrokeThickness = 1
+                });
+            }
+        }
+    }
+
+    private void DrawLabels(double plotWidth, double plotHeight)
+    {
+        var settings = AppSettings.Instance;
+        var labelColor = new SolidColorBrush(Color.FromArgb(102, 255, 255, 255));
+
+        // Frequency labels (bottom edge)
+        if (settings.ShowFrequencyLabels)
+        {
+            float[] freqLabels = { 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
+            foreach (var freq in freqLabels)
+            {
+                if (freq < MinFreq || freq > MaxFreq) continue;
+
+                double x = XPos(freq, plotWidth);
+                string text = FormatFrequency(freq);
+
+                var tb = new TextBlock
+                {
+                    Text = text,
+                    FontSize = 9,
+                    FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+                    Foreground = labelColor
+                };
+
+                // Measure and center horizontally
+                tb.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+                double tbWidth = tb.DesiredSize.Width;
+
+                Canvas.SetLeft(tb, x - tbWidth / 2);
+                Canvas.SetTop(tb, TopMargin + plotHeight + 2);
+                _labelCanvas!.Children.Add(tb);
+            }
+        }
+
+        // dB labels (left edge)
+        if (settings.ShowDbLabels)
+        {
+            double step = GetDbStep();
+            double firstDb = Math.Ceiling(DbBottom / step) * step;
+
+            for (double db = firstDb; db <= DbTop; db += step)
+            {
+                double y = YPos((float)db, plotHeight);
+
+                // Skip labels that fall outside the plot area
+                if (y < TopMargin - 4 || y > TopMargin + plotHeight + 4) continue;
+
+                string text = FormatDb(db);
+                var tb = new TextBlock
+                {
+                    Text = text,
+                    FontSize = 9,
+                    FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+                    Foreground = labelColor
+                };
+
+                tb.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+                double tbHeight = tb.DesiredSize.Height;
+
+                Canvas.SetLeft(tb, 2);
+                Canvas.SetTop(tb, y - tbHeight / 2);
+                _labelCanvas!.Children.Add(tb);
+            }
+        }
+    }
+
+    private void DrawCurves(double plotWidth, double plotHeight)
+    {
         if (_viewModel == null) return;
 
         var settings = AppSettings.Instance;
@@ -251,17 +454,10 @@ public sealed class BodePlotControl : UserControl
             var magnitudes = _currentMagnitudes[id];
             var polylines = new List<Polyline>();
 
-            var points = new PointCollection();
-            for (int i = 0; i < NumPoints; i++)
-            {
-                double x = (double)i / (NumPoints - 1) * width;
-                double y = YPos(magnitudes[i], height);
-                points.Add(new Windows.Foundation.Point(x, y));
-            }
+            var points = BuildPoints(magnitudes, plotWidth, plotHeight);
 
             if (showGlow)
             {
-                // Outer glow
                 var outerGlow = new Polyline
                 {
                     Stroke = new SolidColorBrush(Color.FromArgb(50, channel.Color.R, channel.Color.G, channel.Color.B)),
@@ -269,10 +465,9 @@ public sealed class BodePlotControl : UserControl
                     StrokeLineJoin = PenLineJoin.Round,
                     Points = ClonePoints(points)
                 };
-                _canvas.Children.Add(outerGlow);
+                _plotCanvas!.Children.Add(outerGlow);
                 polylines.Add(outerGlow);
 
-                // Inner glow
                 var innerGlow = new Polyline
                 {
                     Stroke = new SolidColorBrush(Color.FromArgb(100, channel.Color.R, channel.Color.G, channel.Color.B)),
@@ -280,11 +475,10 @@ public sealed class BodePlotControl : UserControl
                     StrokeLineJoin = PenLineJoin.Round,
                     Points = ClonePoints(points)
                 };
-                _canvas.Children.Add(innerGlow);
+                _plotCanvas!.Children.Add(innerGlow);
                 polylines.Add(innerGlow);
             }
 
-            // Main line
             var mainLine = new Polyline
             {
                 Stroke = new SolidColorBrush(channel.Color),
@@ -292,7 +486,7 @@ public sealed class BodePlotControl : UserControl
                 StrokeLineJoin = PenLineJoin.Round,
                 Points = points
             };
-            _canvas.Children.Add(mainLine);
+            _plotCanvas!.Children.Add(mainLine);
             polylines.Add(mainLine);
 
             foreach (var p in polylines)
@@ -301,37 +495,60 @@ public sealed class BodePlotControl : UserControl
         }
     }
 
-    private void DrawGrid(double width, double height)
+    private void UpdateCurvePoints(double plotWidth, double plotHeight)
     {
-        var gridColor = Color.FromArgb(25, 255, 255, 255);
-        var zeroLineColor = Color.FromArgb(76, 255, 255, 255);
+        if (_viewModel == null) return;
 
-        // Vertical grid lines (frequency decades)
-        foreach (var freq in new[] { 100f, 1000f, 10000f })
+        foreach (var channel in Channel.All)
         {
-            double x = XPos(freq, width);
-            _canvas!.Children.Add(new Line
-            {
-                X1 = x, Y1 = 0,
-                X2 = x, Y2 = height,
-                Stroke = new SolidColorBrush(gridColor),
-                StrokeThickness = 1
-            });
-        }
+            var id = (int)channel.Id;
+            if (!_channelPolylines.ContainsKey(id)) continue;
+            if (!_currentMagnitudes.ContainsKey(id)) continue;
 
-        // Horizontal grid lines (dB)
-        foreach (var db in new[] { -10f, 0f, 10f })
-        {
-            double y = YPos(db, height);
-            var color = db == 0 ? zeroLineColor : gridColor;
-            _canvas!.Children.Add(new Line
+            var magnitudes = _currentMagnitudes[id];
+            var points = BuildPoints(magnitudes, plotWidth, plotHeight);
+
+            foreach (var polyline in _channelPolylines[id])
             {
-                X1 = 0, Y1 = y,
-                X2 = width, Y2 = y,
-                Stroke = new SolidColorBrush(color),
-                StrokeThickness = 1
-            });
+                polyline.Points = ClonePoints(points);
+            }
         }
+    }
+
+    private PointCollection BuildPoints(float[] magnitudes, double plotWidth, double plotHeight)
+    {
+        var points = new PointCollection();
+        for (int i = 0; i < NumPoints; i++)
+        {
+            float freq = DataFreqAt(i);
+            double x = XPos(freq, plotWidth);
+            double y = YPos(magnitudes[i], plotHeight);
+            points.Add(new Windows.Foundation.Point(x, y));
+        }
+        return points;
+    }
+
+    private double GetDbStep()
+    {
+        double span = DbSpan;
+        if (span <= 12) return 1;
+        if (span <= 30) return 3;
+        if (span <= 60) return 5;
+        return 10;
+    }
+
+    private static string FormatFrequency(float freq)
+    {
+        if (freq >= 1000) return $"{freq / 1000:0.#}k";
+        return freq.ToString("0");
+    }
+
+    private static string FormatDb(double db)
+    {
+        int rounded = (int)Math.Round(db);
+        if (rounded > 0) return $"+{rounded} dB";
+        if (rounded < 0) return $"{rounded} dB";
+        return "0 dB";
     }
 
     private static PointCollection ClonePoints(PointCollection source)

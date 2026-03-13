@@ -16,6 +16,18 @@ public class AppSettings
     public double GraphAnimationSpeed { get; set; } = 0.2;
     public bool ShowDebugInfo { get; set; }
 
+    // Graph scale
+    public double GraphDbRange { get; set; } = 50.0;
+    public double GraphDbCenter { get; set; } = 0.0;
+    public double GraphMinFrequency { get; set; } = 20.0;
+    public double GraphMaxFrequency { get; set; } = 20000.0;
+
+    // Grid/label visibility
+    public bool ShowFrequencyGrid { get; set; } = true;
+    public bool ShowFrequencyLabels { get; set; } = true;
+    public bool ShowDbGrid { get; set; } = true;
+    public bool ShowDbLabels { get; set; } = true;
+
     public event EventHandler? SettingsChanged;
 
     public void NotifyChanged()

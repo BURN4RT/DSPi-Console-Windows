@@ -18,7 +18,8 @@
       "Bash(powershell.exe:*)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebSearch",
-      "WebFetch(domain:api.github.com)"
+      "WebFetch(domain:api.github.com)",
+      "Bash(find \"C:/Users/Weeb Labs/Projects/DSPi-Console-Mac/\" -type f -name \"*.swift\" | xargs grep -l \"frequency\\\\|bode\\\\|response\\\\|magnitude\\\\|dB\\\\|graph\" -i 2>/dev/null)"
     ]
   }
 }

@@ -203,7 +203,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _channelNames[(int)channel.Id] = name;
         Task.Run(() => _device.SetChannelNameOnDevice((int)channel.Id, name));
         ChannelNameChanged?.Invoke((int)channel.Id);
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     // Output enabled state for matrix mixer / sidebar filtering
@@ -413,7 +413,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _matrixInvert[input, output] = invert;
         Task.Run(() => _device.SetMatrixRoute(input, output, enabled, invert, gain));
         MatrixRouteChanged?.Invoke(input, output);
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     public void SetOutputGainDb(int output, float db)
@@ -430,7 +430,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _outputMuted[output] = muted;
         Task.Run(() => _device.SetOutputMute(output, muted));
         MatrixOutputMuteChanged?.Invoke(output);
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     public void SetOutputDelayMs(int output, float ms)
@@ -444,7 +444,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public void SetOutputEnableUsb(int output, bool enabled)
     {
         Task.Run(() => _device.SetOutputEnable(output, enabled));
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     // ── Pin assignment accessors ──
@@ -670,7 +670,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
         Task.Run(() => _device.SetFilter(channel, band, p));
         FiltersChanged?.Invoke(this, EventArgs.Empty);
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     private void FetchFilter(int channel, int band)
@@ -694,7 +694,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ChannelDelays));
         if (outputIndex >= 0)
             MatrixOutputDelayChanged?.Invoke(outputIndex);
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     private void FetchDelay(int channel)
@@ -733,7 +733,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         Task.Run(() => _device.SetOutputGain(outputIndex, db));
         OnPropertyChanged(nameof(ChannelGains));
         MatrixOutputGainChanged?.Invoke(outputIndex);
-        PresetsDirty = true;
+        FiltersChanged?.Invoke(this, EventArgs.Empty);
+        CheckDirty();
     }
 
     private void FetchChannelGain(int channelId)
@@ -751,6 +752,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                     _channelGains[channelId] = gain.Value;
                     OnPropertyChanged(nameof(ChannelGains));
                     MatrixOutputGainChanged?.Invoke(outputIndex);
+                    FiltersChanged?.Invoke(this, EventArgs.Empty);
                 });
             }
         }
@@ -763,7 +765,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (outputIndex < 0) return;
         Task.Run(() => _device.SetOutputMute(outputIndex, muted));
         OnPropertyChanged(nameof(ChannelMutes));
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     private void FetchChannelMute(int channelId)
@@ -866,55 +868,55 @@ public partial class MainViewModel : ObservableObject, IDisposable
     partial void OnLoudnessEnabledChanged(bool value)
     {
         Task.Run(() => _device.SetLoudnessEnabled(value));
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     partial void OnLoudnessRefSPLChanged(float value)
     {
         Task.Run(() => _device.SetLoudnessRefSPL(value));
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     partial void OnLoudnessIntensityChanged(float value)
     {
         Task.Run(() => _device.SetLoudnessIntensity(value));
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     partial void OnCrossfeedEnabledChanged(bool value)
     {
         Task.Run(() => _device.SetCrossfeedEnabled(value));
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     partial void OnCrossfeedPresetChanged(int value)
     {
         Task.Run(() => _device.SetCrossfeedPreset(value));
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     partial void OnCrossfeedFreqChanged(float value)
     {
         Task.Run(() => _device.SetCrossfeedFreq(value));
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     partial void OnCrossfeedFeedChanged(float value)
     {
         Task.Run(() => _device.SetCrossfeedFeed(value));
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     partial void OnCrossfeedItdChanged(bool value)
     {
         Task.Run(() => _device.SetCrossfeedItd(value));
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     partial void OnPreampDbChanged(float value)
     {
         Task.Run(() => _device.SetPreamp(value));
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     private bool FetchPreamp()
@@ -936,7 +938,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         Task.Run(() => _device.SetBypass(value));
         FiltersChanged?.Invoke(this, EventArgs.Empty);
-        PresetsDirty = true;
+        CheckDirty();
     }
 
     private void FetchBypass()
@@ -1251,6 +1253,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
+    /// Recompute PresetsDirty by comparing current state against the saved snapshot.
+    /// </summary>
+    private void CheckDirty()
+    {
+        if (_savedSnapshot == null) return;
+        var current = PresetSnapshot.Capture(this);
+        var changes = PresetDiff.Diff(_savedSnapshot, current, this);
+        PresetsDirty = changes.Count > 0;
+    }
+
+    /// <summary>
     /// Get a human-readable summary of changes since the last save/load.
     /// Returns null if no snapshot is available or no changes detected.
     /// </summary>
@@ -1285,13 +1298,26 @@ public partial class MainViewModel : ObservableObject, IDisposable
             for (int i = 0; i < 201; i++)
             {
                 float pct = i / 200.0f;
-                freqs[i] = MathF.Pow(10, MathF.Log10(20) + pct * (MathF.Log10(20000) - MathF.Log10(20)));
+                freqs[i] = MathF.Pow(10, MathF.Log10(10) + pct * (MathF.Log10(20000) - MathF.Log10(10)));
                 mags[i] = 0;
             }
             return (freqs, mags);
         }
 
-        return DspMath.GenerateResponseCurve(filters);
+        var result = DspMath.GenerateResponseCurve(filters);
+
+        // Apply output channel gain offset to the curve
+        if (channel.IsOutput)
+        {
+            float gain = GetChannelGain(channel);
+            if (MathF.Abs(gain) > 0.001f)
+            {
+                for (int i = 0; i < result.magnitudes.Length; i++)
+                    result.magnitudes[i] += gain;
+            }
+        }
+
+        return result;
     }
 
     #endregion
