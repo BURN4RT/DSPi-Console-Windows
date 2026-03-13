@@ -48,6 +48,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // Output pin assignments: Dictionary<pinOutputId, byte>
     private readonly Dictionary<int, byte> _outputPins = new();
 
+    // Clip tracking
+    private ushort _clipLatched;
+    private DateTime? _clipTimestamp;
+
     [ObservableProperty]
     private float _preampDb;
 
@@ -234,6 +238,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
                         {
                             var info = _device.GetDeviceInfo();
                             var newPlatform = info?.Platform ?? "";
+                            // Set channel count for platform-aware status parsing
+                            _device.NumChannels = newPlatform == "RP2350" ? 11 : 7;
                             _dispatcher.TryEnqueue(() => Platform = newPlatform);
                             System.Threading.Thread.Sleep(100);
                             FetchAll();
@@ -478,6 +484,26 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var status = _device.GetStatus();
             if (status != null)
             {
+                // Clip latching: OR incoming clip flags into latched state
+                ushort newBits = (ushort)(status.ClipFlags & ~_clipLatched);
+                if (newBits != 0)
+                {
+                    _clipLatched |= status.ClipFlags;
+                    _clipTimestamp = DateTime.UtcNow;
+                }
+
+                // Auto-clear after 10 seconds of no new clips
+                if (_clipLatched != 0 && _clipTimestamp.HasValue &&
+                    (DateTime.UtcNow - _clipTimestamp.Value).TotalSeconds > 10)
+                {
+                    _clipLatched = 0;
+                    _clipTimestamp = null;
+                    try { _device.ClearClips(); } catch { }
+                }
+
+                status.ClipLatched = _clipLatched;
+                status.ClipTimestamp = _clipTimestamp;
+
                 _dispatcher.TryEnqueue(() => Status = status);
             }
         }

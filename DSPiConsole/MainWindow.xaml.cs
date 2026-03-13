@@ -46,6 +46,9 @@ public sealed partial class MainWindow : Window
     private readonly List<ListViewItem> _channelListItems = new();
     private readonly Dictionary<int, TextBlock> _channelNameTexts = new();
 
+    // Inline per-channel meters: keyed by ChannelId
+    private readonly Dictionary<int, HorizontalMeterBar> _channelMeters = new();
+
     // Dashboard rebuild debounce
     private DispatcherTimer? _dashboardDebounce;
 
@@ -179,6 +182,7 @@ public sealed partial class MainWindow : Window
         // Index 0 = dashboard (no item), 1+ = channels
         _channelListItems.Clear();
         _outputChannelItems.Clear();
+        _channelMeters.Clear();
 
         InputChannelsList.Items.Clear();
         OutputChannelsList.Items.Clear();
@@ -256,6 +260,7 @@ public sealed partial class MainWindow : Window
         item.Tapped += OnChannelItemTapped;
 
         var grid = new Grid { Height = 32, HorizontalAlignment = HorizontalAlignment.Stretch };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(74, GridUnitType.Pixel) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -318,14 +323,16 @@ public sealed partial class MainWindow : Window
             BorderBrush = new SolidColorBrush(Color.FromArgb(80, channel.Color.R, channel.Color.G, channel.Color.B)),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(10, 3, 10, 3),
+            Padding = new Thickness(7, 2, 7, 2),
+            MinWidth = 46,
             VerticalAlignment = VerticalAlignment.Center
         };
 
         var badgeContent = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 6
+            Spacing = 6,
+            HorizontalAlignment = HorizontalAlignment.Center
         };
 
         // Glowing indicator dot with layered effect
@@ -370,8 +377,19 @@ public sealed partial class MainWindow : Window
         badgeContent.Children.Add(badgeText);
 
         badge.Child = badgeContent;
-        Grid.SetColumn(badge, 1);
+        Grid.SetColumn(badge, 2);
         grid.Children.Add(badge);
+
+        // Inline meter bar
+        var meter = new HorizontalMeterBar
+        {
+            MeterColor = channel.Color,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(4, 0, 12, 0)
+        };
+        Grid.SetColumn(meter, 1);
+        grid.Children.Add(meter);
+        _channelMeters[(int)channel.Id] = meter;
 
         item.Content = grid;
         return item;
@@ -1185,6 +1203,7 @@ public sealed partial class MainWindow : Window
             OutputChannelsList.Items.Clear();
             _channelListItems.Clear();
             _outputChannelItems.Clear();
+            _channelMeters.Clear();
 
             FadeCurves(0);
             FadeElement(LegendPanel, 0);
@@ -1263,23 +1282,16 @@ public sealed partial class MainWindow : Window
     private void UpdateMeters()
     {
         var status = ViewModel.Status;
-        MeterMasterL.Level = status.Peaks[0];
-        MeterMasterR.Level = status.Peaks[1];
-        MeterOutL.Level = status.Peaks[2];
-        MeterOutR.Level = status.Peaks[3];
-        MeterSub.Level = status.Peaks[4];
 
-        // Dim output meters when muted
-        bool outLMuted = ViewModel.GetChannelMute(Channel.Spdif1L);
-        bool outRMuted = ViewModel.GetChannelMute(Channel.Spdif1R);
-        bool subMuted = ViewModel.GetChannelMute(Channel.Pdm);
-
-        MeterOutL.Opacity = outLMuted ? 0.3 : 1.0;
-        MeterOutLLabel.Opacity = outLMuted ? 0.3 : 1.0;
-        MeterOutR.Opacity = outRMuted ? 0.3 : 1.0;
-        MeterOutRLabel.Opacity = outRMuted ? 0.3 : 1.0;
-        MeterSub.Opacity = subMuted ? 0.3 : 1.0;
-        MeterSubLabel.Opacity = subMuted ? 0.3 : 1.0;
+        // Update inline per-channel meters
+        foreach (var (channelId, meter) in _channelMeters)
+        {
+            if (channelId < status.Peaks.Length)
+                meter.Level = status.Peaks[channelId];
+            meter.IsClipping = status.IsClipping((ChannelId)channelId);
+            var channel = Channel.FromIndex(channelId);
+            meter.IsMuted = channel.IsOutput && ViewModel.GetChannelMute(channel);
+        }
 
         // Workaround: firmware reports 100% for Core 1 when idle/no audio
         // Treat 0%/100% as uninitialized and show 0% for both

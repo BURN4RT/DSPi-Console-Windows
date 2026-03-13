@@ -8,15 +8,19 @@ using Windows.UI;
 namespace DSPiConsole.Controls;
 
 /// <summary>
-/// Horizontal meter bar for displaying audio levels.
+/// Horizontal meter bar for displaying audio levels with clip indicator.
 /// </summary>
 public sealed class HorizontalMeterBar : UserControl
 {
     private readonly Border _background;
     private readonly Border _foreground;
+    private readonly Border _clipIndicator;
+    private readonly Grid _meterGrid;
     private readonly DispatcherTimer _smoothingTimer;
     private double _currentLevel;
     private double _targetLevel;
+
+    private const double ClipZoneWidth = 3;
 
     public static readonly DependencyProperty LevelProperty =
         DependencyProperty.Register(nameof(Level), typeof(double), typeof(HorizontalMeterBar),
@@ -25,6 +29,14 @@ public sealed class HorizontalMeterBar : UserControl
     public static readonly DependencyProperty MeterColorProperty =
         DependencyProperty.Register(nameof(MeterColor), typeof(Color), typeof(HorizontalMeterBar),
             new PropertyMetadata(Colors.DodgerBlue, OnMeterColorChanged));
+
+    public static readonly DependencyProperty IsClippingProperty =
+        DependencyProperty.Register(nameof(IsClipping), typeof(bool), typeof(HorizontalMeterBar),
+            new PropertyMetadata(false, OnIsClippingChanged));
+
+    public static readonly DependencyProperty IsMutedProperty =
+        DependencyProperty.Register(nameof(IsMuted), typeof(bool), typeof(HorizontalMeterBar),
+            new PropertyMetadata(false, OnIsMutedChanged));
 
     public double Level
     {
@@ -38,15 +50,27 @@ public sealed class HorizontalMeterBar : UserControl
         set => SetValue(MeterColorProperty, value);
     }
 
+    public bool IsClipping
+    {
+        get => (bool)GetValue(IsClippingProperty);
+        set => SetValue(IsClippingProperty, value);
+    }
+
+    public bool IsMuted
+    {
+        get => (bool)GetValue(IsMutedProperty);
+        set => SetValue(IsMutedProperty, value);
+    }
+
     public HorizontalMeterBar()
     {
-        Height = 8;
+        Height = 6;
 
-        var grid = new Grid();
+        _meterGrid = new Grid();
 
         _background = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(76, 0, 0, 0)),
+            Background = new SolidColorBrush(Colors.Transparent),
             CornerRadius = new CornerRadius(2)
         };
 
@@ -57,10 +81,20 @@ public sealed class HorizontalMeterBar : UserControl
             HorizontalAlignment = HorizontalAlignment.Left
         };
 
-        grid.Children.Add(_background);
-        grid.Children.Add(_foreground);
+        _clipIndicator = new Border
+        {
+            Background = new SolidColorBrush(Colors.Red),
+            CornerRadius = new CornerRadius(1),
+            Width = ClipZoneWidth,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Visibility = Visibility.Collapsed
+        };
 
-        Content = grid;
+        _meterGrid.Children.Add(_background);
+        _meterGrid.Children.Add(_foreground);
+        _meterGrid.Children.Add(_clipIndicator);
+
+        Content = _meterGrid;
 
         SizeChanged += (s, e) => UpdateMeterWidth();
 
@@ -86,6 +120,22 @@ public sealed class HorizontalMeterBar : UserControl
         if (d is HorizontalMeterBar meter)
         {
             meter._foreground.Background = new SolidColorBrush((Color)e.NewValue);
+        }
+    }
+
+    private static void OnIsClippingChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is HorizontalMeterBar meter)
+        {
+            meter._clipIndicator.Visibility = (bool)e.NewValue ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
+
+    private static void OnIsMutedChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is HorizontalMeterBar meter)
+        {
+            meter.Opacity = (bool)e.NewValue ? 0.4 : 1.0;
         }
     }
 
@@ -117,6 +167,7 @@ public sealed class HorizontalMeterBar : UserControl
     private void UpdateMeterWidth()
     {
         double level = Math.Max(0, Math.Min(1, _currentLevel));
-        _foreground.Width = ActualWidth * level;
+        double availableWidth = Math.Max(0, ActualWidth - ClipZoneWidth);
+        _foreground.Width = availableWidth * level;
     }
 }

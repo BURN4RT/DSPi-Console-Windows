@@ -10,7 +10,12 @@
       "Bash(powershell.exe -Command \"Get-ChildItem ''C:\\\\Users\\\\Weeb Labs'' -Directory | Where-Object { $_.Name -like ''*DSPi*'' } | Select-Object -ExpandProperty FullName\")",
       "Bash(powershell.exe -NoProfile -Command 'Get-ChildItem \"\"C:\\\\Users\\\\Weeb Labs\"\" -Directory | Where-Object { $_.Name -like \"\"*DSPi*\"\" } | Select-Object -ExpandProperty FullName')",
       "Bash(echo:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(test:*)",
+      "Bash(cmd:*)",
+      "Bash(powershell:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(powershell.exe:*)"
     ]
   }
 }

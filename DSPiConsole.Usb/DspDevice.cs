@@ -59,6 +59,7 @@ public static class VendorCommands
     public const byte GetOutputPin = 0x7D;
     public const byte GetSerial   = 0x7E;
     public const byte GetPlatform = 0x7F;
+    public const byte ClearClips = 0x83;
 }
 
 /// <summary>
@@ -161,6 +162,11 @@ public partial class DspDevice : ObservableObject, IDisposable
     private readonly System.Timers.Timer _pollTimer;
     private readonly System.Timers.Timer _statusPollTimer;
     private bool _disposed;
+
+    /// <summary>
+    /// Number of audio channels (set after GetDeviceInfo). RP2040=7, RP2350=11.
+    /// </summary>
+    public int NumChannels { get; set; } = 5; // Legacy default (5 peaks)
 
     [ObservableProperty]
     private bool _isConnected;
@@ -319,20 +325,34 @@ public partial class DspDevice : ObservableObject, IDisposable
 
     private SystemStatus ParseStatusResponse(byte[] buffer)
     {
-        // Status response (wValue=9): 12 bytes
-        // peaks[5] as uint16 (10 bytes) + cpu0_load(1) + cpu1_load(1)
+        // Platform-aware status packet:
+        // numChannels * uint16 peaks + cpu0(1) + cpu1(1) + clipFlags uint16(2)
+        int numCh = NumChannels;
+        int peakBytes = numCh * 2;
+
+        var peaks = new float[11]; // Always 11 slots (max channels)
+        for (int i = 0; i < numCh && (i * 2 + 1) < buffer.Length; i++)
+        {
+            peaks[i] = BitConverter.ToUInt16(buffer, i * 2) / 32767.0f;
+        }
+
+        int cpuOffset = peakBytes;
+        int cpu0 = cpuOffset < buffer.Length ? buffer[cpuOffset] : 0;
+        int cpu1 = cpuOffset + 1 < buffer.Length ? buffer[cpuOffset + 1] : 0;
+
+        ushort clipFlags = 0;
+        int clipOffset = cpuOffset + 2;
+        if (clipOffset + 1 < buffer.Length)
+        {
+            clipFlags = BitConverter.ToUInt16(buffer, clipOffset);
+        }
+
         return new SystemStatus
         {
-            Peaks = new[]
-            {
-                BitConverter.ToUInt16(buffer, 0) / 65535.0f,
-                BitConverter.ToUInt16(buffer, 2) / 65535.0f,
-                BitConverter.ToUInt16(buffer, 4) / 65535.0f,
-                BitConverter.ToUInt16(buffer, 6) / 65535.0f,
-                BitConverter.ToUInt16(buffer, 8) / 65535.0f
-            },
-            Cpu0Load = buffer[10],
-            Cpu1Load = buffer[11]
+            Peaks = peaks,
+            Cpu0Load = cpu0,
+            Cpu1Load = cpu1,
+            ClipFlags = clipFlags
         };
     }
 
@@ -567,15 +587,15 @@ public partial class DspDevice : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Get system status (peak levels and CPU load).
-    /// wValue=9 requests full status (12 bytes: 5 peaks + 2 CPU loads)
+    /// Get system status (peak levels, CPU load, clip flags).
+    /// wValue=9 requests full status. Packet size = numChannels*2 + 2 (CPU) + 2 (clipFlags).
     /// </summary>
     public SystemStatus? GetStatus()
     {
-        // wValue=9 requests all status data
-        var response = ControlTransferIn(VendorCommands.GetStatus, 9, 12);
+        int packetSize = NumChannels * 2 + 4; // peaks + cpu0 + cpu1 + clipFlags(2)
+        var response = ControlTransferIn(VendorCommands.GetStatus, 9, packetSize);
 
-        if (response == null || response.Length < 12)
+        if (response == null || response.Length < NumChannels * 2 + 2)
             return null;
 
         return ParseStatusResponse(response);
@@ -927,6 +947,14 @@ public partial class DspDevice : ObservableObject, IDisposable
         var response = ControlTransferIn(VendorCommands.GetSerial, 0, 16);
         if (response == null || response.Length < 1) return null;
         return System.Text.Encoding.ASCII.GetString(response).TrimEnd('\0');
+    }
+
+    /// <summary>
+    /// Clear clip flags on the device.
+    /// </summary>
+    public void ClearClips()
+    {
+        ControlTransferIn(VendorCommands.ClearClips, 0, 2);
     }
 
     public (string Platform, string FirmwareVersion)? GetDeviceInfo()
