@@ -28,6 +28,8 @@ public sealed partial class MainWindow : Window
     public IReadOnlyList<Channel> OutputChannels => Channel.Outputs;
 
     private Channel? _selectedChannel;
+    private bool _isScrollAdjusting;
+    private DateTime _lastFilterScrollTime = DateTime.MinValue;
     private bool _isUpdatingDelay;
     private bool _isUpdatingGain;
     private bool _closeConfirmed;
@@ -41,6 +43,7 @@ public sealed partial class MainWindow : Window
     private TextBox? _currentDelayTextBox;
     private Slider? _currentGainSlider;
     private Slider? _currentDelaySlider;
+
 
     // Graph resize state
     private const double GraphMinHeight = 250;
@@ -110,7 +113,7 @@ public sealed partial class MainWindow : Window
         {
             BodePlot.Invalidate();
             ScheduleDashboardRefresh();
-            if (_selectedChannel != null)
+            if (_selectedChannel != null && !_isScrollAdjusting)
                 ShowChannelEditor(_selectedChannel);
         };
         ViewModel.VisibilityChanged += (_, _) =>
@@ -1149,7 +1152,7 @@ public sealed partial class MainWindow : Window
     }
 
     private static string FormatFilterValue(float value, int decimals = 2) =>
-        value.ToString($"F{decimals}").TrimEnd('0').TrimEnd('.');
+        decimals > 0 ? value.ToString($"F{decimals}").TrimEnd('0').TrimEnd('.') : value.ToString("F0");
 
     private static string FormatFilterValueSigned(float value) =>
         (value >= 0 ? "+" : "") + FormatFilterValue(value);
@@ -1187,6 +1190,43 @@ public sealed partial class MainWindow : Window
             Foreground = (SolidColorBrush)Application.Current.Resources["TextFillColorTertiaryBrush"],
             VerticalAlignment = VerticalAlignment.Center
         });
+
+        panel.PointerWheelChanged += (s, e) =>
+        {
+            var delta = e.GetCurrentPoint(panel).Properties.MouseWheelDelta;
+            if (delta == 0) return;
+
+            var now = DateTime.UtcNow;
+            bool fast = (now - _lastFilterScrollTime).TotalMilliseconds < 40;
+            _lastFilterScrollTime = now;
+
+            int direction = delta > 0 ? 1 : -1;
+
+            var filters = ViewModel.GetFilters(tag.channel);
+            if (tag.band >= filters.Count) return;
+            var p = filters[tag.band].Clone();
+
+            switch (tag.param)
+            {
+                case "freq":
+                    p.Frequency = Math.Clamp(p.Frequency + direction * (fast ? 10 : 1), 20, 20000);
+                    break;
+                case "q":
+                    p.Q = Math.Clamp(p.Q + direction * (fast ? 0.1f : 0.01f), 0.1f, 20);
+                    break;
+                case "gain":
+                    p.Gain = Math.Clamp(p.Gain + direction * (fast ? 0.1f : 0.01f), -20, 20);
+                    break;
+            }
+
+            _isScrollAdjusting = true;
+            ViewModel.SetFilterDeferred((int)tag.channel.Id, tag.band, p);
+            _isScrollAdjusting = false;
+            textBox.Text = FormatFilterValue(
+                tag.param == "freq" ? p.Frequency : tag.param == "q" ? p.Q : p.Gain,
+                tag.param == "q" ? 3 : tag.param == "freq" ? 0 : 2);
+            e.Handled = true;
+        };
 
         return panel;
     }

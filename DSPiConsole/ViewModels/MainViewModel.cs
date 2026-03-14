@@ -674,6 +674,35 @@ public partial class MainViewModel : ObservableObject, IDisposable
         return success;
     }
 
+    private CancellationTokenSource? _filterDebounceCts;
+
+    /// <summary>
+    /// Update filter locally and fire events immediately, deferring the USB send.
+    /// Use for rapid interactive updates (e.g. scroll adjustments).
+    /// </summary>
+    public void SetFilterDeferred(int channel, int band, FilterParams p)
+    {
+        if (_channelData.TryGetValue(channel, out var filters) && band < filters.Count)
+        {
+            filters[band] = p;
+        }
+        FiltersChanged?.Invoke(this, EventArgs.Empty);
+        CheckDirty();
+
+        _filterDebounceCts?.Cancel();
+        _filterDebounceCts = new CancellationTokenSource();
+        var token = _filterDebounceCts.Token;
+        Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(500, token);
+                _device.SetFilter(channel, band, p);
+            }
+            catch (TaskCanceledException) { }
+        });
+    }
+
     private void FetchFilter(int channel, int band)
     {
         var p = _device.GetFilter(channel, band);
