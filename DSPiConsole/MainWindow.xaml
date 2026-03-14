@@ -132,12 +132,12 @@
                     <TextBlock Text="GLOBAL" FontSize="12" FontWeight="SemiBold"
                                Foreground="{ThemeResource TextFillColorGhostlyBrush}" />
 
-                    <StackPanel x:Name="PresetSection" Spacing="4" Visibility="Collapsed">
-                        <TextBlock Text="Preset" FontSize="12"
+                    <Grid x:Name="PresetSection" Visibility="Collapsed">
+                        <TextBlock Text="Preset" FontSize="12" VerticalAlignment="Center"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <ComboBox x:Name="PresetComboBox" HorizontalAlignment="Stretch"
+                        <ComboBox x:Name="PresetComboBox" HorizontalAlignment="Right"
                                   SelectionChanged="OnPresetSelectionChanged" />
-                    </StackPanel>
+                    </Grid>
 
                     <StackPanel Spacing="4">
                         <Grid>

@@ -662,15 +662,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
         catch { }
     }
 
-    public void SetFilter(int channel, int band, FilterParams p)
+    public async Task<bool> SetFilter(int channel, int band, FilterParams p)
     {
         if (_channelData.TryGetValue(channel, out var filters) && band < filters.Count)
         {
             filters[band] = p;
         }
-        Task.Run(() => _device.SetFilter(channel, band, p));
+        var success = await Task.Run(() => _device.SetFilter(channel, band, p));
         FiltersChanged?.Invoke(this, EventArgs.Empty);
         CheckDirty();
+        return success;
     }
 
     private void FetchFilter(int channel, int band)
@@ -687,6 +688,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public void SetDelay(int channel, float ms)
     {
+        ms = MathF.Round(ms, 0);
         _channelDelays[channel] = ms;
         int outputIndex = GetOutputIndex(channel);
         if (outputIndex >= 0)
@@ -727,6 +729,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public void SetChannelGain(int channelId, float db)
     {
+        db = MathF.Round(db, 1);
         _channelGains[channelId] = db;
         int outputIndex = GetOutputIndex(channelId);
         if (outputIndex < 0) return;
@@ -915,7 +918,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnPreampDbChanged(float value)
     {
-        Task.Run(() => _device.SetPreamp(value));
+        var rounded = MathF.Round(value, 1);
+        Task.Run(() => _device.SetPreamp(rounded));
         CheckDirty();
     }
 
@@ -951,7 +955,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private void ClearAllMaster()
+    private async Task ClearAllMaster()
     {
         var defaultFilter = new FilterParams(FilterType.Flat, 1000, 0.707f, 0);
         var masterChannels = new[] { (int)ChannelId.MasterLeft, (int)ChannelId.MasterRight };
@@ -962,7 +966,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             {
                 for (int b = 0; b < filters.Count; b++)
                 {
-                    SetFilter(ch, b, defaultFilter.Clone());
+                    await SetFilter(ch, b, defaultFilter.Clone());
                 }
             }
         }
@@ -1046,8 +1050,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 _presetOccupiedMask = dir.Value.OccupiedMask;
                 _presetStartupMode = dir.Value.StartupMode;
                 _presetDefaultSlot = dir.Value.DefaultSlot;
-                _activePresetSlot = dir.Value.LastActiveSlot == 0xFF ? -1 : dir.Value.LastActiveSlot;
+                var lastActive = dir.Value.LastActiveSlot;
                 _presetIncludePins = dir.Value.IncludePins;
+
+                // Use firmware's active slot if valid and occupied, otherwise default to slot 0
+                _activePresetSlot = (lastActive < PresetSlotCount && (_presetOccupiedMask & (1 << lastActive)) != 0)
+                    ? lastActive : 0;
             }
 
             // Fetch names for occupied slots
@@ -1082,8 +1090,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _presetOccupiedMask = dir.Value.OccupiedMask;
         _presetStartupMode = dir.Value.StartupMode;
         _presetDefaultSlot = dir.Value.DefaultSlot;
-        _activePresetSlot = dir.Value.LastActiveSlot == 0xFF ? -1 : dir.Value.LastActiveSlot;
+        var lastActive = dir.Value.LastActiveSlot;
         _presetIncludePins = dir.Value.IncludePins;
+
+        // Use firmware's active slot if valid and occupied, otherwise default to slot 0
+        _activePresetSlot = (lastActive < PresetSlotCount && (_presetOccupiedMask & (1 << lastActive)) != 0)
+            ? lastActive : 0;
 
         for (int i = 0; i < PresetSlotCount; i++)
         {
@@ -1204,12 +1216,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
             if (result == PresetResult.Ok)
             {
                 _presetOccupiedMask = 0;
-                _activePresetSlot = -1;
+                _activePresetSlot = 0;
                 for (int i = 0; i < PresetSlotCount; i++)
                     _presetNames[i] = "";
                 _dispatcher.TryEnqueue(() =>
                 {
-                    ActivePreset = -1;
+                    ActivePreset = 0;
                     PresetsDirty = false;
                     PresetsChanged?.Invoke(this, EventArgs.Empty);
                 });

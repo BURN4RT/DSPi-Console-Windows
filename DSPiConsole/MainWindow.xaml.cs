@@ -103,6 +103,8 @@ public sealed partial class MainWindow : Window
         {
             BodePlot.Invalidate();
             ScheduleDashboardRefresh();
+            if (_selectedChannel != null)
+                ShowChannelEditor(_selectedChannel);
         };
         ViewModel.VisibilityChanged += (_, _) =>
         {
@@ -719,10 +721,13 @@ public sealed partial class MainWindow : Window
 
     private Grid CreateDashboardFilterRow(int band, FilterParams p, Color color)
     {
-        var grid = new Grid { Height = 24, Padding = new Thickness(8, 0, 8, 0) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var grid = new Grid { Height = 24, Padding = new Thickness(8, 0, 8, 0), ColumnSpacing = 4 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });  // 0: Band #
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });  // 1: Type
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // 2: Spacer
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(52) });  // 3: Freq
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(54) });  // 4: Gain
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(52) });  // 5: Q
 
         bool isActive = p.Type != FilterType.Flat;
 
@@ -748,14 +753,13 @@ public sealed partial class MainWindow : Window
         Grid.SetColumn(typeText, 1);
         grid.Children.Add(typeText);
 
-        var valuesPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
-
         if (isActive)
         {
             var secondaryBrush = (SolidColorBrush)Application.Current.Resources["TextFillColorSecondaryBrush"];
             var tertiaryBrush = (SolidColorBrush)Application.Current.Resources["TextFillColorTertiaryBrush"];
 
-            valuesPanel.Children.Add(new TextBlock
+            var freqPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, HorizontalAlignment = HorizontalAlignment.Right };
+            freqPanel.Children.Add(new TextBlock
             {
                 Text = $"{p.Frequency:F0}",
                 FontSize = 10,
@@ -763,67 +767,73 @@ public sealed partial class MainWindow : Window
                 Foreground = secondaryBrush,
                 VerticalAlignment = VerticalAlignment.Center
             });
-            valuesPanel.Children.Add(new TextBlock
+            freqPanel.Children.Add(new TextBlock
             {
                 Text = "Hz",
                 FontSize = 8,
                 Foreground = tertiaryBrush,
                 VerticalAlignment = VerticalAlignment.Center
             });
+            Grid.SetColumn(freqPanel, 3);
+            grid.Children.Add(freqPanel);
 
             if (p.Type.HasGain())
             {
-                valuesPanel.Children.Add(new TextBlock
+                var gainPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, HorizontalAlignment = HorizontalAlignment.Right };
+                gainPanel.Children.Add(new TextBlock
                 {
-                    Text = $" {p.Gain:+0.0;-0.0}",
+                    Text = FormatFilterValueSigned(p.Gain),
                     FontSize = 10,
                     FontFamily = new FontFamily("Cascadia Code"),
                     Foreground = secondaryBrush,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(4, 0, 0, 0)
+                    VerticalAlignment = VerticalAlignment.Center
                 });
-                valuesPanel.Children.Add(new TextBlock
+                gainPanel.Children.Add(new TextBlock
                 {
                     Text = "dB",
                     FontSize = 8,
                     Foreground = tertiaryBrush,
                     VerticalAlignment = VerticalAlignment.Center
                 });
+                Grid.SetColumn(gainPanel, 4);
+                grid.Children.Add(gainPanel);
             }
 
             if (p.Type.HasQ())
             {
-                valuesPanel.Children.Add(new TextBlock
+                var qPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, HorizontalAlignment = HorizontalAlignment.Right };
+                qPanel.Children.Add(new TextBlock
                 {
-                    Text = $" {p.Q:F1}",
+                    Text = FormatFilterValue(p.Q, 3),
                     FontSize = 10,
                     FontFamily = new FontFamily("Cascadia Code"),
                     Foreground = secondaryBrush,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(4, 0, 0, 0)
+                    VerticalAlignment = VerticalAlignment.Center
                 });
-                valuesPanel.Children.Add(new TextBlock
+                qPanel.Children.Add(new TextBlock
                 {
                     Text = "Q",
                     FontSize = 8,
                     Foreground = tertiaryBrush,
                     VerticalAlignment = VerticalAlignment.Center
                 });
+                Grid.SetColumn(qPanel, 5);
+                grid.Children.Add(qPanel);
             }
         }
         else
         {
-            valuesPanel.Children.Add(new TextBlock
+            var dash = new TextBlock
             {
                 Text = "—",
                 FontSize = 10,
                 Foreground = new SolidColorBrush(Color.FromArgb(51, 128, 128, 128)),
-                VerticalAlignment = VerticalAlignment.Center
-            });
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+            Grid.SetColumn(dash, 3);
+            grid.Children.Add(dash);
         }
-
-        Grid.SetColumn(valuesPanel, 2);
-        grid.Children.Add(valuesPanel);
 
         return grid;
     }
@@ -1075,10 +1085,10 @@ public sealed partial class MainWindow : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) }); // Freq
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(48) }); // Q
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(56) }); // Q
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(54) }); // Gain
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnSpacing = 12;
+        grid.ColumnSpacing = 16;
 
         // Band label
         var bandLabel = new TextBlock
@@ -1111,10 +1121,10 @@ public sealed partial class MainWindow : Window
             grid.Children.Add(freqPanel);
         }
 
-        // Q (only for peaking)
-        if (p.Type == FilterType.Peaking)
+        // Q
+        if (p.Type.HasQ())
         {
-            var qPanel = CreateValueField("Q", p.Q, 34, (channel, bandIndex, "q"));
+            var qPanel = CreateValueField("Q", p.Q, 44, (channel, bandIndex, "q"), decimals: 3);
             Grid.SetColumn(qPanel, 3);
             grid.Children.Add(qPanel);
         }
@@ -1131,14 +1141,20 @@ public sealed partial class MainWindow : Window
         return row;
     }
 
-    private StackPanel CreateValueField(string label, float value, double width, (Channel channel, int band, string param) tag)
+    private static string FormatFilterValue(float value, int decimals = 2) =>
+        value.ToString($"F{decimals}").TrimEnd('0').TrimEnd('.');
+
+    private static string FormatFilterValueSigned(float value) =>
+        (value >= 0 ? "+" : "") + FormatFilterValue(value);
+
+    private StackPanel CreateValueField(string label, float value, double width, (Channel channel, int band, string param) tag, int decimals = 2)
     {
         var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
 
         var textBox = new TextBox
         {
             Width = width,
-            Text = value.ToString("F1"),
+            Text = FormatFilterValue(value, decimals),
             Tag = tag,
             FontSize = 13,
             FontFamily = new FontFamily("Cascadia Code, Consolas"),
@@ -1533,7 +1549,7 @@ public sealed partial class MainWindow : Window
                 {
                     var p = filters[bandIndex].Clone();
                     p.Type = newType;
-                    ViewModel.SetFilter((int)channel.Id, bandIndex, p);
+                    _ = ViewModel.SetFilter((int)channel.Id, bandIndex, p);
 
                     // Refresh the row
                     if (_selectedChannel != null)
@@ -1569,7 +1585,7 @@ public sealed partial class MainWindow : Window
                             break;
                     }
 
-                    ViewModel.SetFilter((int)channel.Id, bandIndex, p);
+                    _ = ViewModel.SetFilter((int)channel.Id, bandIndex, p);
                 }
             }
         }
@@ -1595,14 +1611,24 @@ public sealed partial class MainWindow : Window
 
         PresetSection.Visibility = ViewModel.IsDeviceConnected ? Visibility.Visible : Visibility.Collapsed;
 
+        double maxWidth = 0;
         for (int i = 0; i < MainViewModel.PresetSlotCount; i++)
         {
+            var displayName = ViewModel.GetPresetDisplayName(i);
             PresetComboBox.Items.Add(new ComboBoxItem
             {
-                Content = ViewModel.GetPresetDisplayName(i),
+                Content = displayName,
                 Tag = i
             });
+
+            var tb = new TextBlock { Text = displayName, FontSize = PresetComboBox.FontSize };
+            tb.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+            if (tb.DesiredSize.Width > maxWidth)
+                maxWidth = tb.DesiredSize.Width;
         }
+
+        // Add padding for the ComboBox chrome (dropdown arrow + internal padding)
+        PresetComboBox.MinWidth = maxWidth + 48;
 
         if (ViewModel.ActivePreset >= 0 && ViewModel.ActivePreset < MainViewModel.PresetSlotCount)
             PresetComboBox.SelectedIndex = ViewModel.ActivePreset;
@@ -2287,7 +2313,11 @@ public sealed partial class MainWindow : Window
             dialog.CollectSelectedChannels();
             foreach (var channelId in dialog.SelectedChannelIds)
             {
-                ApplyFiltersToChannel(channelId, filters);
+                if (!await ApplyFiltersToChannel(channelId, filters))
+                {
+                    await ShowErrorDialog("Communication Failure - Unable to perform operation");
+                    return;
+                }
             }
 
             if (dialog.SelectedChannelIds.Count > 0)
@@ -2310,7 +2340,11 @@ public sealed partial class MainWindow : Window
             {
                 if (channelFilters.TryGetValue(channelId, out var filters))
                 {
-                    ApplyFiltersToChannel(channelId, filters);
+                    if (!await ApplyFiltersToChannel(channelId, filters))
+                    {
+                        await ShowErrorDialog("Communication Failure - Unable to perform operation");
+                        return;
+                    }
                 }
             }
 
@@ -2321,24 +2355,38 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void ApplyFiltersToChannel(int channelId, List<FilterParams> filters)
+    private async Task<bool> ApplyFiltersToChannel(int channelId, List<FilterParams> filters)
     {
         var channel = Channel.All.FirstOrDefault(c => (int)c.Id == channelId);
-        if (channel == null) return;
+        if (channel == null) return false;
 
         var bandCount = channel.BandCount;
 
         // Apply imported filters
         for (int i = 0; i < Math.Min(filters.Count, bandCount); i++)
         {
-            ViewModel.SetFilter(channelId, i, filters[i].Clone());
+            if (!await SetFilterWithRetry(channelId, i, filters[i].Clone()))
+                return false;
         }
 
         // Clear remaining bands
         for (int i = filters.Count; i < bandCount; i++)
         {
-            ViewModel.SetFilter(channelId, i, new FilterParams(FilterType.Flat, 1000, 0.707f, 0));
+            if (!await SetFilterWithRetry(channelId, i, new FilterParams(FilterType.Flat, 1000, 0.707f, 0)))
+                return false;
         }
+
+        return true;
+    }
+
+    private async Task<bool> SetFilterWithRetry(int channelId, int band, FilterParams p)
+    {
+        for (int attempt = 0; attempt < 5; attempt++)
+        {
+            if (await ViewModel.SetFilter(channelId, band, p))
+                return true;
+        }
+        return false;
     }
 
     private async void OnExportFiltersClick(object sender, RoutedEventArgs e)
@@ -2400,12 +2448,16 @@ public sealed partial class MainWindow : Window
 
         if (result == ContentDialogResult.Primary && dialog.SelectedProfile != null)
         {
-            ApplyAutoEQProfile(dialog.SelectedProfile);
+            if (!await ApplyAutoEQProfile(dialog.SelectedProfile))
+            {
+                await ShowErrorDialog("Communication Failure - Unable to perform operation");
+                return;
+            }
             await ShowSuccessDialog($"Applied profile: {dialog.SelectedProfile.DisplayName}");
         }
     }
 
-    private void ApplyAutoEQProfile(HeadphoneEntry profile)
+    private async Task<bool> ApplyAutoEQProfile(HeadphoneEntry profile)
     {
         // Set preamp
         ViewModel.PreampDb = (float)profile.Preamp;
@@ -2416,8 +2468,10 @@ public sealed partial class MainWindow : Window
 
         foreach (var channelId in masterChannels)
         {
-            ApplyFiltersToChannel(channelId, filters);
+            if (!await ApplyFiltersToChannel(channelId, filters))
+                return false;
         }
+        return true;
     }
 
     private void RefreshAutoEQFavoritesMenu()
@@ -2472,7 +2526,11 @@ public sealed partial class MainWindow : Window
     {
         if (sender is MenuFlyoutItem item && item.Tag is HeadphoneEntry profile)
         {
-            ApplyAutoEQProfile(profile);
+            if (!await ApplyAutoEQProfile(profile))
+            {
+                await ShowErrorDialog("Communication Failure - Unable to perform operation");
+                return;
+            }
             await ShowSuccessDialog($"Applied profile: {profile.DisplayName}");
         }
     }

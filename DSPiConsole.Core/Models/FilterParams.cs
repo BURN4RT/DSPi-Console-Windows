@@ -44,7 +44,7 @@ public static class FilterTypeExtensions
         type is FilterType.Peaking or FilterType.LowShelf or FilterType.HighShelf;
 
     public static bool HasQ(this FilterType type) =>
-        type == FilterType.Peaking;
+        type is FilterType.Peaking or FilterType.LowShelf or FilterType.HighShelf or FilterType.LowPass or FilterType.HighPass;
 
     public static bool HasFrequency(this FilterType type) =>
         type != FilterType.Flat;
