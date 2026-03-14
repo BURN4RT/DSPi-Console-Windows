@@ -62,6 +62,7 @@ public sealed partial class SettingsDialog : ContentDialog
         FreqLabelsToggle.IsOn = settings.ShowFrequencyLabels;
         DbGridToggle.IsOn = settings.ShowDbGrid;
         DbLabelsToggle.IsOn = settings.ShowDbLabels;
+        DbUnitsToggle.IsOn = settings.ShowDbUnits;
 
         PrimaryButtonClick += OnSave;
 
@@ -156,6 +157,7 @@ public sealed partial class SettingsDialog : ContentDialog
         settings.ShowFrequencyLabels = FreqLabelsToggle.IsOn;
         settings.ShowDbGrid = DbGridToggle.IsOn;
         settings.ShowDbLabels = DbLabelsToggle.IsOn;
+        settings.ShowDbUnits = DbUnitsToggle.IsOn;
 
         settings.Save();
         settings.NotifyChanged();

@@ -118,6 +118,7 @@
                         <ToggleSwitch x:Name="FreqLabelsToggle" Header="Show Frequency Labels" OnContent="On" OffContent="Off"/>
                         <ToggleSwitch x:Name="DbGridToggle" Header="Show dB Grid" OnContent="On" OffContent="Off"/>
                         <ToggleSwitch x:Name="DbLabelsToggle" Header="Show dB Labels" OnContent="On" OffContent="Off"/>
+                        <ToggleSwitch x:Name="DbUnitsToggle" Header="Show dB Units on Axis" OnContent="On" OffContent="Off"/>
                     </StackPanel>
                 </ScrollViewer>
             </TabViewItem>

@@ -368,7 +368,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (channel.IsOutput)
         {
             int outputIndex = GetOutputIndex((int)channel.Id);
-            if (outputIndex >= 0 && !IsOutputEnabled(outputIndex))
+            if (outputIndex < 0 || !IsOutputEnabled(outputIndex))
                 return false;
         }
         return true;

@@ -194,10 +194,11 @@
                 </Border>
             </Grid>
 
-            <Grid Grid.Column="1" Padding="20" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+            <Grid x:Name="ContentGrid" Grid.Column="1" Padding="20" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="250" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
@@ -272,16 +273,26 @@
                     </Button>
                 </Grid>
 
-                <Border Grid.Row="1" CornerRadius="8" 
+                <Border Grid.Row="1" CornerRadius="8"
                         Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <controls:BodePlotControl x:Name="BodePlot" />
                 </Border>
 
-                <StackPanel x:Name="LegendPanel" Grid.Row="2" Orientation="Horizontal"
-                            Spacing="8" Margin="0,12,0,16" />
+                <!-- Graph resize gripper -->
+                <controls:ResizeGripper Grid.Row="2" Height="12" Background="Transparent"
+                        PointerPressed="OnGraphGripperPointerPressed"
+                        PointerMoved="OnGraphGripperPointerMoved"
+                        PointerReleased="OnGraphGripperPointerReleased">
+                    <Rectangle Width="32" Height="3" RadiusX="1.5" RadiusY="1.5"
+                               Fill="{ThemeResource ControlStrongFillColorDefaultBrush}"
+                               Opacity="0.3" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </controls:ResizeGripper>
 
-                <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Hidden">
+                <StackPanel x:Name="LegendPanel" Grid.Row="3" Orientation="Horizontal"
+                            Spacing="8" Margin="0,4,0,16" />
+
+                <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Hidden">
                     <Grid>
                         <StackPanel x:Name="DashboardPanel" Spacing="16">
                             <StackPanel.ChildrenTransitions>

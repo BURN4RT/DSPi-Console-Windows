@@ -19,12 +19,13 @@ public sealed class BodePlotControl : UserControl
     private Grid? _rootGrid;
     private Canvas? _plotCanvas;
     private Canvas? _labelCanvas;
+    private Canvas? _dbScaleHitArea;
     private MainViewModel? _viewModel;
 
     private const int NumPoints = 201;
 
     // Plot area margins (px)
-    private const double LeftMargin = 36;
+    private double LeftMargin => AppSettings.Instance.ShowDbUnits ? 36 : 22;
     private const double BottomMargin = 16;
     private const double TopMargin = 9;
     private const double RightMargin = 8;
@@ -61,9 +62,17 @@ public sealed class BodePlotControl : UserControl
 
         _plotCanvas = new Canvas();
         _labelCanvas = new Canvas { IsHitTestVisible = false };
+        _dbScaleHitArea = new Canvas
+        {
+            Background = new SolidColorBrush(Colors.Transparent),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Width = LeftMargin
+        };
+        _dbScaleHitArea.PointerWheelChanged += OnDbScalePointerWheelChanged;
 
         _rootGrid.Children.Add(_plotCanvas);
         _rootGrid.Children.Add(_labelCanvas);
+        _rootGrid.Children.Add(_dbScaleHitArea);
         Content = _rootGrid;
 
         _animTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
@@ -121,7 +130,12 @@ public sealed class BodePlotControl : UserControl
     }
 
     private void OnVisibilityChanged(object? sender, EventArgs e) => Redraw(gridChanged: true);
-    private void OnSettingsChanged(object? sender, EventArgs e) => Redraw(gridChanged: true);
+    private void OnSettingsChanged(object? sender, EventArgs e)
+    {
+        if (_dbScaleHitArea != null)
+            _dbScaleHitArea.Width = LeftMargin;
+        Redraw(gridChanged: true);
+    }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
@@ -427,8 +441,9 @@ public sealed class BodePlotControl : UserControl
 
                 tb.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
                 double tbHeight = tb.DesiredSize.Height;
+                double tbWidth = tb.DesiredSize.Width;
 
-                Canvas.SetLeft(tb, 2);
+                Canvas.SetLeft(tb, LeftMargin - tbWidth - 4);
                 Canvas.SetTop(tb, y - tbHeight / 2);
                 _labelCanvas!.Children.Add(tb);
             }
@@ -546,9 +561,31 @@ public sealed class BodePlotControl : UserControl
     private static string FormatDb(double db)
     {
         int rounded = (int)Math.Round(db);
-        if (rounded > 0) return $"+{rounded} dB";
-        if (rounded < 0) return $"{rounded} dB";
-        return "0 dB";
+        string unit = AppSettings.Instance.ShowDbUnits ? " dB" : "";
+        if (rounded > 0) return $"+{rounded}{unit}";
+        if (rounded < 0) return $"{rounded}{unit}";
+        return $"0{unit}";
+    }
+
+    private void OnDbScalePointerWheelChanged(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        var delta = e.GetCurrentPoint(this).Properties.MouseWheelDelta;
+        var settings = AppSettings.Instance;
+
+        // Scroll up = zoom in (smaller range), scroll down = zoom out (larger range)
+        double step = settings.GraphDbRange <= 20 ? 2 : 5;
+        double newRange = delta > 0
+            ? settings.GraphDbRange - step
+            : settings.GraphDbRange + step;
+
+        newRange = Math.Clamp(newRange, 10, 100);
+        if (Math.Abs(newRange - settings.GraphDbRange) > 0.01)
+        {
+            settings.GraphDbRange = newRange;
+            settings.NotifyChanged();
+        }
+
+        e.Handled = true;
     }
 
     private static PointCollection ClonePoints(PointCollection source)

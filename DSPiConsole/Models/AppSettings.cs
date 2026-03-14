@@ -27,6 +27,7 @@ public class AppSettings
     public bool ShowFrequencyLabels { get; set; } = true;
     public bool ShowDbGrid { get; set; } = true;
     public bool ShowDbLabels { get; set; } = true;
+    public bool ShowDbUnits { get; set; } = true;
 
     public event EventHandler? SettingsChanged;
 

@@ -42,6 +42,13 @@ public sealed partial class MainWindow : Window
     private Slider? _currentGainSlider;
     private Slider? _currentDelaySlider;
 
+    // Graph resize state
+    private const double GraphMinHeight = 250;
+    private const double GraphMaxHeight = 350;
+    private bool _isResizingGraph;
+    private double _graphResizeStartY;
+    private double _graphResizeStartHeight;
+
     // Simple channel selection: 0 = dashboard, 1-5 = channel index
     private int _selectedChannelIndex = 0;
     private readonly List<ListViewItem> _channelListItems = new();
@@ -2533,6 +2540,42 @@ public sealed partial class MainWindow : Window
             }
             await ShowSuccessDialog($"Applied profile: {profile.DisplayName}");
         }
+    }
+
+    #endregion
+
+    #region Graph Resize
+
+    private RowDefinition GraphRow => ContentGrid.RowDefinitions[1];
+
+    private void OnGraphGripperPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is UIElement el)
+        {
+            _isResizingGraph = true;
+            _graphResizeStartY = e.GetCurrentPoint(ContentGrid).Position.Y;
+            _graphResizeStartHeight = GraphRow.Height.Value;
+            el.CapturePointer(e.Pointer);
+            e.Handled = true;
+        }
+    }
+
+    private void OnGraphGripperPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_isResizingGraph) return;
+        var delta = e.GetCurrentPoint(ContentGrid).Position.Y - _graphResizeStartY;
+        var newHeight = Math.Clamp(_graphResizeStartHeight + delta, GraphMinHeight, GraphMaxHeight);
+        GraphRow.Height = new GridLength(newHeight);
+        e.Handled = true;
+    }
+
+    private void OnGraphGripperPointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_isResizingGraph) return;
+        _isResizingGraph = false;
+        if (sender is UIElement el)
+            el.ReleasePointerCapture(e.Pointer);
+        e.Handled = true;
     }
 
     #endregion
