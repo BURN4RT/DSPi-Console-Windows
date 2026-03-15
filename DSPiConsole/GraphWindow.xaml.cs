@@ -1,4 +1,5 @@
 using DSPiConsole.Core.Models;
+using DSPiConsole.Models;
 using DSPiConsole.ViewModels;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
@@ -58,6 +59,12 @@ public sealed partial class GraphWindow : Window
 
     public void SetSelectedChannel(int channelId) => BodePlot.SetSelectedChannel(channelId);
 
+    public void SetIgnoreVisibility(bool ignore)
+    {
+        BodePlot.SetIgnoreVisibility(ignore, _viewModel);
+        UpdateLegend();
+    }
+
     private void InitializeLegend()
     {
         LegendPanel.Children.Clear();
@@ -107,7 +114,17 @@ public sealed partial class GraphWindow : Window
         btn.Click += (s, _) =>
         {
             if (s is Button b && b.Tag is Channel ch)
-                _viewModel.ToggleChannelVisibility(ch);
+            {
+                if (!AppSettings.Instance.PopoutFollowsSelectedChannel)
+                {
+                    BodePlot.ToggleLocalVisibility((int)ch.Id);
+                    UpdateLegend();
+                }
+                else
+                {
+                    _viewModel.ToggleChannelVisibility(ch);
+                }
+            }
         };
 
         LegendPanel.Children.Add(btn);
@@ -119,7 +136,9 @@ public sealed partial class GraphWindow : Window
         {
             if (child is not Button btn || btn.Tag is not Channel channel) continue;
 
-            bool isVisible = _viewModel.GetChannelVisibility(channel);
+            bool isVisible = AppSettings.Instance.PopoutFollowsSelectedChannel
+                ? _viewModel.GetChannelVisibility(channel)
+                : BodePlot.GetLocalVisibility((int)channel.Id);
             if (btn.Content is StackPanel panel)
             {
                 if (panel.Children[0] is Ellipse ellipse)

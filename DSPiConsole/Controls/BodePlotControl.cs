@@ -24,6 +24,8 @@ public sealed class BodePlotControl : UserControl
     private int _selectedChannelId = -1;
     private bool _dottedInactiveEnabled = true;
     private bool _isPopout;
+    private bool _ignoreVisibility;
+    private Dictionary<int, bool>? _localVisibility;
 
     /// <summary>
     /// Set the selected channel ID for dotted-line treatment of non-selected channels.
@@ -52,10 +54,44 @@ public sealed class BodePlotControl : UserControl
     public void SetIsPopout(bool isPopout)
     {
         _isPopout = isPopout;
-        _dottedInactiveEnabled = isPopout
-            ? AppSettings.Instance.DottedInactiveChannelsPopout
-            : AppSettings.Instance.DottedInactiveChannels;
+        _dottedInactiveEnabled = AppSettings.Instance.DottedInactiveChannels;
     }
+
+    /// <summary>
+    /// When true, use local visibility state instead of ViewModel's.
+    /// Used by the popout graph when "follows selected channel" is off.
+    /// </summary>
+    public void SetIgnoreVisibility(bool ignore, MainViewModel? viewModelOverride = null)
+    {
+        if (_ignoreVisibility == ignore) return;
+        _ignoreVisibility = ignore;
+        var vm = viewModelOverride ?? _viewModel;
+        if (ignore && vm != null)
+        {
+            // Snapshot current ViewModel visibility state
+            _localVisibility = new Dictionary<int, bool>();
+            foreach (var ch in Channel.All)
+                _localVisibility[(int)ch.Id] = vm.GetChannelVisibility(ch);
+        }
+        else
+        {
+            _localVisibility = null;
+        }
+        Redraw(gridChanged: true);
+    }
+
+    /// <summary>
+    /// Toggle visibility in local mode. Used by popout legend pills when ignoring ViewModel visibility.
+    /// </summary>
+    public void ToggleLocalVisibility(int channelId)
+    {
+        if (_localVisibility == null) return;
+        _localVisibility[channelId] = !(_localVisibility.TryGetValue(channelId, out var v) && v);
+        Redraw(gridChanged: true);
+    }
+
+    public bool GetLocalVisibility(int channelId) =>
+        _localVisibility == null || !_localVisibility.TryGetValue(channelId, out var v) || v;
 
     private const int NumPoints = 201;
 
@@ -169,9 +205,7 @@ public sealed class BodePlotControl : UserControl
     {
         if (_dbScaleHitArea != null)
             _dbScaleHitArea.Width = LeftMargin;
-        _dottedInactiveEnabled = _isPopout
-            ? AppSettings.Instance.DottedInactiveChannelsPopout
-            : AppSettings.Instance.DottedInactiveChannels;
+        _dottedInactiveEnabled = AppSettings.Instance.DottedInactiveChannels;
         Redraw(gridChanged: true);
     }
 
@@ -498,10 +532,26 @@ public sealed class BodePlotControl : UserControl
 
         foreach (var channel in Channel.All)
         {
-            if (!_viewModel.GetChannelVisibility(channel))
-                continue;
-
             var id = (int)channel.Id;
+
+            if (_ignoreVisibility)
+            {
+                // Use local visibility; still hide disabled outputs
+                if (!GetLocalVisibility(id))
+                    continue;
+                if (channel.IsOutput)
+                {
+                    int outputIndex = _viewModel.GetOutputIndex(id);
+                    if (outputIndex < 0 || !_viewModel.IsOutputEnabled(outputIndex))
+                        continue;
+                }
+            }
+            else
+            {
+                if (!_viewModel.GetChannelVisibility(channel))
+                    continue;
+            }
+
             if (!_currentMagnitudes.ContainsKey(id)) continue;
 
             var magnitudes = _currentMagnitudes[id];

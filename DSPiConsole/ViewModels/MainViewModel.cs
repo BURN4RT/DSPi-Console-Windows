@@ -748,7 +748,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private int GetOutputIndex(int channelId)
+    public int GetOutputIndex(int channelId)
     {
         var outputs = ActiveOutputs;
         for (int i = 0; i < outputs.Count; i++)

@@ -122,6 +122,16 @@ public sealed partial class MainWindow : Window
             if (_selectedChannel != null && !_isScrollAdjusting && !_isUpdatingGain && !_isUpdatingDelay)
                 ShowChannelEditor(_selectedChannel);
         };
+        AppSettings.Instance.SettingsChanged += (_, _) =>
+        {
+            if (_graphWindow == null) return;
+            bool follows = AppSettings.Instance.PopoutFollowsSelectedChannel;
+            _graphWindow.SetIgnoreVisibility(!follows);
+            if (follows && _selectedChannel != null)
+                _graphWindow.SetSelectedChannel((int)_selectedChannel.Id);
+            else if (!follows)
+                _graphWindow.SetSelectedChannel(-1);
+        };
         ViewModel.VisibilityChanged += (_, _) =>
         {
             UpdateLegend();
@@ -877,7 +887,8 @@ public sealed partial class MainWindow : Window
     {
         _selectedChannel = channel;
         BodePlot.SetSelectedChannel((int)channel.Id);
-        _graphWindow?.SetSelectedChannel((int)channel.Id);
+        if (AppSettings.Instance.PopoutFollowsSelectedChannel)
+            _graphWindow?.SetSelectedChannel((int)channel.Id);
         DashboardPanel.Visibility = Visibility.Collapsed;
         ChannelEditorPanel.Visibility = Visibility.Visible;
 
@@ -1271,7 +1282,8 @@ public sealed partial class MainWindow : Window
     {
         _selectedChannel = null;
         BodePlot.SetSelectedChannel(-1);
-        _graphWindow?.SetSelectedChannel(-1);
+        if (AppSettings.Instance.PopoutFollowsSelectedChannel)
+            _graphWindow?.SetSelectedChannel(-1);
         ChannelEditorPanel.Visibility = Visibility.Collapsed;
         DashboardPanel.Visibility = Visibility.Visible;
         InitializeDashboard(); // Refresh
@@ -2723,7 +2735,9 @@ public sealed partial class MainWindow : Window
 
         // Open popout window
         _graphWindow = new GraphWindow(ViewModel);
-        if (_selectedChannel != null)
+        bool follows = AppSettings.Instance.PopoutFollowsSelectedChannel;
+        _graphWindow.SetIgnoreVisibility(!follows);
+        if (_selectedChannel != null && follows)
             _graphWindow.SetSelectedChannel((int)_selectedChannel.Id);
         _graphWindow.Closed += (_, _) =>
         {

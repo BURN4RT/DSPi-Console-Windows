@@ -31,7 +31,9 @@ public class AppSettings
 
     // Dotted lines for non-selected channels
     public bool DottedInactiveChannels { get; set; } = true;
-    public bool DottedInactiveChannelsPopout { get; set; } = true;
+
+    // Whether the popout graph follows the selected channel editor page
+    public bool PopoutFollowsSelectedChannel { get; set; } = true;
 
     public event EventHandler? SettingsChanged;
 

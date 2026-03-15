@@ -119,8 +119,8 @@
                         <ToggleSwitch x:Name="DbGridToggle" Header="Show dB Grid" OnContent="On" OffContent="Off"/>
                         <ToggleSwitch x:Name="DbLabelsToggle" Header="Show dB Labels" OnContent="On" OffContent="Off"/>
                         <ToggleSwitch x:Name="DbUnitsToggle" Header="Show dB Units on Axis" OnContent="On" OffContent="Off"/>
-                        <ToggleSwitch x:Name="DottedInactiveToggle" Header="Dotted Inactive Channels (Integrated)" OnContent="On" OffContent="Off"/>
-                        <ToggleSwitch x:Name="DottedInactivePopoutToggle" Header="Dotted Inactive Channels (Pop-out)" OnContent="On" OffContent="Off"/>
+                        <ToggleSwitch x:Name="DottedInactiveToggle" Header="Dotted Inactive Channels" OnContent="On" OffContent="Off"/>
+                        <ToggleSwitch x:Name="PopoutFollowsChannelToggle" Header="Pop-out Follows Selected Channel" OnContent="On" OffContent="Off"/>
                     </StackPanel>
                 </ScrollViewer>
             </TabViewItem>
