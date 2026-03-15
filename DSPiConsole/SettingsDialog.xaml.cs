@@ -63,6 +63,8 @@ public sealed partial class SettingsDialog : ContentDialog
         DbGridToggle.IsOn = settings.ShowDbGrid;
         DbLabelsToggle.IsOn = settings.ShowDbLabels;
         DbUnitsToggle.IsOn = settings.ShowDbUnits;
+        DottedInactiveToggle.IsOn = settings.DottedInactiveChannels;
+        DottedInactivePopoutToggle.IsOn = settings.DottedInactiveChannelsPopout;
 
         PrimaryButtonClick += OnSave;
 
@@ -158,6 +160,8 @@ public sealed partial class SettingsDialog : ContentDialog
         settings.ShowDbGrid = DbGridToggle.IsOn;
         settings.ShowDbLabels = DbLabelsToggle.IsOn;
         settings.ShowDbUnits = DbUnitsToggle.IsOn;
+        settings.DottedInactiveChannels = DottedInactiveToggle.IsOn;
+        settings.DottedInactiveChannelsPopout = DottedInactivePopoutToggle.IsOn;
 
         settings.Save();
         settings.NotifyChanged();

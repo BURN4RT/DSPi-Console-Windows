@@ -21,6 +21,41 @@ public sealed class BodePlotControl : UserControl
     private Canvas? _labelCanvas;
     private Canvas? _dbScaleHitArea;
     private MainViewModel? _viewModel;
+    private int _selectedChannelId = -1;
+    private bool _dottedInactiveEnabled = true;
+    private bool _isPopout;
+
+    /// <summary>
+    /// Set the selected channel ID for dotted-line treatment of non-selected channels.
+    /// Pass -1 (or any invalid ID) to show all channels as solid (dashboard mode).
+    /// </summary>
+    public void SetSelectedChannel(int channelId)
+    {
+        if (_selectedChannelId == channelId) return;
+        _selectedChannelId = channelId;
+        Redraw(gridChanged: true);
+    }
+
+    /// <summary>
+    /// Enable or disable dotted lines for non-selected channels.
+    /// </summary>
+    public void SetDottedInactiveEnabled(bool enabled)
+    {
+        if (_dottedInactiveEnabled == enabled) return;
+        _dottedInactiveEnabled = enabled;
+        Redraw(gridChanged: true);
+    }
+
+    /// <summary>
+    /// Mark this control as the popout instance so it reads the correct setting.
+    /// </summary>
+    public void SetIsPopout(bool isPopout)
+    {
+        _isPopout = isPopout;
+        _dottedInactiveEnabled = isPopout
+            ? AppSettings.Instance.DottedInactiveChannelsPopout
+            : AppSettings.Instance.DottedInactiveChannels;
+    }
 
     private const int NumPoints = 201;
 
@@ -134,6 +169,9 @@ public sealed class BodePlotControl : UserControl
     {
         if (_dbScaleHitArea != null)
             _dbScaleHitArea.Width = LeftMargin;
+        _dottedInactiveEnabled = _isPopout
+            ? AppSettings.Instance.DottedInactiveChannelsPopout
+            : AppSettings.Instance.DottedInactiveChannels;
         Redraw(gridChanged: true);
     }
 
@@ -470,8 +508,10 @@ public sealed class BodePlotControl : UserControl
             var polylines = new List<Polyline>();
 
             var points = BuildPoints(magnitudes, plotWidth, plotHeight);
+            bool isDotted = _dottedInactiveEnabled && _selectedChannelId >= 0 && id != _selectedChannelId;
+            var dashArray = isDotted ? new DoubleCollection { 4, 3 } : null;
 
-            if (showGlow)
+            if (showGlow && !isDotted)
             {
                 var outerGlow = new Polyline
                 {
@@ -499,6 +539,7 @@ public sealed class BodePlotControl : UserControl
                 Stroke = new SolidColorBrush(channel.Color),
                 StrokeThickness = lineWidth,
                 StrokeLineJoin = PenLineJoin.Round,
+                StrokeDashArray = dashArray,
                 Points = points
             };
             _plotCanvas!.Children.Add(mainLine);

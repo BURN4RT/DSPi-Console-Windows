@@ -29,6 +29,10 @@ public class AppSettings
     public bool ShowDbLabels { get; set; } = true;
     public bool ShowDbUnits { get; set; } = true;
 
+    // Dotted lines for non-selected channels
+    public bool DottedInactiveChannels { get; set; } = true;
+    public bool DottedInactiveChannelsPopout { get; set; } = true;
+
     public event EventHandler? SettingsChanged;
 
     public void NotifyChanged()

@@ -1,0 +1,23 @@
+<Window
+    x:Class="DSPiConsole.GraphWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:DSPiConsole.Controls"
+    Title="Filter Response">
+
+    <Grid x:Name="RootGrid" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Padding="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border CornerRadius="8"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+            <controls:BodePlotControl x:Name="BodePlot" />
+        </Border>
+
+        <StackPanel x:Name="LegendPanel" Grid.Row="1" Orientation="Horizontal"
+                    Spacing="8" Margin="0,8,0,0" HorizontalAlignment="Center" />
+    </Grid>
+</Window>

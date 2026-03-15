@@ -15,11 +15,81 @@
         </Grid.RowDefinitions>
 
         <Grid x:Name="AppTitleBar" Height="32">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="140"/>
+            </Grid.ColumnDefinitions>
             <TextBlock Text="DSPi Console"
                        VerticalAlignment="Center"
                        Margin="16,0,0,0"
                        FontSize="12"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+            <Button x:Name="TitleBarMenuButton" Grid.Column="1" VerticalAlignment="Center"
+                    Padding="6" Background="Transparent" BorderThickness="0">
+                <FontIcon Glyph="&#xE713;" FontSize="14"/>
+                <Button.Flyout>
+                    <MenuFlyout Placement="BottomEdgeAlignedRight">
+                        <MenuFlyoutItem Text="Import Filters..." Click="OnImportFiltersClick">
+                            <MenuFlyoutItem.KeyboardAccelerators>
+                                <KeyboardAccelerator Modifiers="Control" Key="I"/>
+                            </MenuFlyoutItem.KeyboardAccelerators>
+                        </MenuFlyoutItem>
+                        <MenuFlyoutItem Text="Export Filters..." Click="OnExportFiltersClick">
+                            <MenuFlyoutItem.KeyboardAccelerators>
+                                <KeyboardAccelerator Modifiers="Control" Key="E"/>
+                            </MenuFlyoutItem.KeyboardAccelerators>
+                        </MenuFlyoutItem>
+                        <MenuFlyoutSeparator/>
+                        <MenuFlyoutSubItem x:Name="AutoEQMenu" Text="AutoEQ">
+                            <MenuFlyoutItem Text="Browse Profiles..." Click="OnAutoEQBrowseClick">
+                                <MenuFlyoutItem.KeyboardAccelerators>
+                                    <KeyboardAccelerator Modifiers="Control,Shift" Key="B"/>
+                                </MenuFlyoutItem.KeyboardAccelerators>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem Text="Update Database..." Click="OnAutoEQUpdateClick"/>
+                            <MenuFlyoutSeparator/>
+                            <MenuFlyoutSubItem x:Name="AutoEQFavoritesMenu" Text="Favorites"/>
+                        </MenuFlyoutSubItem>
+                        <MenuFlyoutSeparator/>
+                        <MenuFlyoutItem Text="Loudness Compensation..." Click="OnLoudnessClick">
+                            <MenuFlyoutItem.KeyboardAccelerators>
+                                <KeyboardAccelerator Modifiers="Control,Shift" Key="L"/>
+                            </MenuFlyoutItem.KeyboardAccelerators>
+                        </MenuFlyoutItem>
+                        <MenuFlyoutItem Text="Crossfeed..." Click="OnCrossfeedClick">
+                            <MenuFlyoutItem.KeyboardAccelerators>
+                                <KeyboardAccelerator Modifiers="Control,Shift" Key="C"/>
+                            </MenuFlyoutItem.KeyboardAccelerators>
+                        </MenuFlyoutItem>
+                        <MenuFlyoutItem Text="Matrix Mixer..." Click="OnMatrixMixerClick">
+                            <MenuFlyoutItem.KeyboardAccelerators>
+                                <KeyboardAccelerator Modifiers="Control,Shift" Key="M"/>
+                            </MenuFlyoutItem.KeyboardAccelerators>
+                        </MenuFlyoutItem>
+                        <MenuFlyoutItem Text="Stats for nerbs" Click="OnStatsClick">
+                            <MenuFlyoutItem.KeyboardAccelerators>
+                                <KeyboardAccelerator Modifiers="Control,Shift" Key="T"/>
+                            </MenuFlyoutItem.KeyboardAccelerators>
+                        </MenuFlyoutItem>
+                        <MenuFlyoutItem Text="Settings..." Click="OnSettingsClick"/>
+                        <MenuFlyoutSeparator/>
+                        <MenuFlyoutItem Text="Save Preset" Click="OnSavePresetClick">
+                            <MenuFlyoutItem.KeyboardAccelerators>
+                                <KeyboardAccelerator Modifiers="Control" Key="S"/>
+                            </MenuFlyoutItem.KeyboardAccelerators>
+                        </MenuFlyoutItem>
+                        <MenuFlyoutItem Text="Revert Preset..." Click="OnRevertPresetClick"/>
+                        <MenuFlyoutItem Text="Factory Reset..." Click="OnFactoryResetClick"/>
+                        <MenuFlyoutSeparator/>
+                        <MenuFlyoutItem Text="Exit" Click="OnExitClick">
+                            <MenuFlyoutItem.KeyboardAccelerators>
+                                <KeyboardAccelerator Modifiers="Menu" Key="F4"/>
+                            </MenuFlyoutItem.KeyboardAccelerators>
+                        </MenuFlyoutItem>
+                    </MenuFlyout>
+                </Button.Flyout>
+            </Button>
         </Grid>
 
         <Grid x:Name="RootGrid" Grid.Row="1">
@@ -203,84 +273,30 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <Grid Grid.Row="0" Margin="0,0,0,8">
-                    <TextBlock Text="Filter Response" FontSize="14" FontWeight="Medium"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
-                    <Button HorizontalAlignment="Right" VerticalAlignment="Center"
-                            Background="Transparent" BorderThickness="0" Padding="8">
-                        <FontIcon Glyph="&#xE713;" FontSize="18"/>
-                        <Button.Flyout>
-                            <MenuFlyout Placement="BottomEdgeAlignedRight">
-                                <MenuFlyoutItem Text="Import Filters..." Click="OnImportFiltersClick">
-                                    <MenuFlyoutItem.KeyboardAccelerators>
-                                        <KeyboardAccelerator Modifiers="Control" Key="I"/>
-                                    </MenuFlyoutItem.KeyboardAccelerators>
-                                </MenuFlyoutItem>
-                                <MenuFlyoutItem Text="Export Filters..." Click="OnExportFiltersClick">
-                                    <MenuFlyoutItem.KeyboardAccelerators>
-                                        <KeyboardAccelerator Modifiers="Control" Key="E"/>
-                                    </MenuFlyoutItem.KeyboardAccelerators>
-                                </MenuFlyoutItem>
-                                <MenuFlyoutSeparator/>
-                                <MenuFlyoutSubItem x:Name="AutoEQMenu" Text="AutoEQ">
-                                    <MenuFlyoutItem Text="Browse Profiles..." Click="OnAutoEQBrowseClick">
-                                        <MenuFlyoutItem.KeyboardAccelerators>
-                                            <KeyboardAccelerator Modifiers="Control,Shift" Key="B"/>
-                                        </MenuFlyoutItem.KeyboardAccelerators>
-                                    </MenuFlyoutItem>
-                                    <MenuFlyoutItem Text="Update Database..." Click="OnAutoEQUpdateClick"/>
-                                    <MenuFlyoutSeparator/>
-                                    <MenuFlyoutSubItem x:Name="AutoEQFavoritesMenu" Text="Favorites"/>
-                                </MenuFlyoutSubItem>
-                                <MenuFlyoutSeparator/>
-                                <MenuFlyoutItem Text="Loudness Compensation..." Click="OnLoudnessClick">
-                                    <MenuFlyoutItem.KeyboardAccelerators>
-                                        <KeyboardAccelerator Modifiers="Control,Shift" Key="L"/>
-                                    </MenuFlyoutItem.KeyboardAccelerators>
-                                </MenuFlyoutItem>
-                                <MenuFlyoutItem Text="Crossfeed..." Click="OnCrossfeedClick">
-                                    <MenuFlyoutItem.KeyboardAccelerators>
-                                        <KeyboardAccelerator Modifiers="Control,Shift" Key="C"/>
-                                    </MenuFlyoutItem.KeyboardAccelerators>
-                                </MenuFlyoutItem>
-                                <MenuFlyoutItem Text="Matrix Mixer..." Click="OnMatrixMixerClick">
-                                    <MenuFlyoutItem.KeyboardAccelerators>
-                                        <KeyboardAccelerator Modifiers="Control,Shift" Key="M"/>
-                                    </MenuFlyoutItem.KeyboardAccelerators>
-                                </MenuFlyoutItem>
-                                <MenuFlyoutItem Text="Stats for nerbs" Click="OnStatsClick">
-                                    <MenuFlyoutItem.KeyboardAccelerators>
-                                        <KeyboardAccelerator Modifiers="Control,Shift" Key="T"/>
-                                    </MenuFlyoutItem.KeyboardAccelerators>
-                                </MenuFlyoutItem>
-                                <MenuFlyoutItem Text="Settings..." Click="OnSettingsClick"/>
-                                <MenuFlyoutSeparator/>
-                                <MenuFlyoutItem Text="Save Preset" Click="OnSavePresetClick">
-                                    <MenuFlyoutItem.KeyboardAccelerators>
-                                        <KeyboardAccelerator Modifiers="Control" Key="S"/>
-                                    </MenuFlyoutItem.KeyboardAccelerators>
-                                </MenuFlyoutItem>
-                                <MenuFlyoutItem Text="Revert Preset..." Click="OnRevertPresetClick"/>
-                                <MenuFlyoutItem Text="Factory Reset..." Click="OnFactoryResetClick"/>
-                                <MenuFlyoutSeparator/>
-                                <MenuFlyoutItem Text="Exit" Click="OnExitClick">
-                                    <MenuFlyoutItem.KeyboardAccelerators>
-                                        <KeyboardAccelerator Modifiers="Menu" Key="F4"/>
-                                    </MenuFlyoutItem.KeyboardAccelerators>
-                                </MenuFlyoutItem>
-                            </MenuFlyout>
-                        </Button.Flyout>
+                <TextBlock x:Name="GraphHeader" Grid.Row="0" Margin="0,0,0,8"
+                           Text="Filter Response" FontSize="14" FontWeight="Medium"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+
+                <Grid x:Name="GraphArea" Grid.Row="1"
+                      PointerEntered="OnGraphAreaPointerEntered"
+                      PointerExited="OnGraphAreaPointerExited">
+                    <Border CornerRadius="8"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                        <controls:BodePlotControl x:Name="BodePlot" />
+                    </Border>
+                    <Button x:Name="GraphPopoutButton"
+                            HorizontalAlignment="Right" VerticalAlignment="Top"
+                            Margin="0,8,8,0" Padding="6"
+                            Background="Transparent" BorderThickness="0"
+                            Opacity="0" IsHitTestVisible="False"
+                            Click="OnGraphPopoutClick">
+                        <FontIcon Glyph="&#xE8A7;" FontSize="14"/>
                     </Button>
                 </Grid>
 
-                <Border Grid.Row="1" CornerRadius="8"
-                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                    <controls:BodePlotControl x:Name="BodePlot" />
-                </Border>
-
                 <!-- Graph resize gripper -->
-                <controls:ResizeGripper Grid.Row="2" Height="12" Background="Transparent"
+                <controls:ResizeGripper x:Name="GraphGripperControl" Grid.Row="2" Height="12" Background="Transparent"
                         PointerPressed="OnGraphGripperPointerPressed"
                         PointerMoved="OnGraphGripperPointerMoved"
                         PointerReleased="OnGraphGripperPointerReleased">

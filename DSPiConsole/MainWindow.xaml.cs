@@ -1,6 +1,7 @@
 using System.Linq;
 using DSPiConsole.Controls;
 using DSPiConsole.Core.Models;
+using DSPiConsole.Models;
 using DSPiConsole.Dialogs;
 using DSPiConsole.Services;
 using DSPiConsole.ViewModels;
@@ -34,6 +35,7 @@ public sealed partial class MainWindow : Window
     private bool _isUpdatingGain;
     private bool _closeConfirmed;
     private StatsWindow? _statsWindow;
+    private GraphWindow? _graphWindow;
     private LoudnessWindow? _loudnessWindow;
     private CrossfeedWindow? _crossfeedWindow;
     private MatrixMixerWindow? _matrixMixerWindow;
@@ -83,10 +85,14 @@ public sealed partial class MainWindow : Window
         this.ExtendsContentIntoTitleBar = true;
 
         SetupAcrylicBackdrop();
-       // this.SetTitleBar(AppTitleBar);
+        this.SetTitleBar(AppTitleBar);
+
+        AppTitleBar.SizeChanged += (_, _) => UpdateTitleBarDragRegion();
+        TitleBarMenuButton.SizeChanged += (_, _) => UpdateTitleBarDragRegion();
 
         ViewModel = new MainViewModel();
         BodePlot.DataContext = ViewModel;
+        BodePlot.SetDottedInactiveEnabled(AppSettings.Instance.DottedInactiveChannels);
 
         // Set window size
         var appWindow = GetAppWindow();
@@ -113,7 +119,7 @@ public sealed partial class MainWindow : Window
         {
             BodePlot.Invalidate();
             ScheduleDashboardRefresh();
-            if (_selectedChannel != null && !_isScrollAdjusting)
+            if (_selectedChannel != null && !_isScrollAdjusting && !_isUpdatingGain && !_isUpdatingDelay)
                 ShowChannelEditor(_selectedChannel);
         };
         ViewModel.VisibilityChanged += (_, _) =>
@@ -870,6 +876,8 @@ public sealed partial class MainWindow : Window
     private void ShowChannelEditor(Channel channel)
     {
         _selectedChannel = channel;
+        BodePlot.SetSelectedChannel((int)channel.Id);
+        _graphWindow?.SetSelectedChannel((int)channel.Id);
         DashboardPanel.Visibility = Visibility.Collapsed;
         ChannelEditorPanel.Visibility = Visibility.Visible;
 
@@ -959,6 +967,20 @@ public sealed partial class MainWindow : Window
             };
             gainValuePanel.Children.Add(gainTextBox);
             gainValuePanel.Children.Add(new TextBlock { Text = "dB", FontSize = 10, VerticalAlignment = VerticalAlignment.Center, Foreground = unitBrush });
+            gainValuePanel.PointerWheelChanged += (s, ev) =>
+            {
+                var delta = ev.GetCurrentPoint(gainValuePanel).Properties.MouseWheelDelta;
+                if (delta == 0) return;
+                int direction = delta > 0 ? 1 : -1;
+                float current = ViewModel.GetChannelGain(channel);
+                float newVal = Math.Clamp(current + direction * 0.1f, -60, 10);
+                _isUpdatingGain = true;
+                ViewModel.SetChannelGain((int)channel.Id, newVal);
+                gainTextBox.Text = newVal.ToString("F1");
+                gainSlider.Value = newVal;
+                _isUpdatingGain = false;
+                ev.Handled = true;
+            };
             Grid.SetColumn(gainValuePanel, 1);
             gainSliderRow.Children.Add(gainValuePanel);
             _currentGainTextBox = gainTextBox;
@@ -1031,6 +1053,20 @@ public sealed partial class MainWindow : Window
             };
             delayValuePanel.Children.Add(delayTextBox);
             delayValuePanel.Children.Add(new TextBlock { Text = "ms", FontSize = 10, VerticalAlignment = VerticalAlignment.Center, Foreground = unitBrush });
+            delayValuePanel.PointerWheelChanged += (s, ev) =>
+            {
+                var delta = ev.GetCurrentPoint(delayValuePanel).Properties.MouseWheelDelta;
+                if (delta == 0) return;
+                int direction = delta > 0 ? 1 : -1;
+                float current = ViewModel.GetChannelDelay(channel);
+                float newVal = Math.Clamp(current + direction, 0, 170);
+                _isUpdatingDelay = true;
+                ViewModel.SetDelay((int)channel.Id, newVal);
+                delayTextBox.Text = newVal.ToString("F0");
+                delaySlider.Value = newVal;
+                _isUpdatingDelay = false;
+                ev.Handled = true;
+            };
             Grid.SetColumn(delayValuePanel, 1);
             delaySliderRow.Children.Add(delayValuePanel);
             _currentDelayTextBox = delayTextBox;
@@ -1234,6 +1270,8 @@ public sealed partial class MainWindow : Window
     private void ShowDashboard()
     {
         _selectedChannel = null;
+        BodePlot.SetSelectedChannel(-1);
+        _graphWindow?.SetSelectedChannel(-1);
         ChannelEditorPanel.Visibility = Visibility.Collapsed;
         DashboardPanel.Visibility = Visibility.Visible;
         InitializeDashboard(); // Refresh
@@ -2523,7 +2561,12 @@ public sealed partial class MainWindow : Window
 
     private void RefreshAutoEQFavoritesMenu()
     {
-        AutoEQFavoritesMenu.Items.Clear();
+        PopulateFavoritesMenu(AutoEQFavoritesMenu);
+    }
+
+    private void PopulateFavoritesMenu(MenuFlyoutSubItem menu)
+    {
+        menu.Items.Clear();
 
         var favorites = AutoEQManager.Instance.Favorites;
         if (favorites.Count == 0)
@@ -2533,7 +2576,7 @@ public sealed partial class MainWindow : Window
                 Text = "No favorites yet",
                 IsEnabled = false
             };
-            AutoEQFavoritesMenu.Items.Add(emptyItem);
+            menu.Items.Add(emptyItem);
         }
         else
         {
@@ -2541,10 +2584,10 @@ public sealed partial class MainWindow : Window
             {
                 var item = new MenuFlyoutItem { Text = entry.DisplayName, Tag = entry };
                 item.Click += OnAutoEQFavoriteClick;
-                AutoEQFavoritesMenu.Items.Add(item);
+                menu.Items.Add(item);
             }
 
-            AutoEQFavoritesMenu.Items.Add(new MenuFlyoutSeparator());
+            menu.Items.Add(new MenuFlyoutSeparator());
 
             var clearItem = new MenuFlyoutItem { Text = "Clear Favorites" };
             clearItem.Click += async (s, e) =>
@@ -2565,7 +2608,7 @@ public sealed partial class MainWindow : Window
                     RefreshAutoEQFavoritesMenu();
                 }
             };
-            AutoEQFavoritesMenu.Items.Add(clearItem);
+            menu.Items.Add(clearItem);
         }
     }
 
@@ -2616,6 +2659,149 @@ public sealed partial class MainWindow : Window
         if (sender is UIElement el)
             el.ReleasePointerCapture(e.Pointer);
         e.Handled = true;
+    }
+
+    #endregion
+
+    #region Graph Popout
+
+    private DispatcherTimer? _popoutFadeTimer;
+    private double _popoutFadeTarget;
+
+    private void OnGraphAreaPointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        GraphPopoutButton.IsHitTestVisible = true;
+        FadePopoutButton(0.6);
+    }
+
+    private void OnGraphAreaPointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        GraphPopoutButton.IsHitTestVisible = false;
+        FadePopoutButton(0);
+    }
+
+    private void FadePopoutButton(double target)
+    {
+        _popoutFadeTarget = target;
+        if (_popoutFadeTimer == null)
+        {
+            _popoutFadeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+            _popoutFadeTimer.Tick += (_, _) =>
+            {
+                double diff = _popoutFadeTarget - GraphPopoutButton.Opacity;
+                if (Math.Abs(diff) < 0.02)
+                {
+                    GraphPopoutButton.Opacity = _popoutFadeTarget;
+                    _popoutFadeTimer.Stop();
+                }
+                else
+                {
+                    GraphPopoutButton.Opacity += diff * 0.25;
+                }
+            };
+        }
+        _popoutFadeTimer.Start();
+    }
+
+    private void OnGraphPopoutClick(object sender, RoutedEventArgs e)
+    {
+        if (_graphWindow != null)
+        {
+            _graphWindow.Activate();
+            return;
+        }
+
+        // Animate graph row collapsing
+        GraphHeader.Visibility = Visibility.Collapsed;
+        GraphGripperControl.Visibility = Visibility.Collapsed;
+        LegendPanel.Visibility = Visibility.Collapsed;
+        AnimateGraphRow(GraphRow.Height.Value, 0, 250, () =>
+        {
+            GraphArea.Visibility = Visibility.Collapsed;
+            GraphRow.Height = GridLength.Auto;
+        });
+
+        // Open popout window
+        _graphWindow = new GraphWindow(ViewModel);
+        if (_selectedChannel != null)
+            _graphWindow.SetSelectedChannel((int)_selectedChannel.Id);
+        _graphWindow.Closed += (_, _) =>
+        {
+            _graphWindow = null;
+
+            // Restore and animate graph row expanding
+            GraphArea.Visibility = Visibility.Visible;
+            GraphArea.Opacity = 0;
+            GraphHeader.Visibility = Visibility.Visible;
+            GraphHeader.Opacity = 0;
+            LegendPanel.Visibility = Visibility.Visible;
+            LegendPanel.Opacity = 0;
+            GraphRow.Height = new GridLength(0);
+
+            AnimateGraphRow(0, 250, 300, () =>
+            {
+                GraphGripperControl.Visibility = Visibility.Visible;
+                GraphArea.Opacity = 1;
+                GraphHeader.Opacity = 1;
+                LegendPanel.Opacity = 1;
+            });
+        };
+        _graphWindow.Activate();
+    }
+
+    private void AnimateGraphRow(double from, double to, int durationMs, Action? onComplete = null)
+    {
+        const int frameMs = 16;
+        int totalFrames = Math.Max(1, durationMs / frameMs);
+        int frame = 0;
+
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(frameMs) };
+        timer.Tick += (_, _) =>
+        {
+            frame++;
+            double t = Math.Min(1.0, (double)frame / totalFrames);
+            // Ease out cubic
+            double eased = 1.0 - Math.Pow(1.0 - t, 3);
+            double height = from + (to - from) * eased;
+            GraphRow.Height = new GridLength(Math.Max(0, height));
+
+            // Fade graph area, header and legend proportionally
+            double opacity = to > from ? eased : 1.0 - eased;
+            GraphArea.Opacity = opacity;
+            GraphHeader.Opacity = opacity;
+            LegendPanel.Opacity = opacity;
+
+            if (t >= 1.0)
+            {
+                timer.Stop();
+                onComplete?.Invoke();
+            }
+        };
+        timer.Start();
+    }
+
+    #endregion
+
+    #region Title Bar
+
+    private void UpdateTitleBarDragRegion()
+    {
+        var scale = AppTitleBar.XamlRoot?.RasterizationScale ?? 1.0;
+        var buttonPos = TitleBarMenuButton.TransformToVisual(AppTitleBar).TransformPoint(new Windows.Foundation.Point(0, 0));
+
+        int titleBarWidth = (int)(AppTitleBar.ActualWidth * scale);
+        int titleBarHeight = (int)(AppTitleBar.ActualHeight * scale);
+        int btnX = (int)(buttonPos.X * scale);
+        int btnW = (int)(TitleBarMenuButton.ActualWidth * scale);
+
+        // Two drag rectangles: left of button and right of button
+        var left = new Windows.Graphics.RectInt32(0, 0, btnX, titleBarHeight);
+        var right = new Windows.Graphics.RectInt32(btnX + btnW, 0, titleBarWidth - btnX - btnW, titleBarHeight);
+
+        var nonClientInput = Microsoft.UI.Input.InputNonClientPointerSource.GetForWindowId(
+            Microsoft.UI.Win32Interop.GetWindowIdFromWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)));
+        nonClientInput.SetRegionRects(Microsoft.UI.Input.NonClientRegionKind.Passthrough,
+            new[] { new Windows.Graphics.RectInt32(btnX, (int)(buttonPos.Y * scale), btnW, (int)(TitleBarMenuButton.ActualHeight * scale)) });
     }
 
     #endregion
