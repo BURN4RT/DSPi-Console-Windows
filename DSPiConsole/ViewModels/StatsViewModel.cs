@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using DSPiConsole.Core.Models;
 using DSPiConsole.Usb;
 using Microsoft.UI.Dispatching;
 
@@ -26,6 +27,33 @@ public partial class StatsViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _pdmDmaUnderruns = "—";
     [ObservableProperty] private string _spdifOverruns = "—";
     [ObservableProperty] private string _spdifUnderruns = "—";
+
+    // Buffer stats
+    [ObservableProperty] private int _numSpdifInstances;
+    [ObservableProperty] private bool _isPdmActive;
+    [ObservableProperty] private bool _isAudioStreaming;
+    [ObservableProperty] private SpdifBufferStats[] _spdifBufferStats = new SpdifBufferStats[4];
+    [ObservableProperty] private PdmBufferStats _pdmBufferStats;
+
+    // Formatted strings for SPDIF per-instance display
+    [ObservableProperty] private string _spdif1Fill = "—";
+    [ObservableProperty] private string _spdif1Watermarks = "—";
+    [ObservableProperty] private string _spdif1Queued = "—";
+    [ObservableProperty] private string _spdif2Fill = "—";
+    [ObservableProperty] private string _spdif2Watermarks = "—";
+    [ObservableProperty] private string _spdif2Queued = "—";
+    [ObservableProperty] private string _spdif3Fill = "—";
+    [ObservableProperty] private string _spdif3Watermarks = "—";
+    [ObservableProperty] private string _spdif3Queued = "—";
+    [ObservableProperty] private string _spdif4Fill = "—";
+    [ObservableProperty] private string _spdif4Watermarks = "—";
+    [ObservableProperty] private string _spdif4Queued = "—";
+
+    // PDM buffer display
+    [ObservableProperty] private string _pdmDmaFill = "—";
+    [ObservableProperty] private string _pdmDmaWatermarks = "—";
+    [ObservableProperty] private string _pdmRingFill = "—";
+    [ObservableProperty] private string _pdmRingWatermarks = "—";
 
     public StatsViewModel(DspDevice device)
     {
@@ -79,6 +107,8 @@ public partial class StatsViewModel : ObservableObject, IDisposable
             var spdifOver = _device.GetStatusUInt32(7);
             var spdifUnder = _device.GetStatusUInt32(8);
 
+            var bufferStats = _device.GetBufferStats();
+
             _dispatcher.TryEnqueue(() =>
             {
                 ClockHz = clockHz.HasValue ? $"{clockHz.Value / 1_000_000.0:F1} MHz" : "—";
@@ -92,12 +122,61 @@ public partial class StatsViewModel : ObservableObject, IDisposable
                 PdmDmaUnderruns = pdmDmaUnder?.ToString() ?? "—";
                 SpdifOverruns = spdifOver?.ToString() ?? "—";
                 SpdifUnderruns = spdifUnder?.ToString() ?? "—";
+
+                if (bufferStats != null)
+                {
+                    NumSpdifInstances = bufferStats.NumSpdif;
+                    IsPdmActive = bufferStats.IsPdmActive;
+                    IsAudioStreaming = bufferStats.IsAudioStreaming;
+                    SpdifBufferStats = bufferStats.Spdif;
+                    PdmBufferStats = bufferStats.Pdm;
+
+                    UpdateSpdifInstance(0, bufferStats.Spdif[0], bufferStats.NumSpdif,
+                        v => Spdif1Fill = v, v => Spdif1Watermarks = v, v => Spdif1Queued = v);
+                    UpdateSpdifInstance(1, bufferStats.Spdif[1], bufferStats.NumSpdif,
+                        v => Spdif2Fill = v, v => Spdif2Watermarks = v, v => Spdif2Queued = v);
+                    UpdateSpdifInstance(2, bufferStats.Spdif[2], bufferStats.NumSpdif,
+                        v => Spdif3Fill = v, v => Spdif3Watermarks = v, v => Spdif3Queued = v);
+                    UpdateSpdifInstance(3, bufferStats.Spdif[3], bufferStats.NumSpdif,
+                        v => Spdif4Fill = v, v => Spdif4Watermarks = v, v => Spdif4Queued = v);
+
+                    var pdm = bufferStats.Pdm;
+                    PdmDmaFill = $"{pdm.DmaFillPct}%";
+                    PdmDmaWatermarks = $"{pdm.DmaMinFillPct}% – {pdm.DmaMaxFillPct}%";
+                    PdmRingFill = $"{pdm.RingFillPct}%";
+                    PdmRingWatermarks = $"{pdm.RingMinFillPct}% – {pdm.RingMaxFillPct}%";
+                }
             });
         }
         catch
         {
             // Ignore polling errors
         }
+    }
+
+    private static void UpdateSpdifInstance(int index, SpdifBufferStats s, int numActive,
+        Action<string> setFill, Action<string> setWatermarks, Action<string> setQueued)
+    {
+        if (index >= numActive)
+        {
+            setFill("N/A");
+            setWatermarks("N/A");
+            setQueued("N/A");
+            return;
+        }
+
+        setFill($"{s.ConsumerFillPct}%");
+        setWatermarks($"{s.ConsumerMinFillPct}% – {s.ConsumerMaxFillPct}%");
+        setQueued($"{s.ConsumerPrepared}p + {s.ConsumerPlaying}a / {s.ConsumerFree + s.ConsumerPrepared + s.ConsumerPlaying} total");
+    }
+
+    public void ResetWatermarks()
+    {
+        Task.Run(() =>
+        {
+            if (_disposed || !_device.IsConnected) return;
+            _device.ResetBufferStats();
+        });
     }
 
     public void Dispose()

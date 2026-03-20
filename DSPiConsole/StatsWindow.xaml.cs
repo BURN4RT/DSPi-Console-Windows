@@ -21,7 +21,7 @@ public sealed partial class StatsWindow : Window
         var hWnd = WindowNative.GetWindowHandle(this);
         var windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
         var appWindow = AppWindow.GetFromWindowId(windowId);
-        appWindow?.Resize(new Windows.Graphics.SizeInt32(400, 800));
+        appWindow?.Resize(new Windows.Graphics.SizeInt32(400, 1000));
         appWindow!.Title = "Stats for nerbs";
 
         if (appWindow.TitleBar is { } titleBar)
@@ -37,6 +37,8 @@ public sealed partial class StatsWindow : Window
             titleBar.ButtonHoverForegroundColor = Windows.UI.Color.FromArgb(255, 255, 255, 255);
             titleBar.ButtonHoverBackgroundColor = Windows.UI.Color.FromArgb(255, 50, 50, 50);
         }
+
+        ResetWatermarksButton.Click += (_, _) => _viewModel.ResetWatermarks();
 
         // Bind ViewModel changes to UI
         _viewModel.PropertyChanged += (s, e) =>
@@ -56,6 +58,33 @@ public sealed partial class StatsWindow : Window
                 PdmDmaUnderText.Text = _viewModel.PdmDmaUnderruns;
                 SpdifOverText.Text = _viewModel.SpdifOverruns;
                 SpdifUnderText.Text = _viewModel.SpdifUnderruns;
+
+                // SPDIF buffer levels
+                Spdif1FillText.Text = _viewModel.Spdif1Fill;
+                Spdif1WatermarksText.Text = _viewModel.Spdif1Watermarks;
+                Spdif1QueuedText.Text = _viewModel.Spdif1Queued;
+                Spdif2FillText.Text = _viewModel.Spdif2Fill;
+                Spdif2WatermarksText.Text = _viewModel.Spdif2Watermarks;
+                Spdif2QueuedText.Text = _viewModel.Spdif2Queued;
+                Spdif3FillText.Text = _viewModel.Spdif3Fill;
+                Spdif3WatermarksText.Text = _viewModel.Spdif3Watermarks;
+                Spdif3QueuedText.Text = _viewModel.Spdif3Queued;
+                Spdif4FillText.Text = _viewModel.Spdif4Fill;
+                Spdif4WatermarksText.Text = _viewModel.Spdif4Watermarks;
+                Spdif4QueuedText.Text = _viewModel.Spdif4Queued;
+
+                // Hide SPDIF 3/4 on RP2040 (only 2 instances)
+                var show34 = _viewModel.NumSpdifInstances > 2;
+                Spdif3Header.Visibility = show34 ? Visibility.Visible : Visibility.Collapsed;
+                Spdif3Grid.Visibility = show34 ? Visibility.Visible : Visibility.Collapsed;
+                Spdif4Header.Visibility = show34 ? Visibility.Visible : Visibility.Collapsed;
+                Spdif4Grid.Visibility = show34 ? Visibility.Visible : Visibility.Collapsed;
+
+                // PDM buffer levels
+                PdmDmaFillText.Text = _viewModel.PdmDmaFill;
+                PdmDmaWatermarksText.Text = _viewModel.PdmDmaWatermarks;
+                PdmRingFillText.Text = _viewModel.PdmRingFill;
+                PdmRingWatermarksText.Text = _viewModel.PdmRingWatermarks;
             });
         };
 

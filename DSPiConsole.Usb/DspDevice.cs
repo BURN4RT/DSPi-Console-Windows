@@ -62,6 +62,10 @@ public static class VendorCommands
     public const byte ClearClips = 0x83;
     public const byte GetAllParams = 0xA0;
 
+    // Buffer statistics (firmware v3+)
+    public const byte GetBufferStats  = 0xB0;
+    public const byte ResetBufferStats = 0xB1;
+
     // Preset system (firmware v3+)
     public const byte PresetSave           = 0x90;
     public const byte PresetLoad           = 0x91;
@@ -1038,6 +1042,29 @@ public partial class DspDevice : ObservableObject, IDisposable
     {
         return ControlTransferIn(VendorCommands.GetAllParams, 0, 2832);
     }
+
+    #region Buffer Statistics
+
+    /// <summary>
+    /// Fetch the 44-byte buffer statistics snapshot (REQ_GET_BUFFER_STATS 0xB0).
+    /// </summary>
+    public BufferStatsPacket? GetBufferStats()
+    {
+        var response = ControlTransferIn(VendorCommands.GetBufferStats, 0, BufferStatsPacket.PacketSize);
+        return response != null ? BufferStatsPacket.Parse(response) : null;
+    }
+
+    /// <summary>
+    /// Reset buffer statistics watermarks (REQ_RESET_BUFFER_STATS 0xB1).
+    /// wValue bit 0 = reset watermarks.
+    /// </summary>
+    public bool ResetBufferStats()
+    {
+        var response = ControlTransferIn(VendorCommands.ResetBufferStats, 1, 1);
+        return response != null && response.Length >= 1 && response[0] == 0x01;
+    }
+
+    #endregion
 
     #region Preset Commands
 
