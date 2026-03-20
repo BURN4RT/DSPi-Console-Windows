@@ -61,6 +61,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private bool _presetIncludePins;
     private PresetSnapshot? _savedSnapshot;
 
+    // Channel copy/paste clipboard
+    private ChannelClipboard? _channelClipboard;
+    public bool HasChannelClipboard => _channelClipboard != null;
+
     [ObservableProperty]
     private float _preampDb;
 
@@ -797,6 +801,65 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (outputIndex < 0) return;
         Task.Run(() => _device.SetOutputMute(outputIndex, muted));
         OnPropertyChanged(nameof(ChannelMutes));
+        CheckDirty();
+    }
+
+    public void CopyChannelParams(Channel channel)
+    {
+        var channelId = (int)channel.Id;
+        var filters = _channelData.TryGetValue(channelId, out var f)
+            ? f.Select(fp => fp.Clone()).ToList()
+            : new List<FilterParams>();
+
+        _channelClipboard = new ChannelClipboard
+        {
+            SourceIsOutput = channel.IsOutput,
+            Filters = filters,
+            Delay = channel.IsOutput && _channelDelays.TryGetValue(channelId, out var d) ? d : null,
+            Gain = channel.IsOutput && _channelGains.TryGetValue(channelId, out var g) ? g : null,
+            Mute = channel.IsOutput && _channelMutes.TryGetValue(channelId, out var m) ? m : null,
+        };
+    }
+
+    public void SetAllFilters(int channelId, List<FilterParams> filters)
+    {
+        if (!_channelData.TryGetValue(channelId, out var existing)) return;
+
+        var count = Math.Min(filters.Count, existing.Count);
+        for (int i = 0; i < count; i++)
+            existing[i] = filters[i];
+
+        // Send all bands to device in one background task
+        var snapshot = filters.Take(count).Select(fp => fp.Clone()).ToList();
+        Task.Run(() =>
+        {
+            for (int i = 0; i < snapshot.Count; i++)
+                _device.SetFilter(channelId, i, snapshot[i]);
+        });
+
+        FiltersChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void PasteChannelParams(Channel target)
+    {
+        if (_channelClipboard == null) return;
+
+        var targetId = (int)target.Id;
+
+        // Filters are universal — always paste (deep-cloned)
+        SetAllFilters(targetId, _channelClipboard.Filters.Select(fp => fp.Clone()).ToList());
+
+        // Delay, gain, mute: only paste when both source and target are outputs
+        if (target.IsOutput && _channelClipboard.SourceIsOutput)
+        {
+            if (_channelClipboard.Delay.HasValue)
+                SetDelay(targetId, _channelClipboard.Delay.Value);
+            if (_channelClipboard.Gain.HasValue)
+                SetChannelGain(targetId, _channelClipboard.Gain.Value);
+            if (_channelClipboard.Mute.HasValue)
+                SetChannelMute(targetId, _channelClipboard.Mute.Value);
+        }
+
         CheckDirty();
     }
 

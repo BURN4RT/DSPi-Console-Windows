@@ -334,15 +334,41 @@ public sealed partial class MainWindow : Window
             FocusSink.Focus(FocusState.Programmatic);
         }
 
-        item.RightTapped += (s, e) =>
+        var flyout = new MenuFlyout();
+
+        var copyItem = new MenuFlyoutItem { Text = "Copy Parameters" };
+        copyItem.Click += (s, e) => ViewModel.CopyChannelParams(channel);
+
+        var pasteItem = new MenuFlyoutItem { Text = "Paste Parameters" };
+        pasteItem.Click += (s, e) =>
         {
-            e.Handled = true;
+            ViewModel.PasteChannelParams(channel);
+            if (_selectedChannel == channel)
+                ShowChannelEditor(channel);
+        };
+
+        var renameItem = new MenuFlyoutItem { Text = "Rename" };
+        renameItem.Click += (s, e) =>
+        {
             nameText.Visibility = Visibility.Collapsed;
             nameBox.Text = ViewModel.GetChannelName(channel);
             nameBox.Visibility = Visibility.Visible;
-            nameBox.Focus(FocusState.Pointer);
+            nameBox.Focus(FocusState.Programmatic);
             nameBox.SelectAll();
         };
+
+        flyout.Opening += (s, e) =>
+        {
+            pasteItem.IsEnabled = ViewModel.HasChannelClipboard;
+        };
+
+        flyout.Items.Add(copyItem);
+        flyout.Items.Add(pasteItem);
+        flyout.Items.Add(new MenuFlyoutSeparator());
+        flyout.Items.Add(renameItem);
+
+        item.ContextFlyout = flyout;
+
         nameBox.KeyDown += (s, e) =>
         {
             if (e.Key == Windows.System.VirtualKey.Enter) { e.Handled = true; CommitSidebarName(); }
