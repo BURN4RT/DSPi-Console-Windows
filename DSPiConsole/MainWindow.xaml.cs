@@ -2582,18 +2582,36 @@ public sealed partial class MainWindow : Window
 
     private async Task<bool> ApplyAutoEQProfile(HeadphoneEntry profile)
     {
-        // Set preamp
+        var filters = AutoEQManager.ConvertFilters(profile);
+
+        var dialog = new ChannelSelectionDialog { XamlRoot = Content.XamlRoot };
+        dialog.ConfigureForAutoEQ(
+            filters.Count,
+            ViewModel.ActiveOutputs,
+            ViewModel.IsOutputEnabled,
+            ch => ViewModel.GetChannelName(ch));
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return true; // user cancelled
+
+        dialog.CollectSelectedChannels();
+        if (dialog.SelectedChannelIds.Count == 0) return true;
+
+        // Set preamp only after user confirms
         ViewModel.PreampDb = (float)profile.Preamp;
 
-        // Convert and apply filters to both master channels
-        var filters = AutoEQManager.ConvertFilters(profile);
-        var masterChannels = new[] { (int)ChannelId.MasterLeft, (int)ChannelId.MasterRight };
-
-        foreach (var channelId in masterChannels)
+        // Apply filters to each selected channel
+        foreach (var channelId in dialog.SelectedChannelIds)
         {
             if (!await ApplyFiltersToChannel(channelId, filters))
                 return false;
         }
+
+        // Refresh editor if selected channel was affected
+        if (_selectedChannel != null &&
+            dialog.SelectedChannelIds.Contains((int)_selectedChannel.Id))
+            ShowChannelEditor(_selectedChannel);
+
         return true;
     }
 
