@@ -16,20 +16,15 @@
 
         <Grid x:Name="AppTitleBar" Height="32">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="140"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Text="DSPi Console"
-                       VerticalAlignment="Center"
-                       Margin="16,0,0,0"
-                       FontSize="12"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-            <Button x:Name="TitleBarMenuButton" Grid.Column="1" VerticalAlignment="Center"
+            <Button x:Name="TitleBarMenuButton" Grid.Column="0" VerticalAlignment="Center"
                     Padding="6" Background="Transparent" BorderThickness="0">
-                <FontIcon Glyph="&#xE713;" FontSize="14"/>
+                <FontIcon Glyph="&#xE700;" FontSize="14"/>
                 <Button.Flyout>
-                    <MenuFlyout Placement="BottomEdgeAlignedRight">
+                    <MenuFlyout Placement="BottomEdgeAlignedLeft">
                         <MenuFlyoutItem Text="Import Filters..." Click="OnImportFiltersClick">
                             <MenuFlyoutItem.KeyboardAccelerators>
                                 <KeyboardAccelerator Modifiers="Control" Key="I"/>
@@ -90,6 +85,11 @@
                     </MenuFlyout>
                 </Button.Flyout>
             </Button>
+            <TextBlock Grid.Column="1" Text="DSPi Console"
+                       VerticalAlignment="Center"
+                       Margin="4,0,0,0"
+                       FontSize="12"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
         </Grid>
 
         <Grid x:Name="RootGrid" Grid.Row="1">
@@ -165,7 +165,6 @@
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
                 <!-- This is where we set the inpupt and output channel text padding and styles-->
@@ -198,15 +197,82 @@
                     </StackPanel>
                 </ScrollViewer>
 
-                <StackPanel Grid.Row="1" Padding="12" Spacing="12">
-                    <TextBlock Text="GLOBAL" FontSize="12" FontWeight="SemiBold"
-                               Foreground="{ThemeResource TextFillColorGhostlyBrush}" />
+                <StackPanel Grid.Row="1" Padding="12,12,12,0" Spacing="12">
+                    <!-- Shortcut icons row -->
+                    <Grid Margin="-12,0,-12,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                        <Border x:Name="SidebarMatrixMixerBtn" Grid.Column="0" Background="Transparent" Padding="0,6"
+                                Tapped="OnSidebarMatrixMixerTapped"
+                                ToolTipService.ToolTip="Matrix Mixer"
+                                PointerEntered="OnShortcutIconPointerEntered" PointerExited="OnShortcutIconPointerExited">
+                            <FontIcon x:Name="MatrixMixerIcon" Glyph="&#xE71D;" FontSize="16"
+                                      HorizontalAlignment="Center"
+                                      Foreground="{ThemeResource TextFillColorGhostlyBrush}" IsHitTestVisible="False" />
+                        </Border>
+                        <Border x:Name="SidebarSettingsBtn" Grid.Column="1" Background="Transparent" Padding="0,6"
+                                Tapped="OnSidebarSettingsTapped"
+                                ToolTipService.ToolTip="Settings"
+                                PointerEntered="OnShortcutIconPointerEntered" PointerExited="OnShortcutIconPointerExited">
+                            <FontIcon x:Name="SettingsIcon" Glyph="&#xE713;" FontSize="16"
+                                      HorizontalAlignment="Center"
+                                      Foreground="{ThemeResource TextFillColorGhostlyBrush}" IsHitTestVisible="False" />
+                        </Border>
+                        <Border x:Name="SidebarLoudnessBtn" Grid.Column="2" Background="Transparent" Padding="0,6"
+                                Tapped="OnSidebarLoudnessTapped"
+                                RightTapped="OnSidebarLoudnessRightClick"
+                                ToolTipService.ToolTip="Loudness Compensation (right-click for settings)"
+                                PointerEntered="OnShortcutIconPointerEntered" PointerExited="OnShortcutIconPointerExited">
+                            <FontIcon x:Name="LoudnessIcon" Glyph="&#xE767;" FontSize="16"
+                                      HorizontalAlignment="Center"
+                                      Foreground="{ThemeResource TextFillColorGhostlyBrush}" IsHitTestVisible="False" />
+                        </Border>
+                        <Border x:Name="SidebarCrossfeedBtn" Grid.Column="3" Background="Transparent" Padding="0,6"
+                                Tapped="OnSidebarCrossfeedTapped"
+                                RightTapped="OnSidebarCrossfeedRightClick"
+                                ToolTipService.ToolTip="Crossfeed (right-click for settings)"
+                                PointerEntered="OnShortcutIconPointerEntered" PointerExited="OnShortcutIconPointerExited">
+                            <FontIcon x:Name="CrossfeedIcon" Glyph="&#xE8AB;" FontSize="16"
+                                      HorizontalAlignment="Center"
+                                      Foreground="{ThemeResource TextFillColorGhostlyBrush}" IsHitTestVisible="False" />
+                        </Border>
+                        <Border x:Name="SidebarStatsBtn" Grid.Column="4" Background="Transparent" Padding="0,6"
+                                Tapped="OnSidebarStatsTapped"
+                                ToolTipService.ToolTip="Stats for Nerbs"
+                                PointerEntered="OnShortcutIconPointerEntered" PointerExited="OnShortcutIconPointerExited">
+                            <FontIcon x:Name="StatsIcon" Glyph="&#xE9D9;" FontSize="16"
+                                      HorizontalAlignment="Center"
+                                      Foreground="{ThemeResource TextFillColorGhostlyBrush}" IsHitTestVisible="False" />
+                        </Border>
+                        <Border x:Name="SidebarBypassBtn" Grid.Column="5" Background="Transparent" Padding="0,6"
+                                Tapped="OnSidebarBypassTapped"
+                                ToolTipService.ToolTip="Bypass Master EQ"
+                                PointerEntered="OnShortcutIconPointerEntered" PointerExited="OnShortcutIconPointerExited">
+                            <FontIcon x:Name="BypassIcon" Glyph="&#xE711;" FontSize="16"
+                                      HorizontalAlignment="Center"
+                                      Foreground="{ThemeResource TextFillColorGhostlyBrush}" IsHitTestVisible="False" />
+                        </Border>
+                    </Grid>
 
                     <Grid x:Name="PresetSection" Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
                         <TextBlock Text="Preset" FontSize="12" VerticalAlignment="Center"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <ComboBox x:Name="PresetComboBox" HorizontalAlignment="Right"
-                                  SelectionChanged="OnPresetSelectionChanged" />
+                        <ComboBox x:Name="PresetComboBox" Grid.Column="1" Margin="8,0,0,0"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                  SelectionChanged="OnPresetSelectionChanged"
+                                  Background="Transparent" BorderBrush="Transparent"
+                                  PointerEntered="OnPresetComboPointerEntered"
+                                  PointerExited="OnPresetComboPointerExited" />
                     </Grid>
 
                     <StackPanel Spacing="4">
@@ -218,50 +284,51 @@
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </Grid>
                         <Slider x:Name="PreampSlider" Minimum="-60" Maximum="10"
-                                ValueChanged="OnPreampSliderChanged" />
+                                ValueChanged="OnPreampSliderChanged">
+                            <Slider.Resources>
+                                <SolidColorBrush x:Key="SliderTrackValueFill" Color="{ThemeResource SystemAccentColor}" />
+                                <SolidColorBrush x:Key="SliderTrackValueFillPointerOver" Color="{ThemeResource SystemAccentColor}" />
+                                <SolidColorBrush x:Key="SliderTrackValueFillPressed" Color="{ThemeResource SystemAccentColor}" />
+                                <SolidColorBrush x:Key="SliderThumbBackground" Color="{ThemeResource SystemAccentColor}" />
+                                <SolidColorBrush x:Key="SliderThumbBackgroundPointerOver" Color="{ThemeResource SystemAccentColor}" />
+                                <SolidColorBrush x:Key="SliderThumbBackgroundPressed" Color="{ThemeResource SystemAccentColor}" />
+                            </Slider.Resources>
+                        </Slider>
                     </StackPanel>
 
-                    <ToggleButton x:Name="BypassButton" HorizontalAlignment="Stretch" Click="OnBypassToggled">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon Glyph="&#xE711;" FontSize="14" />
-                            <TextBlock Text="Bypass Master EQ" />
-                        </StackPanel>
-                    </ToggleButton>
                 </StackPanel>
 
-                <StackPanel Grid.Row="2" Padding="12" Spacing="12">
-                    <TextBlock Text="SYSTEM STATUS" FontSize="10" FontWeight="SemiBold"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-
+                <Border Grid.Row="2" Padding="12,8" RightTapped="OnConnectionStatusRightTapped">
                     <Grid>
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <controls:CpuMeter x:Name="Cpu0Meter" Core="0" />
-                        <controls:CpuMeter x:Name="Cpu1Meter" Grid.Column="1" Core="1" />
-                    </Grid>
-                </StackPanel>
-
-                <Border Grid.Row="3" Padding="12,8">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
 
-                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                            <Ellipse x:Name="ConnectionIndicator" Width="6" Height="6" />
-                            <TextBlock x:Name="ConnectionStatusText" FontSize="12" 
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        </StackPanel>
+                        <controls:CpuMeter x:Name="Cpu0Meter" Core="0" Label="CPU" VerticalAlignment="Center" />
+                        <controls:CpuMeter x:Name="Cpu1Meter" Core="1" Visibility="Collapsed" />
 
-                        <Button Grid.Column="1" Padding="8,4" Background="Transparent" 
-                                BorderThickness="0" Click="OnReconnectClick" ToolTipService.ToolTip="Reconnect">
-                            <FontIcon Glyph="&#xE72C;" FontSize="14" />
-                        </Button>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6"
+                                    VerticalAlignment="Center">
+                            <Ellipse x:Name="ConnectionIndicator" Width="7" Height="7" VerticalAlignment="Center" />
+                            <Border x:Name="DeviceSelectorBtn" Background="Transparent" Padding="6,3"
+                                    CornerRadius="4" BorderThickness="1" BorderBrush="Transparent"
+                                    Tapped="OnDeviceSelectorTapped"
+                                    PointerEntered="OnDeviceSelectorPointerEntered"
+                                    PointerExited="OnDeviceSelectorPointerExited">
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock x:Name="DeviceSelectorText" FontSize="11" VerticalAlignment="Center"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <FontIcon Glyph="&#xE70D;" FontSize="8" VerticalAlignment="Center"
+                                              Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
                     </Grid>
                 </Border>
+
             </Grid>
 
             <Grid x:Name="ContentGrid" Grid.Column="1" Padding="20" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
@@ -276,6 +343,7 @@
                 <TextBlock x:Name="GraphHeader" Grid.Row="0" Margin="0,0,0,8"
                            Text="Filter Response" FontSize="14" FontWeight="Medium"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+
 
                 <Grid x:Name="GraphArea" Grid.Row="1"
                       PointerEntered="OnGraphAreaPointerEntered"

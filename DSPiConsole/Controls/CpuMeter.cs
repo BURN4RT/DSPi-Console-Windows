@@ -24,10 +24,20 @@ public sealed class CpuMeter : UserControl
         DependencyProperty.Register(nameof(Load), typeof(int), typeof(CpuMeter),
             new PropertyMetadata(0, OnLoadChanged));
 
+    public static readonly DependencyProperty LabelProperty =
+        DependencyProperty.Register(nameof(Label), typeof(string), typeof(CpuMeter),
+            new PropertyMetadata(null, OnLabelChanged));
+
     public int Core
     {
         get => (int)GetValue(CoreProperty);
         set => SetValue(CoreProperty, value);
+    }
+
+    public string? Label
+    {
+        get => (string?)GetValue(LabelProperty);
+        set => SetValue(LabelProperty, value);
     }
 
     public int Load
@@ -47,14 +57,14 @@ public sealed class CpuMeter : UserControl
         _labelText = new TextBlock
         {
             Text = "C0:",
-            FontSize = 10,
+            FontSize = 11,
             Foreground = new SolidColorBrush(Colors.Gray),
             VerticalAlignment = VerticalAlignment.Center
         };
 
         var meterGrid = new Grid
         {
-            Width = 40,
+            Width = 44,
             Height = 6,
             VerticalAlignment = VerticalAlignment.Center
         };
@@ -65,9 +75,10 @@ public sealed class CpuMeter : UserControl
             CornerRadius = new CornerRadius(2)
         };
 
+        var accentColor = (Windows.UI.Color)Application.Current.Resources["SystemAccentColor"];
         _meterForeground = new Border
         {
-            Background = new SolidColorBrush(Colors.DodgerBlue),
+            Background = new SolidColorBrush(accentColor),
             CornerRadius = new CornerRadius(2),
             HorizontalAlignment = HorizontalAlignment.Left,
             Width = 0
@@ -79,10 +90,10 @@ public sealed class CpuMeter : UserControl
         _valueText = new TextBlock
         {
             Text = "0%",
-            FontSize = 10,
+            FontSize = 11,
             FontFamily = new FontFamily("Cascadia Code, Consolas"),
             VerticalAlignment = VerticalAlignment.Center,
-            Width = 28
+            Width = 30
         };
 
         panel.Children.Add(_labelText);
@@ -94,9 +105,17 @@ public sealed class CpuMeter : UserControl
 
     private static void OnCoreChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
-        if (d is CpuMeter meter)
+        if (d is CpuMeter meter && meter.Label == null)
         {
             meter._labelText.Text = $"C{e.NewValue}:";
+        }
+    }
+
+    private static void OnLabelChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is CpuMeter meter)
+        {
+            meter._labelText.Text = e.NewValue is string label ? $"{label}:" : $"C{meter.Core}:";
         }
     }
 
@@ -106,9 +125,10 @@ public sealed class CpuMeter : UserControl
         {
             int load = (int)e.NewValue;
             meter._valueText.Text = $"{load}%";
-            meter._meterForeground.Width = 40 * (load / 100.0);
+            meter._meterForeground.Width = 44 * (load / 100.0);
+            var accentColor = (Windows.UI.Color)Application.Current.Resources["SystemAccentColor"];
             meter._meterForeground.Background = new SolidColorBrush(
-                load > 90 ? Colors.Red : Colors.DodgerBlue);
+                load > 90 ? Colors.Red : accentColor);
         }
     }
 }

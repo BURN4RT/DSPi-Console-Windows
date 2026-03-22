@@ -8,6 +8,8 @@ using Microsoft.UI.Dispatching;
 
 namespace DSPiConsole.ViewModels;
 
+public enum UnsavedAction { Save, Discard, Cancel }
+
 /// <summary>
 /// Main ViewModel for the DSPi Console application.
 /// Manages all DSP state, USB communication, and UI bindings.
@@ -132,10 +134,22 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public bool IsPresetOccupied(int slot) => (_presetOccupiedMask & (1 << slot)) != 0;
     public ushort PresetOccupiedMask => _presetOccupiedMask;
     public string GetPresetName(int slot) => !string.IsNullOrEmpty(_presetNames[slot]) ? _presetNames[slot] : $"Preset {slot + 1}";
-    public string GetPresetDisplayName(int slot) => IsPresetOccupied(slot) ? GetPresetName(slot) : $"Preset {slot + 1} (empty)";
+    public string GetPresetDisplayName(int slot) => IsPresetOccupied(slot) ? GetPresetName(slot) : $"Preset {slot + 1}";
     public byte PresetStartupMode => _presetStartupMode;
     public byte PresetDefaultSlot => _presetDefaultSlot;
     public bool PresetIncludePins => _presetIncludePins;
+
+    // Multi-device support
+    [ObservableProperty]
+    private ObservableCollection<DSPiDeviceInfo> _availableDevices = new();
+
+    [ObservableProperty]
+    private DSPiDeviceInfo? _selectedDeviceItem;
+
+    private bool _isSwitchingDevice;
+
+    /// <summary>Callback for showing unsaved changes dialog. Registered by MainWindow.</summary>
+    public Func<string?, Task<UnsavedAction>>? ShowUnsavedChangesDialog { get; set; }
 
     partial void OnPlatformChanged(string value)
     {
@@ -294,6 +308,25 @@ public partial class MainViewModel : ObservableObject, IDisposable
             {
                 _dispatcher.TryEnqueue(() => ErrorMessage = _device.ErrorMessage);
             }
+            else if (e.PropertyName == nameof(DspDevice.SelectedDeviceInfo))
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    _isSwitchingDevice = true;
+                    SelectedDeviceItem = _device.SelectedDeviceInfo;
+                    _isSwitchingDevice = false;
+                });
+            }
+        };
+
+        _device.AvailableDevicesChanged += (s, e) =>
+        {
+            _dispatcher.TryEnqueue(() =>
+            {
+                AvailableDevices.Clear();
+                foreach (var d in _device.AvailableDevicesList)
+                    AvailableDevices.Add(d);
+            });
         };
 
         // Status polling timer (60ms interval)
@@ -310,6 +343,41 @@ public partial class MainViewModel : ObservableObject, IDisposable
         // Start device monitoring
         _device.StartMonitoring();
         _pollTimer.Start();
+    }
+
+    [RelayCommand]
+    private async Task SwitchToDevice(DSPiDeviceInfo? device)
+    {
+        if (device == null || device == _device.SelectedDeviceInfo) return;
+
+        if (IsDeviceConnected && PresetsDirty && ShowUnsavedChangesDialog != null)
+        {
+            var summary = GetChangeSummary();
+            var result = await ShowUnsavedChangesDialog(summary);
+
+            switch (result)
+            {
+                case UnsavedAction.Save:
+                    if (ActivePreset >= 0)
+                    {
+                        var saveResult = await SavePreset(ActivePreset, null);
+                        if (saveResult != Usb.PresetResult.Ok)
+                            return; // save failed, abort switch
+                    }
+                    break;
+                case UnsavedAction.Discard:
+                    break;
+                case UnsavedAction.Cancel:
+                    // Revert selection in UI
+                    _isSwitchingDevice = true;
+                    SelectedDeviceItem = _device.SelectedDeviceInfo;
+                    _isSwitchingDevice = false;
+                    return;
+            }
+        }
+
+        _savedSnapshot = null;
+        _ = Task.Run(() => _device.SelectDevice(device));
     }
 
     private void ResetChannelData()

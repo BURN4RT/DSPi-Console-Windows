@@ -4,6 +4,7 @@ using DSPiConsole.Core.Models;
 using DSPiConsole.Models;
 using DSPiConsole.Dialogs;
 using DSPiConsole.Services;
+using DSPiConsole.Usb;
 using DSPiConsole.ViewModels;
 using Microsoft.UI;
 using Microsoft.UI.Composition.SystemBackdrops;
@@ -162,8 +163,24 @@ public sealed partial class MainWindow : Window
         // Right-click context menu on preset combo
         PresetComboBox.RightTapped += OnPresetComboRightTapped;
 
+
         // Right-click preamp slider to reset to 0 dB
         PreampSlider.RightTapped += (s, e) => { e.Handled = true; ViewModel.PreampDb = 0; };
+
+        // Multi-device: register unsaved changes dialog
+        ViewModel.ShowUnsavedChangesDialog = ShowUnsavedChangesDialogAsync;
+
+        // Multi-device: update device selector when available devices change
+        ViewModel.PropertyChanged += (s, e) =>
+        {
+            if (e.PropertyName == nameof(MainViewModel.AvailableDevices) ||
+                e.PropertyName == nameof(MainViewModel.SelectedDeviceItem))
+            {
+                DispatcherQueue.TryEnqueue(UpdateDeviceSelector);
+            }
+        };
+        ViewModel.AvailableDevices.CollectionChanged += (s, e) =>
+            DispatcherQueue.TryEnqueue(UpdateDeviceSelector);
 
         // Initial UI state
         UpdateConnectionStatus();
@@ -1329,11 +1346,20 @@ public sealed partial class MainWindow : Window
                 case nameof(MainViewModel.ErrorMessage):
                     UpdateConnectionStatus();
                     break;
+                case nameof(MainViewModel.SelectedDeviceItem):
+                    UpdateConnectionStatus();
+                    break;
                 case nameof(MainViewModel.PreampDb):
                     UpdatePreampDisplay();
                     break;
                 case nameof(MainViewModel.Bypass):
                     UpdateBypassButton();
+                    break;
+                case nameof(MainViewModel.LoudnessEnabled):
+                    UpdateShortcutIconStates();
+                    break;
+                case nameof(MainViewModel.CrossfeedEnabled):
+                    UpdateShortcutIconStates();
                     break;
                 case nameof(MainViewModel.Status):
                     UpdateMeters();
@@ -1344,8 +1370,9 @@ public sealed partial class MainWindow : Window
 
     private void UpdateConnectionStatus()
     {
-        ConnectionIndicator.Fill = new SolidColorBrush(ViewModel.IsDeviceConnected ? Colors.LimeGreen : Colors.Red);
-        ConnectionStatusText.Text = ViewModel.IsDeviceConnected ? "Connected" : (ViewModel.ErrorMessage ?? "Disconnected");
+        var accentColor = (Windows.UI.Color)Application.Current.Resources["SystemAccentColor"];
+        ConnectionIndicator.Fill = new SolidColorBrush(ViewModel.IsDeviceConnected ? accentColor : Colors.Red);
+        UpdateDeviceSelector();
 
         if (!ViewModel.IsDeviceConnected)
         {
@@ -1376,6 +1403,84 @@ public sealed partial class MainWindow : Window
             FadeCurves(1);
             FadeElement(LegendPanel, 1);
         }
+    }
+
+    // Multi-device UI
+
+    private void UpdateDeviceSelector()
+    {
+        var selected = ViewModel.SelectedDeviceItem
+                       ?? ViewModel.Device.SelectedDeviceInfo;
+
+        if (selected != null)
+            DeviceSelectorText.Text = selected.DisplayName;
+        else
+            DeviceSelectorText.Text = ViewModel.ErrorMessage ?? "Disconnected";
+    }
+
+    private void OnDeviceSelectorPointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        DeviceSelectorBtn.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x20, 0xFF, 0xFF, 0xFF));
+        DeviceSelectorBtn.BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF));
+    }
+
+    private void OnDeviceSelectorPointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        DeviceSelectorBtn.Background = new SolidColorBrush(Colors.Transparent);
+        DeviceSelectorBtn.BorderBrush = new SolidColorBrush(Colors.Transparent);
+    }
+
+    private void OnDeviceSelectorTapped(object sender, TappedRoutedEventArgs e)
+    {
+        var devices = ViewModel.AvailableDevices;
+        if (devices.Count == 0) return;
+
+        var flyout = new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft };
+        var current = ViewModel.Device.SelectedDeviceInfo;
+
+        foreach (var d in devices)
+        {
+            var device = d;
+            var item = new MenuFlyoutItem { Text = device.DisplayName };
+            if (current != null && device.Serial == current.Serial)
+                item.Icon = new FontIcon { Glyph = "\uE73E" };
+            item.Click += (s, args) =>
+            {
+                if (current == null || device.Serial != current.Serial)
+                    ViewModel.SwitchToDeviceCommand.Execute(device);
+            };
+            flyout.Items.Add(item);
+        }
+
+        flyout.ShowAt(DeviceSelectorBtn);
+    }
+
+
+
+    private async Task<UnsavedAction> ShowUnsavedChangesDialogAsync(string? summary)
+    {
+        var message = summary != null
+            ? $"You have unsaved changes to the current preset:\n\n{summary}\n\nSave before switching devices?"
+            : "You have unsaved changes to the current preset.\n\nSave before switching devices?";
+
+        var dialog = new ContentDialog
+        {
+            Title = "Unsaved Changes",
+            Content = message,
+            PrimaryButtonText = "Save",
+            SecondaryButtonText = "Discard",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot
+        };
+
+        var result = await dialog.ShowAsync();
+        return result switch
+        {
+            ContentDialogResult.Primary => UnsavedAction.Save,
+            ContentDialogResult.Secondary => UnsavedAction.Discard,
+            _ => UnsavedAction.Cancel
+        };
     }
 
     private DispatcherTimer? _curveFadeTimer;
@@ -1429,7 +1534,7 @@ public sealed partial class MainWindow : Window
 
     private void UpdateBypassButton()
     {
-        BypassButton.IsChecked = ViewModel.Bypass;
+        UpdateShortcutIconStates();
     }
 
     private void UpdateMeters()
@@ -1508,13 +1613,14 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void OnBypassToggled(object sender, RoutedEventArgs e)
-    {
-        ViewModel.Bypass = BypassButton.IsChecked == true;
-    }
-
     private void OnReconnectClick(object sender, RoutedEventArgs e)
     {
+        ViewModel.ReconnectCommand.Execute(null);
+    }
+
+    private void OnConnectionStatusRightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        e.Handled = true;
         ViewModel.ReconnectCommand.Execute(null);
     }
 
@@ -1734,7 +1840,6 @@ public sealed partial class MainWindow : Window
 
         PresetSection.Visibility = ViewModel.IsDeviceConnected ? Visibility.Visible : Visibility.Collapsed;
 
-        double maxWidth = 0;
         for (int i = 0; i < MainViewModel.PresetSlotCount; i++)
         {
             var displayName = ViewModel.GetPresetDisplayName(i);
@@ -1743,15 +1848,7 @@ public sealed partial class MainWindow : Window
                 Content = displayName,
                 Tag = i
             });
-
-            var tb = new TextBlock { Text = displayName, FontSize = PresetComboBox.FontSize };
-            tb.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
-            if (tb.DesiredSize.Width > maxWidth)
-                maxWidth = tb.DesiredSize.Width;
         }
-
-        // Add padding for the ComboBox chrome (dropdown arrow + internal padding)
-        PresetComboBox.MinWidth = maxWidth + 48;
 
         if (ViewModel.ActivePreset >= 0 && ViewModel.ActivePreset < MainViewModel.PresetSlotCount)
             PresetComboBox.SelectedIndex = ViewModel.ActivePreset;
@@ -1759,6 +1856,18 @@ public sealed partial class MainWindow : Window
             PresetComboBox.SelectedIndex = -1;
 
         _isUpdatingPresetCombo = false;
+    }
+
+    private void OnPresetComboPointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        PresetComboBox.BorderBrush = (Brush)Application.Current.Resources["ComboBoxBorderBrush"];
+        PresetComboBox.Background = (Brush)Application.Current.Resources["ComboBoxBackground"];
+    }
+
+    private void OnPresetComboPointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        PresetComboBox.BorderBrush = new SolidColorBrush(Colors.Transparent);
+        PresetComboBox.Background = new SolidColorBrush(Colors.Transparent);
     }
 
     private async void OnPresetSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2286,28 +2395,164 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (_matrixMixerWindow == null)
+        if (_matrixMixerWindow != null)
         {
-            _matrixMixerWindow = new MatrixMixerWindow(ViewModel);
-            _matrixMixerWindow.Closed += (s, e) => _matrixMixerWindow = null;
+            _matrixMixerWindow.Close();
+            return;
         }
+
+        _matrixMixerWindow = new MatrixMixerWindow(ViewModel);
+        _matrixMixerWindow.Closed += (s, e) => { _matrixMixerWindow = null; UpdateShortcutIconStates(); };
         _matrixMixerWindow.Activate();
+        UpdateShortcutIconStates();
     }
 
     private void OnStatsClick(object sender, RoutedEventArgs e)
     {
-        if (_statsWindow == null)
+        if (_statsWindow != null)
         {
-            _statsWindow = new StatsWindow(ViewModel.Device);
-            _statsWindow.Closed += (s, e) => _statsWindow = null;
+            _statsWindow.Close();
+            return;
         }
+
+        _statsWindow = new StatsWindow(ViewModel.Device);
+        _statsWindow.Closed += (s, e) => { _statsWindow = null; UpdateShortcutIconStates(); };
         _statsWindow.Activate();
+        UpdateShortcutIconStates();
     }
 
     private async void OnSettingsClick(object sender, RoutedEventArgs e)
     {
         var dialog = new SettingsDialog(ViewModel) { XamlRoot = Content.XamlRoot };
         await dialog.ShowAsync();
+    }
+
+    // Sidebar shortcut icon tap handlers
+
+    private void OnSidebarMatrixMixerTapped(object sender, TappedRoutedEventArgs e)
+    {
+        OnMatrixMixerClick(sender, new RoutedEventArgs());
+    }
+
+    private void OnSidebarSettingsTapped(object sender, TappedRoutedEventArgs e)
+    {
+        OnSettingsClick(sender, new RoutedEventArgs());
+    }
+
+    private void OnSidebarLoudnessTapped(object sender, TappedRoutedEventArgs e)
+    {
+        ViewModel.LoudnessEnabled = !ViewModel.LoudnessEnabled;
+    }
+
+    private void OnSidebarLoudnessRightClick(object sender, RightTappedRoutedEventArgs e)
+    {
+        OnLoudnessClick(sender, new RoutedEventArgs());
+        e.Handled = true;
+    }
+
+    private void OnSidebarCrossfeedTapped(object sender, TappedRoutedEventArgs e)
+    {
+        ViewModel.CrossfeedEnabled = !ViewModel.CrossfeedEnabled;
+    }
+
+    private void OnSidebarCrossfeedRightClick(object sender, RightTappedRoutedEventArgs e)
+    {
+        OnCrossfeedClick(sender, new RoutedEventArgs());
+        e.Handled = true;
+    }
+
+    private void OnSidebarStatsTapped(object sender, TappedRoutedEventArgs e)
+    {
+        OnStatsClick(sender, new RoutedEventArgs());
+    }
+
+    private void OnSidebarBypassTapped(object sender, TappedRoutedEventArgs e)
+    {
+        ViewModel.Bypass = !ViewModel.Bypass;
+    }
+
+    // Shortcut icon illumination
+
+    private static readonly Windows.UI.Color _iconDimColor = Windows.UI.Color.FromArgb(0xFF, 0x88, 0x88, 0x88);
+    private static readonly Windows.UI.Color _iconHoverColor = Windows.UI.Color.FromArgb(0xFF, 0xBB, 0xBB, 0xBB);
+    private static readonly Windows.UI.Color _iconActiveColor = Windows.UI.Color.FromArgb(0xFF, 0xE0, 0xE0, 0xE0);
+    private static readonly Windows.UI.Color _iconBypassColor = Windows.UI.Color.FromArgb(0xFF, 0xF0, 0x50, 0x50);
+
+    private void UpdateShortcutIconStates()
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            SetIconColor(MatrixMixerIcon, _matrixMixerWindow != null ? _iconActiveColor : _iconDimColor);
+            SetIconColor(SettingsIcon, _iconDimColor);
+            SetIconColor(LoudnessIcon, ViewModel.LoudnessEnabled ? _iconActiveColor : _iconDimColor);
+            SetIconColor(CrossfeedIcon, ViewModel.CrossfeedEnabled ? _iconActiveColor : _iconDimColor);
+            SetIconColor(StatsIcon, _statsWindow != null ? _iconActiveColor : _iconDimColor);
+            SetIconColor(BypassIcon, ViewModel.Bypass ? _iconBypassColor : _iconDimColor);
+        });
+    }
+
+    private static void SetIconColor(FontIcon icon, Windows.UI.Color color)
+    {
+        icon.Foreground = new SolidColorBrush(color);
+    }
+
+    private bool IsShortcutIconActive(FontIcon icon)
+    {
+        if (icon == MatrixMixerIcon) return _matrixMixerWindow != null;
+        if (icon == LoudnessIcon) return ViewModel.LoudnessEnabled;
+        if (icon == CrossfeedIcon) return ViewModel.CrossfeedEnabled;
+        if (icon == StatsIcon) return _statsWindow != null;
+        if (icon == BypassIcon) return ViewModel.Bypass;
+        return false;
+    }
+
+    private FontIcon? GetIconFromBorder(object sender)
+    {
+        if (sender is Border border && border.Child is FontIcon icon)
+            return icon;
+        return null;
+    }
+
+    private void OnShortcutIconPointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        var icon = GetIconFromBorder(sender);
+        if (icon != null && !IsShortcutIconActive(icon))
+        {
+            AnimateIconForeground(icon, _iconHoverColor, TimeSpan.FromMilliseconds(150));
+        }
+    }
+
+    private void OnShortcutIconPointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        var icon = GetIconFromBorder(sender);
+        if (icon != null && !IsShortcutIconActive(icon))
+        {
+            AnimateIconForeground(icon, _iconDimColor, TimeSpan.FromMilliseconds(200));
+        }
+    }
+
+    private void AnimateIconForeground(FontIcon icon, Windows.UI.Color targetColor, TimeSpan duration)
+    {
+        // Ensure icon has its own mutable brush instance for animation
+        if (icon.Foreground is not SolidColorBrush currentBrush || currentBrush.Dispatcher == null)
+        {
+            var existingColor = (icon.Foreground as SolidColorBrush)?.Color ?? _iconDimColor;
+            currentBrush = new SolidColorBrush(existingColor);
+            icon.Foreground = currentBrush;
+        }
+
+        var animation = new ColorAnimation
+        {
+            To = targetColor,
+            Duration = new Duration(duration),
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseInOut }
+        };
+
+        var storyboard = new Storyboard();
+        storyboard.Children.Add(animation);
+        Storyboard.SetTarget(animation, currentBrush);
+        Storyboard.SetTargetProperty(animation, "Color");
+        storyboard.Begin();
     }
 
     private async void OnAutoEQUpdateClick(object sender, RoutedEventArgs e)

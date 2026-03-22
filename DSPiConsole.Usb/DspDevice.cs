@@ -130,6 +130,14 @@ public struct PresetDirectoryInfo
 }
 
 /// <summary>
+/// Identifies a discovered DSPi device without holding an open handle.
+/// </summary>
+public record DSPiDeviceInfo(string Serial, string DevicePath)
+{
+    public string DisplayName => Serial.Length >= 8 ? $"DSPi ({Serial[^8..]})" : "DSPi";
+}
+
+/// <summary>
 /// EQ parameter packet structure matching firmware EqParamPacket.
 /// Used for control transfer data payload (13 bytes).
 /// Channel and band are specified in wValue/wIndex of the setup packet.
@@ -207,6 +215,12 @@ public partial class DspDevice : ObservableObject, IDisposable
     private readonly System.Timers.Timer _statusPollTimer;
     private bool _disposed;
 
+    // Multi-device tracking
+    private List<DSPiDeviceInfo> _availableDevices = new();
+    private DSPiDeviceInfo? _selectedDeviceInfo;
+    private string? _lastSelectedSerial;
+    private string? _openDeviceSerial; // serial of the currently open _device handle
+
     /// <summary>
     /// Number of audio channels (set after GetDeviceInfo). RP2040=7, RP2350=11.
     /// </summary>
@@ -221,15 +235,31 @@ public partial class DspDevice : ObservableObject, IDisposable
     [ObservableProperty]
     private SystemStatus? _currentStatus;
 
+    /// <summary>All currently connected DSPi devices.</summary>
+    public IReadOnlyList<DSPiDeviceInfo> AvailableDevicesList => _availableDevices;
+
+    /// <summary>The currently selected/active device.</summary>
+    public DSPiDeviceInfo? SelectedDeviceInfo
+    {
+        get => _selectedDeviceInfo;
+        private set
+        {
+            if (_selectedDeviceInfo == value) return;
+            _selectedDeviceInfo = value;
+            OnPropertyChanged(nameof(SelectedDeviceInfo));
+        }
+    }
+
     public event EventHandler? DeviceConnected;
     public event EventHandler? DeviceDisconnected;
     public event EventHandler<SystemStatus>? StatusUpdated;
+    public event EventHandler? AvailableDevicesChanged;
 
     public DspDevice()
     {
-        // Poll for device every 500ms
+        // Poll for devices every 500ms
         _pollTimer = new System.Timers.Timer(500);
-        _pollTimer.Elapsed += (_, _) => CheckForDevice();
+        _pollTimer.Elapsed += (_, _) => ScanDevices();
         _pollTimer.AutoReset = true;
 
         // Poll for status every 100ms when connected
@@ -241,7 +271,7 @@ public partial class DspDevice : ObservableObject, IDisposable
     public void StartMonitoring()
     {
         _pollTimer.Start();
-        CheckForDevice();
+        ScanDevices();
     }
 
     public void StopMonitoring()
@@ -249,91 +279,208 @@ public partial class DspDevice : ObservableObject, IDisposable
         _pollTimer.Stop();
     }
 
-    private void CheckForDevice()
+    /// <summary>
+    /// Read the serial number from a temporarily opened USB device.
+    /// </summary>
+    private static string? ReadSerialFromDevice(UsbDevice tempDevice)
+    {
+        var setupPacket = new UsbSetupPacket(RequestTypeIn, VendorCommands.GetSerial, 0, VendorInterfaceNumber, 16);
+        var buffer = new byte[16];
+        if (tempDevice.ControlTransfer(ref setupPacket, buffer, 16, out int transferred) && transferred > 0)
+            return System.Text.Encoding.ASCII.GetString(buffer, 0, transferred).TrimEnd('\0');
+        return null;
+    }
+
+    /// <summary>
+    /// Scan for all connected DSPi devices, update the available list,
+    /// and auto-select/reconnect as needed.
+    /// </summary>
+    private void ScanDevices()
     {
         if (_disposed) return;
 
-        lock (_lock)
+        try
         {
-            if (_device != null && IsConnected)
+            // Phase 1: Collect all matching USB registry entries
+            var allRegs = UsbDevice.AllDevices
+                .Cast<UsbRegistry>()
+                .Where(r => r.Vid == VendorId && r.Pid == ProductId)
+                .ToList();
+
+            // Phase 2: Build current device list with serials
+            var currentDevices = new List<DSPiDeviceInfo>();
+            bool addedOpenDevice = false;
+            foreach (var reg in allRegs)
             {
-                // Verify the device is still present in the system
-                bool stillPresent = UsbDevice.AllDevices
-                    .Any(r => r.Vid == VendorId && r.Pid == ProductId);
-                if (stillPresent) return;
+                var devicePath = reg.SymbolicName ?? reg.DevicePath ?? "";
 
-                // Device was removed
-                HandleDisconnect();
-                return;
-            }
-
-            try
-            {
-                // First try the standard method
-                var finder = new UsbDeviceFinder(VendorId, ProductId);
-                _device = UsbDevice.OpenUsbDevice(finder);
-
-                // If that fails, try opening via registry
-                if (_device == null)
+                // Try briefly opening to read serial
+                try
                 {
-                    foreach (UsbRegistry reg in UsbDevice.AllDevices)
+                    if (reg.Open(out var tempDevice))
                     {
-                        if (reg.Vid == VendorId && reg.Pid == ProductId)
+                        try
                         {
-                            // Try to open via registry entry
-                            if (reg.Open(out _device))
+                            if (tempDevice is IUsbDevice wholeTmp)
                             {
-                                break;
+                                wholeTmp.SetConfiguration(1);
+                                wholeTmp.ClaimInterface(VendorInterfaceNumber);
                             }
-                            else
+                            var serial = ReadSerialFromDevice(tempDevice);
+                            if (!string.IsNullOrEmpty(serial))
                             {
-                                // Get more info about why it failed
-                                var deviceType = reg.GetType().Name;
-                                ErrorMessage = $"Device found ({deviceType}) but Open() failed. Run Zadig, select Interface 2, install WinUSB.";
+                                currentDevices.Add(new DSPiDeviceInfo(serial, devicePath));
                             }
                         }
+                        finally
+                        {
+                            if (tempDevice is IUsbDevice wholeTmp2)
+                                wholeTmp2.ReleaseInterface(VendorInterfaceNumber);
+                            tempDevice.Close();
+                        }
+                    }
+                    else if (_device != null && IsConnected && _selectedDeviceInfo != null && !addedOpenDevice)
+                    {
+                        // Open failed — likely because this is our already-open device
+                        currentDevices.Add(_selectedDeviceInfo);
+                        addedOpenDevice = true;
+                    }
+                }
+                catch
+                {
+                    // Device busy — if we have an open device, assume it's this one
+                    if (_device != null && IsConnected && _selectedDeviceInfo != null && !addedOpenDevice)
+                    {
+                        currentDevices.Add(_selectedDeviceInfo);
+                        addedOpenDevice = true;
+                    }
+                }
+            }
+
+            // Phase 3: Detect changes
+            var oldSerials = _availableDevices.Select(d => d.Serial).ToHashSet();
+            var newSerials = currentDevices.Select(d => d.Serial).ToHashSet();
+            bool listChanged = !oldSerials.SetEquals(newSerials);
+
+            if (listChanged)
+            {
+                _availableDevices = currentDevices;
+                AvailableDevicesChanged?.Invoke(this, EventArgs.Empty);
+            }
+
+            // Phase 4: Handle selected device removal
+            if (_selectedDeviceInfo != null && !newSerials.Contains(_selectedDeviceInfo.Serial))
+            {
+                lock (_lock)
+                {
+                    HandleDisconnect();
+                }
+                // Preserve serial for auto-reconnect but clear selection if no devices left
+                if (currentDevices.Count == 0)
+                {
+                    SelectedDeviceInfo = null;
+                }
+            }
+
+            // Phase 5: Verify currently connected device is still present
+            if (_device != null && IsConnected)
+            {
+                if (!allRegs.Any())
+                {
+                    lock (_lock) { HandleDisconnect(); }
+                }
+                return; // Already connected to a device, no auto-select needed
+            }
+
+            // Phase 6: Auto-select / auto-reconnect
+            if (_device == null && currentDevices.Count > 0)
+            {
+                // Try auto-reconnect to previously selected device
+                var reconnectTarget = _lastSelectedSerial != null
+                    ? currentDevices.FirstOrDefault(d => d.Serial == _lastSelectedSerial)
+                    : null;
+
+                var target = reconnectTarget ?? currentDevices[0];
+                OpenDevice(target);
+            }
+            else if (currentDevices.Count == 0)
+            {
+                if (ErrorMessage == null || ErrorMessage == "Disconnected")
+                {
+                    var allDevices = UsbDevice.AllDevices;
+                    if (allDevices.Count == 0)
+                        ErrorMessage = "No USB devices visible to LibUsbDotNet. Install libusb-win32 filter driver.";
+                    else
+                        ErrorMessage = "Disconnected";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Don't let scan errors kill the timer
+            System.Diagnostics.Debug.WriteLine($"ScanDevices error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Open and connect to a specific device by its info.
+    /// </summary>
+    private void OpenDevice(DSPiDeviceInfo deviceInfo)
+    {
+        lock (_lock)
+        {
+            try
+            {
+                // Close any existing connection
+                if (_device != null)
+                {
+                    HandleDisconnect();
+                }
+
+                // Find and open the device matching this serial
+                UsbDevice? opened = null;
+                foreach (UsbRegistry reg in UsbDevice.AllDevices)
+                {
+                    if (reg.Vid != VendorId || reg.Pid != ProductId) continue;
+
+                    if (reg.Open(out var tempDevice))
+                    {
+                        if (tempDevice is IUsbDevice wholeTmp)
+                        {
+                            wholeTmp.SetConfiguration(1);
+                            wholeTmp.ClaimInterface(VendorInterfaceNumber);
+                        }
+
+                        var serial = ReadSerialFromDevice(tempDevice);
+                        if (serial == deviceInfo.Serial)
+                        {
+                            opened = tempDevice;
+                            break;
+                        }
+
+                        // Not the one we want, close it
+                        if (tempDevice is IUsbDevice wholeTmp2)
+                            wholeTmp2.ReleaseInterface(VendorInterfaceNumber);
+                        tempDevice.Close();
                     }
                 }
 
-                if (_device == null)
+                if (opened == null)
                 {
-                    if (IsConnected)
-                    {
-                        HandleDisconnect();
-                    }
-                    else if (ErrorMessage == null || ErrorMessage == "Disconnected")
-                    {
-                        // Only show detailed diagnostics if we've never connected
-                        var allDevices = UsbDevice.AllDevices;
-                        if (allDevices.Count == 0)
-                        {
-                            ErrorMessage = "No USB devices visible to LibUsbDotNet. Install libusb-win32 filter driver.";
-                        }
-                        else
-                        {
-                            bool found = allDevices.Any(r => r.Vid == VendorId && r.Pid == ProductId);
-                            if (!found)
-                            {
-                                ErrorMessage = "Disconnected";
-                            }
-                        }
-                    }
+                    ErrorMessage = "Failed to open device";
                     return;
                 }
 
-                // For whole USB devices, set configuration
-                if (_device is IUsbDevice wholeDevice)
-                {
-                    wholeDevice.SetConfiguration(1);
-                    wholeDevice.ClaimInterface(VendorInterfaceNumber);
-                }
+                _device = opened;
+                _openDeviceSerial = deviceInfo.Serial;
+                _selectedDeviceInfo = deviceInfo;
+                _lastSelectedSerial = deviceInfo.Serial;
+                SelectedDeviceInfo = deviceInfo;
 
                 IsConnected = true;
                 ErrorMessage = null;
 
-                // Start status polling
                 _statusPollTimer.Start();
-
                 DeviceConnected?.Invoke(this, EventArgs.Empty);
             }
             catch (Exception ex)
@@ -341,8 +488,18 @@ public partial class DspDevice : ObservableObject, IDisposable
                 ErrorMessage = $"Error: {ex.Message}";
                 _device?.Close();
                 _device = null;
+                _openDeviceSerial = null;
             }
         }
+    }
+
+    /// <summary>
+    /// Switch to a different connected device. Called from ViewModel after unsaved changes check.
+    /// </summary>
+    public void SelectDevice(DSPiDeviceInfo device)
+    {
+        if (device.Serial == _openDeviceSerial && IsConnected) return;
+        OpenDevice(device);
     }
 
     /// <summary>
@@ -408,6 +565,7 @@ public partial class DspDevice : ObservableObject, IDisposable
 
         _device?.Close();
         _device = null;
+        _openDeviceSerial = null;
 
         IsConnected = false;
 
@@ -432,7 +590,7 @@ public partial class DspDevice : ObservableObject, IDisposable
         {
             HandleDisconnect();
         }
-        CheckForDevice();
+        ScanDevices();
     }
 
     /// <summary>
