@@ -123,6 +123,7 @@ public sealed partial class MainWindow : Window
             if (_selectedChannel != null && !_isScrollAdjusting && !_isUpdatingGain && !_isUpdatingDelay)
                 ShowChannelEditor(_selectedChannel);
         };
+        ViewModel.BypassChanged += (_, _) => BodePlot.Invalidate();
         AppSettings.Instance.SettingsChanged += (_, _) =>
         {
             if (_graphWindow == null) return;

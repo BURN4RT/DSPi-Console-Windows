@@ -16,9 +16,17 @@ public sealed partial class SettingsDialog : ContentDialog
     private readonly MainViewModel _vm;
 
     // Per-row tracking for live pin assignment
-    private readonly List<(PinOutput output, ComboBox combo, Border badge)> _pinRows = new();
+    private readonly List<(PinOutput output, ComboBox typePicker, ComboBox gpioPicker, Border badge)> _outputRows = new();
     private TextBlock? _statusText;
     private bool _suppressSelectionChanged;
+
+    // I2S configuration controls
+    private ComboBox? _bckPinCombo;
+    private ToggleSwitch? _mckToggle;
+    private ComboBox? _mckPinCombo;
+    private ComboBox? _mckMultiplierCombo;
+    private TextBlock? _lrckSubtitle;
+    private TextBlock? _mckMultiplierCaption;
 
     public SettingsDialog(MainViewModel vm)
     {
@@ -202,30 +210,30 @@ public sealed partial class SettingsDialog : ContentDialog
 
     // --- Pin Assignment table ---
 
-    private record PinOutput(int Id, string Name, string Detail, string Icon, byte DefaultPin, Color Color);
+    private record PinOutput(int Id, string Name, string Detail, string Icon, byte DefaultPin, Color Color, int SlotIndex);
 
     private static readonly PinOutput[] PinOutputsRp2350 =
     [
-        new(0, "S/PDIF 1", "Stereo pair 1 (L/R)", "\uE767", 6,
-            Color.FromArgb(255, 69, 194, 163)),   // Teal
-        new(1, "S/PDIF 2", "Stereo pair 2 (L/R)", "\uE767", 7,
-            Color.FromArgb(255, 240, 196, 89)),    // Yellow
-        new(2, "S/PDIF 3", "Stereo pair 3 (L/R)", "\uE767", 8,
-            Color.FromArgb(255, 89, 140, 242)),    // Blue
-        new(3, "S/PDIF 4", "Stereo pair 4 (L/R)", "\uE767", 9,
-            Color.FromArgb(255, 217, 115, 140)),   // Pink
-        new(4, "PDM",      "Subwoofer output",     "\uE9B1", 10,
-            Color.FromArgb(255, 186, 135, 243)),   // Purple
+        new(0, "Output 1", "OUT 1/2", "\uE767", 6,
+            Color.FromArgb(255, 69, 194, 163), 0),   // Teal
+        new(1, "Output 2", "OUT 3/4", "\uE767", 7,
+            Color.FromArgb(255, 240, 196, 89), 1),    // Yellow
+        new(2, "Output 3", "OUT 5/6", "\uE767", 8,
+            Color.FromArgb(255, 89, 140, 242), 2),    // Blue
+        new(3, "Output 4", "OUT 7/8", "\uE767", 9,
+            Color.FromArgb(255, 217, 115, 140), 3),   // Pink
+        new(4, "PDM",      "SUB OUT", "\uE9B1", 10,
+            Color.FromArgb(255, 186, 135, 243), -1),  // Purple
     ];
 
     private static readonly PinOutput[] PinOutputsRp2040 =
     [
-        new(0, "S/PDIF 1", "Stereo pair 1 (L/R)", "\uE767", 6,
-            Color.FromArgb(255, 69, 194, 163)),
-        new(1, "S/PDIF 2", "Stereo pair 2 (L/R)", "\uE767", 7,
-            Color.FromArgb(255, 240, 196, 89)),
-        new(2, "PDM",      "Subwoofer output",     "\uE9B1", 10,
-            Color.FromArgb(255, 186, 135, 243)),
+        new(0, "Output 1", "OUT 1/2", "\uE767", 6,
+            Color.FromArgb(255, 69, 194, 163), 0),
+        new(1, "Output 2", "OUT 3/4", "\uE767", 7,
+            Color.FromArgb(255, 240, 196, 89), 1),
+        new(2, "PDM",      "SUB OUT", "\uE9B1", 10,
+            Color.FromArgb(255, 186, 135, 243), -1),
     ];
 
     private static readonly byte[] ValidPins =
@@ -241,7 +249,7 @@ public sealed partial class SettingsDialog : ContentDialog
     /// </summary>
     private int PinOutputIdToMatrixIndex(PinOutput output)
     {
-        if (output.Name == "PDM")
+        if (output.SlotIndex < 0) // PDM
             return _vm.ActiveOutputs.Count - 1;
         return output.Id * 2;
     }
@@ -251,73 +259,32 @@ public sealed partial class SettingsDialog : ContentDialog
 
     private void BuildPinAssignmentTable()
     {
-        var allOutputs = GetAllPinOutputs();
+        var outputs = GetAllPinOutputs().ToList();
 
-        // Filter to only enabled outputs
-        var outputs = allOutputs
-            .Where(o => _vm.IsOutputEnabled(PinOutputIdToMatrixIndex(o)))
-            .ToList();
-
-        if (outputs.Count == 0)
-        {
-            HardwarePanel.Children.Add(new TextBlock
-            {
-                Text = "No outputs enabled. Enable outputs in the Matrix Mixer to configure pin assignment.",
-                FontSize = 12,
-                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 8, 0, 0)
-            });
-            return;
-        }
-
-        // Fetch current pin values from device on a background thread, then populate UI
-        var pinValues = new Dictionary<int, byte>();
+        // Fetch current pin and I2S values from device on a background thread, then populate UI
         _ = Task.Run(() =>
         {
             foreach (var output in outputs)
                 _vm.FetchOutputPin(output.Id);
+            // Fetch I2S state
+            int slotCount = _vm.NumOutputSlots;
+            for (int s = 0; s < slotCount; s++)
+                _vm.FetchOutputSlotType(s);
+            _vm.FetchI2SBckPin();
+            _vm.FetchMckEnable();
+            _vm.FetchMckPin();
+            _vm.FetchMckMultiplier();
         }).ContinueWith(_ =>
         {
-            DispatcherQueue.TryEnqueue(() => PopulatePinValues(outputs));
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                PopulatePinValues(outputs);
+                PopulateI2SValues();
+            });
         });
 
-        // Header row: "Pin Assignment" label + "Reset to Defaults" button
-        var header = new Grid();
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var headerIcon = new FontIcon
-        {
-            Glyph = "\uE950", // CPU icon
-            FontSize = 14,
-            Margin = new Thickness(0, 0, 6, 0),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        var headerText = new TextBlock
-        {
-            Text = "Pin Assignment",
-            FontSize = 13,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        var headerLeft = new StackPanel { Orientation = Orientation.Horizontal };
-        headerLeft.Children.Add(headerIcon);
-        headerLeft.Children.Add(headerText);
-        Grid.SetColumn(headerLeft, 0);
-        header.Children.Add(headerLeft);
-
-        var resetBtn = new HyperlinkButton
-        {
-            Content = "Reset to Defaults",
-            FontSize = 11,
-            Padding = new Thickness(4, 2, 4, 2)
-        };
-        resetBtn.Click += OnResetToDefaults;
-        Grid.SetColumn(resetBtn, 1);
-        header.Children.Add(resetBtn);
-
-        HardwarePanel.Children.Add(header);
+        // ── Output Assignment section ──
+        BuildSectionHeader("Output Assignment", "\uE950", OnResetToDefaults);
 
         // Separator
         HardwarePanel.Children.Add(new Border
@@ -342,17 +309,62 @@ public sealed partial class SettingsDialog : ContentDialog
             Visibility = Visibility.Collapsed
         };
         HardwarePanel.Children.Add(_statusText);
+
+        // ── I2S Configuration section ──
+        BuildI2SConfigSection();
+    }
+
+    private void BuildSectionHeader(string title, string glyph, RoutedEventHandler? resetHandler = null)
+    {
+        var header = new Grid();
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var headerIcon = new FontIcon
+        {
+            Glyph = glyph,
+            FontSize = 14,
+            Margin = new Thickness(0, 0, 6, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var headerText = new TextBlock
+        {
+            Text = title,
+            FontSize = 13,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var headerLeft = new StackPanel { Orientation = Orientation.Horizontal };
+        headerLeft.Children.Add(headerIcon);
+        headerLeft.Children.Add(headerText);
+        Grid.SetColumn(headerLeft, 0);
+        header.Children.Add(headerLeft);
+
+        if (resetHandler != null)
+        {
+            var resetBtn = new HyperlinkButton
+            {
+                Content = "Reset to Defaults",
+                FontSize = 11,
+                Padding = new Thickness(4, 2, 4, 2)
+            };
+            resetBtn.Click += resetHandler;
+            Grid.SetColumn(resetBtn, 1);
+            header.Children.Add(resetBtn);
+        }
+
+        HardwarePanel.Children.Add(header);
     }
 
     private void PopulatePinValues(List<PinOutput> outputs)
     {
         _suppressSelectionChanged = true;
-        foreach (var (output, combo, badge) in _pinRows)
+        foreach (var (output, _, gpioPicker, badge) in _outputRows)
         {
             byte currentPin = _vm.GetOutputPinValue(output.Id);
             var idx = Array.IndexOf(ValidPins, currentPin);
             if (idx >= 0)
-                combo.SelectedIndex = idx;
+                gpioPicker.SelectedIndex = idx;
 
             UpdateBadgeVisibility(badge, currentPin, output.DefaultPin);
             UpdateComboConflicts(output);
@@ -360,58 +372,117 @@ public sealed partial class SettingsDialog : ContentDialog
         _suppressSelectionChanged = false;
     }
 
+    private void PopulateI2SValues()
+    {
+        _suppressSelectionChanged = true;
+
+        // Output type pickers
+        foreach (var (output, typePicker, _, _) in _outputRows)
+        {
+            if (output.SlotIndex >= 0)
+            {
+                var type = _vm.GetOutputSlotType(output.SlotIndex);
+                typePicker.SelectedIndex = type == OutputSlotType.I2S ? 1 : 0;
+            }
+        }
+
+        // BCK pin
+        if (_bckPinCombo != null)
+        {
+            var idx = Array.IndexOf(ValidPins, _vm.I2SBckPin);
+            if (idx >= 0) _bckPinCombo.SelectedIndex = idx;
+        }
+
+        // MCK toggle
+        if (_mckToggle != null)
+            _mckToggle.IsOn = _vm.MckEnabled;
+
+        // MCK pin
+        if (_mckPinCombo != null)
+        {
+            var idx = Array.IndexOf(ValidPins, _vm.MckPin);
+            if (idx >= 0) _mckPinCombo.SelectedIndex = idx;
+        }
+
+        // MCK multiplier
+        if (_mckMultiplierCombo != null)
+            _mckMultiplierCombo.SelectedIndex = _vm.MckMultiplier == 256 ? 1 : 0;
+
+        _suppressSelectionChanged = false;
+
+        UpdateI2SConstraints();
+    }
+
     private UIElement BuildPinRow(PinOutput output)
     {
-        // Main row grid: Icon | Name+Detail | DEFAULT badge | GPIO picker
+        // Main row grid: Icon | Name+Detail | Type picker | DEFAULT badge | GPIO picker
         var row = new Grid
         {
             Padding = new Thickness(0, 6, 0, 6),
         };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });       // icon
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // name+detail
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });       // default badge
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });       // name+detail
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });       // type picker
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // default badge (centered)
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });       // gpio picker
 
-        // Colored icon
-        var icon = new FontIcon
+        // Colored dot
+        var dot = new Ellipse
         {
-            Glyph = output.Icon,
-            FontSize = 14,
-            Foreground = new SolidColorBrush(output.Color),
+            Width = 6,
+            Height = 6,
+            Fill = new SolidColorBrush(output.Color),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 10, 0)
         };
-        Grid.SetColumn(icon, 0);
-        row.Children.Add(icon);
+        Grid.SetColumn(dot, 0);
+        row.Children.Add(dot);
 
-        // Name + detail
-        var nameStack = new StackPanel
-        {
-            Spacing = 1,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        nameStack.Children.Add(new TextBlock
-        {
-            Text = output.Name,
-            FontSize = 13
-        });
-        nameStack.Children.Add(new TextBlock
+        // Label
+        var label = new TextBlock
         {
             Text = output.Detail,
-            FontSize = 10,
-            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
-        });
-        Grid.SetColumn(nameStack, 1);
-        row.Children.Add(nameStack);
+            FontSize = 12,
+            MinWidth = 54,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 20, 0)
+        };
+        Grid.SetColumn(label, 1);
+        row.Children.Add(label);
 
-        // DEFAULT badge
+        // Type picker (S/PDIF | I2S or PDM)
+        var typePicker = new ComboBox
+        {
+            Width = 90,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(15, 0, 0, 0)
+        };
+        if (output.SlotIndex >= 0)
+        {
+            typePicker.Items.Add(new ComboBoxItem { Content = "S/PDIF", Tag = OutputSlotType.Spdif });
+            typePicker.Items.Add(new ComboBoxItem { Content = "I2S", Tag = OutputSlotType.I2S });
+            typePicker.SelectedIndex = 0; // Default, overwritten by PopulateI2SValues
+            typePicker.Tag = output;
+            typePicker.SelectionChanged += OnOutputTypeChanged;
+        }
+        else
+        {
+            typePicker.Items.Add(new ComboBoxItem { Content = "PDM" });
+            typePicker.SelectedIndex = 0;
+            typePicker.IsEnabled = false;
+        }
+        Grid.SetColumn(typePicker, 2);
+        row.Children.Add(typePicker);
+
+        // DEFAULT badge (centered in Star spacer column, nudged right)
         var badge = new Border
         {
             Background = (Brush)Application.Current.Resources["ControlFillColorSecondaryBrush"],
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(6, 2, 6, 2),
+            HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(8, 0, 8, 0),
+            Margin = new Thickness(10, 0, 0, 0),
             Visibility = Visibility.Collapsed,
             Child = new TextBlock
             {
@@ -421,32 +492,59 @@ public sealed partial class SettingsDialog : ContentDialog
                 Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
             }
         };
-        Grid.SetColumn(badge, 2);
+        Grid.SetColumn(badge, 3);
         row.Children.Add(badge);
 
         // GPIO picker (ComboBox)
-        var combo = new ComboBox
+        var gpioPicker = new ComboBox
         {
             Width = 120,
             VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(12, 0, 0, 0),
             Tag = output
         };
         foreach (var pin in ValidPins)
         {
-            combo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
+            gpioPicker.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
         }
         // Select the default pin initially (will be overwritten by PopulatePinValues)
         var defaultIndex = Array.IndexOf(ValidPins, output.DefaultPin);
-        if (defaultIndex >= 0) combo.SelectedIndex = defaultIndex;
+        if (defaultIndex >= 0) gpioPicker.SelectedIndex = defaultIndex;
 
-        combo.SelectionChanged += OnPinSelectionChanged;
+        gpioPicker.SelectionChanged += OnPinSelectionChanged;
 
-        Grid.SetColumn(combo, 3);
-        row.Children.Add(combo);
+        Grid.SetColumn(gpioPicker, 4);
+        row.Children.Add(gpioPicker);
 
-        _pinRows.Add((output, combo, badge));
+        _outputRows.Add((output, typePicker, gpioPicker, badge));
 
         return row;
+    }
+
+    private async void OnOutputTypeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressSelectionChanged) return;
+        if (sender is not ComboBox combo || combo.Tag is not PinOutput output) return;
+        if (combo.SelectedItem is not ComboBoxItem item || item.Tag is not OutputSlotType newType) return;
+
+        ClearStatus();
+
+        var status = await Task.Run(() => _vm.SetOutputSlotType(output.SlotIndex, newType));
+
+        if (status == PinConfigResult.Success)
+        {
+            UpdateI2SConstraints();
+            RefreshAllConflicts();
+            string typeName = newType == OutputSlotType.I2S ? "I2S" : "S/PDIF";
+            ShowStatus($"{output.Name} → {typeName}", isError: false);
+            return;
+        }
+
+        // Revert on error
+        _suppressSelectionChanged = true;
+        combo.SelectedIndex = _vm.GetOutputSlotType(output.SlotIndex) == OutputSlotType.I2S ? 1 : 0;
+        _suppressSelectionChanged = false;
+        ShowStatus(GetI2SErrorMessage(status, output.Name), isError: true);
     }
 
     private async void OnPinSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -462,7 +560,7 @@ public sealed partial class SettingsDialog : ContentDialog
         if (status == PinConfigResult.Success)
         {
             // Update badge and conflict display for all rows
-            var row = _pinRows.FirstOrDefault(r => r.output.Id == output.Id);
+            var row = _outputRows.FirstOrDefault(r => r.output.Id == output.Id);
             if (row != default)
                 UpdateBadgeVisibility(row.badge, newPin, output.DefaultPin);
             RefreshAllConflicts();
@@ -470,7 +568,7 @@ public sealed partial class SettingsDialog : ContentDialog
             return;
         }
 
-        if (status == PinConfigResult.OutputActive && output.Name == "PDM")
+        if (status == PinConfigResult.OutputActive && output.SlotIndex < 0) // PDM
         {
             // Auto-cycle: disable PDM, set pin, re-enable
             var cycleStatus = await Task.Run(() =>
@@ -484,7 +582,7 @@ public sealed partial class SettingsDialog : ContentDialog
 
             if (cycleStatus == PinConfigResult.Success)
             {
-                var row = _pinRows.FirstOrDefault(r => r.output.Id == output.Id);
+                var row = _outputRows.FirstOrDefault(r => r.output.Id == output.Id);
                 if (row != default)
                     UpdateBadgeVisibility(row.badge, newPin, output.DefaultPin);
                 RefreshAllConflicts();
@@ -496,7 +594,7 @@ public sealed partial class SettingsDialog : ContentDialog
         }
 
         // Error: revert ComboBox to device's actual value
-        RevertCombo(output);
+        RevertGpioCombo(output);
         ShowStatus(GetErrorMessage(status, output.Name), isError: true);
     }
 
@@ -504,14 +602,30 @@ public sealed partial class SettingsDialog : ContentDialog
     {
         ClearStatus();
 
-        foreach (var (output, combo, badge) in _pinRows)
+        // Reset all output types to S/PDIF first
+        int slotCount = _vm.NumOutputSlots;
+        for (int s = 0; s < slotCount; s++)
+        {
+            if (_vm.GetOutputSlotType(s) != OutputSlotType.Spdif)
+            {
+                var typeStatus = await Task.Run(() => _vm.SetOutputSlotType(s, OutputSlotType.Spdif));
+                if (typeStatus != PinConfigResult.Success)
+                {
+                    ShowStatus($"Failed to reset Output {s + 1} type", isError: true);
+                    return;
+                }
+            }
+        }
+
+        // Reset GPIO pins
+        foreach (var (output, typePicker, gpioPicker, badge) in _outputRows)
         {
             byte defaultPin = output.DefaultPin;
             byte currentPin = _vm.GetOutputPinValue(output.Id);
             if (currentPin == defaultPin) continue;
 
             byte status;
-            if (output.Name == "PDM")
+            if (output.SlotIndex < 0) // PDM
             {
                 status = await Task.Run(() =>
                 {
@@ -531,7 +645,7 @@ public sealed partial class SettingsDialog : ContentDialog
             {
                 _suppressSelectionChanged = true;
                 var idx = Array.IndexOf(ValidPins, defaultPin);
-                if (idx >= 0) combo.SelectedIndex = idx;
+                if (idx >= 0) gpioPicker.SelectedIndex = idx;
                 UpdateBadgeVisibility(badge, defaultPin, output.DefaultPin);
                 _suppressSelectionChanged = false;
             }
@@ -542,19 +656,38 @@ public sealed partial class SettingsDialog : ContentDialog
             }
         }
 
+        // Reset I2S clock config to defaults
+        await Task.Run(() =>
+        {
+            _vm.SetMckEnable(false);
+            _vm.SetI2SBckPin(14);
+            _vm.SetMckPin(13);
+            _vm.SetMckMultiplier(128);
+        });
+
+        // Refresh all UI
+        _suppressSelectionChanged = true;
+        foreach (var (output, typePicker, _, _) in _outputRows)
+        {
+            if (output.SlotIndex >= 0)
+                typePicker.SelectedIndex = 0; // S/PDIF
+        }
+        _suppressSelectionChanged = false;
+
+        PopulateI2SValues();
         RefreshAllConflicts();
-        ShowStatus("All pins reset to defaults", isError: false);
+        ShowStatus("All settings reset to defaults", isError: false);
     }
 
-    private void RevertCombo(PinOutput output)
+    private void RevertGpioCombo(PinOutput output)
     {
-        var row = _pinRows.FirstOrDefault(r => r.output.Id == output.Id);
+        var row = _outputRows.FirstOrDefault(r => r.output.Id == output.Id);
         if (row == default) return;
 
         _suppressSelectionChanged = true;
         byte devicePin = _vm.GetOutputPinValue(output.Id);
         var idx = Array.IndexOf(ValidPins, devicePin);
-        if (idx >= 0) row.combo.SelectedIndex = idx;
+        if (idx >= 0) row.gpioPicker.SelectedIndex = idx;
         _suppressSelectionChanged = false;
     }
 
@@ -563,25 +696,36 @@ public sealed partial class SettingsDialog : ContentDialog
         badge.Visibility = currentPin == defaultPin ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    private Dictionary<byte, string> BuildPinOwnerMap(int excludeOutputId = -1)
+    {
+        var pinOwners = new Dictionary<byte, string>();
+        foreach (var (other, _, _, _) in _outputRows)
+        {
+            if (other.Id == excludeOutputId) continue;
+            byte otherPin = _vm.GetOutputPinValue(other.Id);
+            pinOwners[otherPin] = other.Name;
+        }
+
+        // I2S clock pins
+        pinOwners[_vm.I2SBckPin] = "BCK";
+        pinOwners[(byte)(_vm.I2SBckPin + 1)] = "LRCK";
+        if (_vm.MckEnabled)
+            pinOwners[_vm.MckPin] = "MCK";
+
+        return pinOwners;
+    }
+
     private void UpdateComboConflicts(PinOutput targetOutput)
     {
-        var row = _pinRows.FirstOrDefault(r => r.output.Id == targetOutput.Id);
+        var row = _outputRows.FirstOrDefault(r => r.output.Id == targetOutput.Id);
         if (row == default) return;
 
-        // Build a map of pin → owner name (excluding this output)
-        var pinOwners = new Dictionary<byte, string>();
-        foreach (var (other, _, _) in _pinRows)
-        {
-            if (other.Id == targetOutput.Id) continue;
-            byte otherPin = _vm.GetOutputPinValue(other.Id);
-            if (otherPin != 0 || _pinRows.Any(r => r.output.Id == other.Id))
-                pinOwners[otherPin] = other.Name;
-        }
+        var pinOwners = BuildPinOwnerMap(excludeOutputId: targetOutput.Id);
 
         _suppressSelectionChanged = true;
         for (int i = 0; i < ValidPins.Length; i++)
         {
-            if (row.combo.Items[i] is ComboBoxItem item)
+            if (row.gpioPicker.Items[i] is ComboBoxItem item)
             {
                 byte pin = ValidPins[i];
                 if (pinOwners.TryGetValue(pin, out var ownerName))
@@ -593,10 +737,67 @@ public sealed partial class SettingsDialog : ContentDialog
         _suppressSelectionChanged = false;
     }
 
+    private void UpdateI2SPinConflicts()
+    {
+        // Build map of output data pins (for BCK/MCK combo conflict labels)
+        var dataPinOwners = new Dictionary<byte, string>();
+        foreach (var (other, _, _, _) in _outputRows)
+        {
+            byte pin = _vm.GetOutputPinValue(other.Id);
+            dataPinOwners[pin] = other.Name;
+        }
+        // Add other clock pins
+        dataPinOwners[(byte)(_vm.I2SBckPin + 1)] = "LRCK";
+        if (_vm.MckEnabled)
+            dataPinOwners[_vm.MckPin] = "MCK";
+
+        // Update BCK combo labels
+        if (_bckPinCombo != null)
+        {
+            _suppressSelectionChanged = true;
+            for (int i = 0; i < ValidPins.Length; i++)
+            {
+                if (_bckPinCombo.Items[i] is ComboBoxItem item)
+                {
+                    byte pin = ValidPins[i];
+                    // BCK reserves both pin and pin+1
+                    if (dataPinOwners.TryGetValue(pin, out var owner) && owner != "LRCK")
+                        item.Content = $"GPIO {pin} ({owner})";
+                    else
+                        item.Content = $"GPIO {pin}";
+                }
+            }
+            _suppressSelectionChanged = false;
+        }
+
+        // Update MCK combo labels
+        if (_mckPinCombo != null)
+        {
+            var mckOwners = new Dictionary<byte, string>(dataPinOwners);
+            mckOwners[_vm.I2SBckPin] = "BCK";
+            mckOwners[(byte)(_vm.I2SBckPin + 1)] = "LRCK";
+
+            _suppressSelectionChanged = true;
+            for (int i = 0; i < ValidPins.Length; i++)
+            {
+                if (_mckPinCombo.Items[i] is ComboBoxItem item)
+                {
+                    byte pin = ValidPins[i];
+                    if (mckOwners.TryGetValue(pin, out var owner) && owner != "MCK")
+                        item.Content = $"GPIO {pin} ({owner})";
+                    else
+                        item.Content = $"GPIO {pin}";
+                }
+            }
+            _suppressSelectionChanged = false;
+        }
+    }
+
     private void RefreshAllConflicts()
     {
-        foreach (var (output, _, _) in _pinRows)
+        foreach (var (output, _, _, _) in _outputRows)
             UpdateComboConflicts(output);
+        UpdateI2SPinConflicts();
     }
 
     private void ShowStatus(string message, bool isError)
@@ -624,4 +825,348 @@ public sealed partial class SettingsDialog : ContentDialog
         0xFF => "USB transfer failed — device may be disconnected",
         _ => $"Unknown error (0x{status:X2})"
     };
+
+    private static string GetI2SErrorMessage(byte status, string contextName) => status switch
+    {
+        PinConfigResult.InvalidPin => "Invalid GPIO pin number",
+        PinConfigResult.PinInUse => "Pin is already assigned to another function",
+        PinConfigResult.InvalidOutput => "Invalid output slot index",
+        PinConfigResult.OutputActive => "Cannot change while I2S outputs are active",
+        0xFF => "USB transfer failed — device may be disconnected",
+        _ => $"Unknown error (0x{status:X2})"
+    };
+
+    // ── I2S Configuration Section ──
+
+    private void BuildI2SConfigSection()
+    {
+        // Spacing before I2S section
+        HardwarePanel.Children.Add(new Border { Height = 8 });
+
+        BuildSectionHeader("I2S Configuration", "\uE9CE"); // waveform icon
+
+        HardwarePanel.Children.Add(new Border
+        {
+            Height = 1,
+            Background = (Brush)Application.Current.Resources["DividerStrokeColorDefaultBrush"],
+            Margin = new Thickness(0, 2, 0, 2)
+        });
+
+        // MCK Toggle
+        HardwarePanel.Children.Add(BuildMckToggleRow());
+
+        // BCK Pin row
+        HardwarePanel.Children.Add(BuildBckPinRow());
+
+        // MCK Pin row
+        HardwarePanel.Children.Add(BuildMckPinRow());
+
+        // MCK Multiplier row
+        HardwarePanel.Children.Add(BuildMckMultiplierRow());
+    }
+
+    private UIElement BuildBckPinRow()
+    {
+        var row = new Grid { Padding = new Thickness(0, 6, 0, 6) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });       // icon
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // label+subtitle
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });       // combo
+
+        var icon = new FontIcon
+        {
+            Glyph = "\uEC04", // waveform
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 10, 0)
+        };
+        Grid.SetColumn(icon, 0);
+        row.Children.Add(icon);
+
+        var labelStack = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
+        labelStack.Children.Add(new TextBlock { Text = "BCK Pin", FontSize = 13 });
+        _lrckSubtitle = new TextBlock
+        {
+            Text = $"LRCK: GPIO {_vm.I2SBckPin + 1} (BCK + 1)",
+            FontSize = 10,
+            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+        };
+        labelStack.Children.Add(_lrckSubtitle);
+        Grid.SetColumn(labelStack, 1);
+        row.Children.Add(labelStack);
+
+        _bckPinCombo = new ComboBox { Width = 120, VerticalAlignment = VerticalAlignment.Center };
+        foreach (var pin in ValidPins)
+            _bckPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
+        var defaultIdx = Array.IndexOf(ValidPins, (byte)14);
+        if (defaultIdx >= 0) _bckPinCombo.SelectedIndex = defaultIdx;
+        _bckPinCombo.SelectionChanged += OnBckPinChanged;
+        Grid.SetColumn(_bckPinCombo, 2);
+        row.Children.Add(_bckPinCombo);
+
+        return row;
+    }
+
+    private UIElement BuildMckToggleRow()
+    {
+        _mckToggle = new ToggleSwitch
+        {
+            Header = null,
+            OnContent = "On",
+            OffContent = "Off",
+            Margin = new Thickness(0, 4, 0, 4)
+        };
+
+        var row = new Grid { Padding = new Thickness(0, 2, 0, 2) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var labelStack = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
+        labelStack.Children.Add(new TextBlock { Text = "Master Clock (MCK)", FontSize = 13 });
+        labelStack.Children.Add(new TextBlock
+        {
+            Text = "Clock reference for external DACs",
+            FontSize = 10,
+            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+        });
+        Grid.SetColumn(labelStack, 0);
+        row.Children.Add(labelStack);
+
+        Grid.SetColumn(_mckToggle, 1);
+        row.Children.Add(_mckToggle);
+
+        _mckToggle.Toggled += OnMckToggled;
+
+        return row;
+    }
+
+    private UIElement BuildMckPinRow()
+    {
+        var row = new Grid { Padding = new Thickness(0, 6, 0, 6) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var icon = new FontIcon
+        {
+            Glyph = "\uE823", // clock
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 10, 0)
+        };
+        Grid.SetColumn(icon, 0);
+        row.Children.Add(icon);
+
+        var label = new TextBlock
+        {
+            Text = "MCK Pin",
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(label, 1);
+        row.Children.Add(label);
+
+        _mckPinCombo = new ComboBox { Width = 120, VerticalAlignment = VerticalAlignment.Center };
+        foreach (var pin in ValidPins)
+            _mckPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
+        var defaultIdx = Array.IndexOf(ValidPins, (byte)13);
+        if (defaultIdx >= 0) _mckPinCombo.SelectedIndex = defaultIdx;
+        _mckPinCombo.SelectionChanged += OnMckPinChanged;
+        Grid.SetColumn(_mckPinCombo, 2);
+        row.Children.Add(_mckPinCombo);
+
+        return row;
+    }
+
+    private UIElement BuildMckMultiplierRow()
+    {
+        var container = new StackPanel { Spacing = 4 };
+
+        var row = new Grid { Padding = new Thickness(0, 6, 0, 6) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var icon = new FontIcon
+        {
+            Glyph = "\uE947", // multiply
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 10, 0)
+        };
+        Grid.SetColumn(icon, 0);
+        row.Children.Add(icon);
+
+        var label = new TextBlock
+        {
+            Text = "MCK Multiplier",
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(label, 1);
+        row.Children.Add(label);
+
+        _mckMultiplierCombo = new ComboBox { Width = 90, VerticalAlignment = VerticalAlignment.Center };
+        _mckMultiplierCombo.Items.Add(new ComboBoxItem { Content = "128x", Tag = 128 });
+        _mckMultiplierCombo.Items.Add(new ComboBoxItem { Content = "256x", Tag = 256 });
+        _mckMultiplierCombo.SelectedIndex = 0;
+        _mckMultiplierCombo.SelectionChanged += OnMckMultiplierChanged;
+        Grid.SetColumn(_mckMultiplierCombo, 2);
+        row.Children.Add(_mckMultiplierCombo);
+
+        container.Children.Add(row);
+
+        // "Locked to 128x" caption
+        _mckMultiplierCaption = new TextBlock
+        {
+            FontSize = 10,
+            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Visibility = Visibility.Collapsed
+        };
+        container.Children.Add(_mckMultiplierCaption);
+
+        return container;
+    }
+
+    private async void OnBckPinChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressSelectionChanged) return;
+        if (_bckPinCombo?.SelectedItem is not ComboBoxItem item || item.Tag is not byte newPin) return;
+
+        ClearStatus();
+
+        var status = await Task.Run(() => _vm.SetI2SBckPin(newPin));
+
+        if (status == PinConfigResult.Success)
+        {
+            if (_lrckSubtitle != null)
+                _lrckSubtitle.Text = $"LRCK: GPIO {newPin + 1} (BCK + 1)";
+            RefreshAllConflicts();
+            ShowStatus($"BCK pin set to GPIO {newPin}, LRCK = GPIO {newPin + 1}", isError: false);
+            return;
+        }
+
+        // Revert
+        _suppressSelectionChanged = true;
+        var idx = Array.IndexOf(ValidPins, _vm.I2SBckPin);
+        if (idx >= 0) _bckPinCombo.SelectedIndex = idx;
+        _suppressSelectionChanged = false;
+
+        string msg = status switch
+        {
+            PinConfigResult.OutputActive => "All outputs must be S/PDIF before changing BCK pin",
+            PinConfigResult.PinInUse => $"GPIO {newPin} or {newPin + 1} is already in use",
+            _ => GetI2SErrorMessage(status, "BCK")
+        };
+        ShowStatus(msg, isError: true);
+    }
+
+    private async void OnMckToggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressSelectionChanged) return;
+        if (_mckToggle == null) return;
+
+        ClearStatus();
+
+        bool newVal = _mckToggle.IsOn;
+        var status = await Task.Run(() => _vm.SetMckEnable(newVal));
+
+        if (status == PinConfigResult.Success)
+        {
+            UpdateI2SConstraints();
+            RefreshAllConflicts();
+            ShowStatus($"Master clock {(newVal ? "enabled" : "disabled")}", isError: false);
+            return;
+        }
+
+        // Revert
+        _suppressSelectionChanged = true;
+        _mckToggle.IsOn = _vm.MckEnabled;
+        _suppressSelectionChanged = false;
+        ShowStatus($"Failed to {(newVal ? "enable" : "disable")} master clock", isError: true);
+    }
+
+    private async void OnMckPinChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressSelectionChanged) return;
+        if (_mckPinCombo?.SelectedItem is not ComboBoxItem item || item.Tag is not byte newPin) return;
+
+        ClearStatus();
+
+        var status = await Task.Run(() => _vm.SetMckPin(newPin));
+
+        if (status == PinConfigResult.Success)
+        {
+            RefreshAllConflicts();
+            ShowStatus($"MCK pin set to GPIO {newPin}", isError: false);
+            return;
+        }
+
+        // Revert
+        _suppressSelectionChanged = true;
+        var idx = Array.IndexOf(ValidPins, _vm.MckPin);
+        if (idx >= 0) _mckPinCombo.SelectedIndex = idx;
+        _suppressSelectionChanged = false;
+
+        string msg = status switch
+        {
+            PinConfigResult.OutputActive => "Disable MCK before changing its pin",
+            PinConfigResult.PinInUse => $"GPIO {newPin} is already in use",
+            _ => GetI2SErrorMessage(status, "MCK")
+        };
+        ShowStatus(msg, isError: true);
+    }
+
+    private async void OnMckMultiplierChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressSelectionChanged) return;
+        if (_mckMultiplierCombo?.SelectedItem is not ComboBoxItem item || item.Tag is not int newMultiplier) return;
+
+        ClearStatus();
+
+        var status = await Task.Run(() => _vm.SetMckMultiplier(newMultiplier));
+
+        if (status == PinConfigResult.Success)
+        {
+            ShowStatus($"MCK multiplier set to {newMultiplier}x", isError: false);
+            return;
+        }
+
+        // Revert
+        _suppressSelectionChanged = true;
+        _mckMultiplierCombo.SelectedIndex = _vm.MckMultiplier == 256 ? 1 : 0;
+        _suppressSelectionChanged = false;
+        ShowStatus("Failed to set MCK multiplier", isError: true);
+    }
+
+    private void UpdateI2SConstraints()
+    {
+        bool anyI2S = _vm.AnySlotIsI2S;
+
+        // BCK pin: only changeable when no slots are I2S
+        if (_bckPinCombo != null)
+            _bckPinCombo.IsEnabled = !anyI2S;
+
+        // MCK pin: only changeable when MCK is disabled
+        if (_mckPinCombo != null)
+            _mckPinCombo.IsEnabled = !_vm.MckEnabled;
+
+        // MCK multiplier: 256x unavailable at >= 96kHz
+        bool highSampleRate = _vm.SampleRateHz >= 96000;
+        if (_mckMultiplierCombo != null)
+            _mckMultiplierCombo.IsEnabled = !highSampleRate;
+        if (_mckMultiplierCaption != null)
+        {
+            _mckMultiplierCaption.Visibility = highSampleRate ? Visibility.Visible : Visibility.Collapsed;
+            if (highSampleRate)
+                _mckMultiplierCaption.Text = $"Locked to 128x at {_vm.SampleRateHz / 1000.0:F1} kHz";
+        }
+
+        // LRCK subtitle update
+        if (_lrckSubtitle != null)
+            _lrckSubtitle.Text = $"LRCK: GPIO {_vm.I2SBckPin + 1} (BCK + 1)";
+    }
 }

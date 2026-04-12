@@ -80,6 +80,18 @@ public static class VendorCommands
     public const byte PresetGetActive      = 0x9A;
     public const byte SetChannelName       = 0x9B;
     public const byte GetChannelName       = 0x9C;
+
+    // I2S output configuration
+    public const byte SetOutputType    = 0xC0;
+    public const byte GetOutputType    = 0xC1;
+    public const byte SetI2SBckPin     = 0xC2;
+    public const byte GetI2SBckPin     = 0xC3;
+    public const byte SetMckEnable     = 0xC4;
+    public const byte GetMckEnable     = 0xC5;
+    public const byte SetMckPin        = 0xC6;
+    public const byte GetMckPin        = 0xC7;
+    public const byte SetMckMultiplier = 0xC8;
+    public const byte GetMckMultiplier = 0xC9;
 }
 
 /// <summary>
@@ -115,6 +127,15 @@ public static class PresetResult
     public const byte SlotEmpty = 0x02;
     public const byte CrcFailure = 0x03;
     public const byte FlashWriteError = 0x04;
+}
+
+/// <summary>
+/// Output slot type: S/PDIF or I2S.
+/// </summary>
+public enum OutputSlotType : byte
+{
+    Spdif = 0,
+    I2S = 1
 }
 
 /// <summary>
@@ -1192,13 +1213,121 @@ public partial class DspDevice : ObservableObject, IDisposable
         return response[0];
     }
 
+    #region I2S Configuration
+
+    /// <summary>
+    /// Set output slot type (S/PDIF or I2S). wValue = (type &lt;&lt; 8) | slot.
+    /// Returns status byte (PinConfigResult codes), or 0xFF on transfer failure.
+    /// </summary>
+    public byte SetOutputType(int slot, OutputSlotType type)
+    {
+        ushort wValue = (ushort)(((byte)type << 8) | slot);
+        var response = ControlTransferIn(VendorCommands.SetOutputType, wValue, 1);
+        return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
+    }
+
+    /// <summary>
+    /// Get current output type for a slot. wValue = slot index.
+    /// </summary>
+    public OutputSlotType? GetOutputType(int slot)
+    {
+        var response = ControlTransferIn(VendorCommands.GetOutputType, (ushort)slot, 1);
+        if (response == null || response.Length < 1) return null;
+        return (OutputSlotType)response[0];
+    }
+
+    /// <summary>
+    /// Set I2S BCK (bit clock) pin. LRCLK is always BCK + 1.
+    /// Returns status byte, or 0xFF on transfer failure.
+    /// </summary>
+    public byte SetI2SBckPin(byte pin)
+    {
+        var response = ControlTransferIn(VendorCommands.SetI2SBckPin, pin, 1);
+        return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
+    }
+
+    /// <summary>
+    /// Get current I2S BCK pin number, or null on failure.
+    /// </summary>
+    public byte? GetI2SBckPin()
+    {
+        var response = ControlTransferIn(VendorCommands.GetI2SBckPin, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0];
+    }
+
+    /// <summary>
+    /// Enable or disable master clock (MCK) output.
+    /// Returns status byte, or 0xFF on transfer failure.
+    /// </summary>
+    public byte SetMckEnable(bool enabled)
+    {
+        ushort wValue = (ushort)(enabled ? 1 : 0);
+        var response = ControlTransferIn(VendorCommands.SetMckEnable, wValue, 1);
+        return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
+    }
+
+    /// <summary>
+    /// Get whether master clock (MCK) is enabled, or null on failure.
+    /// </summary>
+    public bool? GetMckEnable()
+    {
+        var response = ControlTransferIn(VendorCommands.GetMckEnable, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0] != 0;
+    }
+
+    /// <summary>
+    /// Set MCK GPIO pin. MCK must be disabled first.
+    /// Returns status byte, or 0xFF on transfer failure.
+    /// </summary>
+    public byte SetMckPin(byte pin)
+    {
+        var response = ControlTransferIn(VendorCommands.SetMckPin, pin, 1);
+        return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
+    }
+
+    /// <summary>
+    /// Get current MCK GPIO pin, or null on failure.
+    /// </summary>
+    public byte? GetMckPin()
+    {
+        var response = ControlTransferIn(VendorCommands.GetMckPin, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0];
+    }
+
+    /// <summary>
+    /// Set MCK multiplier. Wire encoding: 0 = 128x, 1 = 256x.
+    /// Returns status byte, or 0xFF on transfer failure.
+    /// </summary>
+    public byte SetMckMultiplier(int multiplier)
+    {
+        ushort wValue = (ushort)(multiplier == 256 ? 1 : 0);
+        var response = ControlTransferIn(VendorCommands.SetMckMultiplier, wValue, 1);
+        return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
+    }
+
+    /// <summary>
+    /// Get current MCK multiplier (128 or 256), or null on failure.
+    /// </summary>
+    public int? GetMckMultiplier()
+    {
+        var response = ControlTransferIn(VendorCommands.GetMckMultiplier, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0] == 1 ? 256 : 128;
+    }
+
+    #endregion
+
     /// <summary>
     /// Fetch all DSP parameters in a single bulk transfer (firmware v2+).
-    /// Returns 2832-byte packet, or null if unsupported/failed.
+    /// Returns up to 2848-byte packet (2832 base + 16 optional I2S config),
+    /// or null if unsupported/failed.
     /// </summary>
     public byte[]? GetAllParams()
     {
-        return ControlTransferIn(VendorCommands.GetAllParams, 0, 2832);
+        return ControlTransferIn(VendorCommands.GetAllParams, 0, 2848);
     }
 
     #region Buffer Statistics

@@ -49,6 +49,14 @@ public class BulkParams
 
     // Channel names (offset 2480, 352 bytes) — 11 × 32-char strings
     public string[] ChannelNames = Array.Empty<string>();
+
+    // I2S config (offset 2832, 16 bytes) — present when packet >= 2848
+    public byte[] OutputSlotTypes = new byte[4]; // per-slot: 0=S/PDIF, 1=I2S
+    public byte BckPin;
+    public byte MckPin;
+    public bool MckEnabled;
+    public byte MckMultiplierEncoded; // 0=128x, 1=256x
+    public bool HasI2SConfig;
 }
 
 /// <summary>
@@ -170,6 +178,20 @@ public static class BulkParamsParser
             int len = 0;
             while (len < 32 && buffer[off + len] != 0) len++;
             p.ChannelNames[ch] = Encoding.UTF8.GetString(buffer, off, len);
+        }
+
+        // ── I2S config (16 bytes, optional) ──
+        const int OffsetI2S = 2832;
+        if (buffer.Length >= OffsetI2S + 16)
+        {
+            p.HasI2SConfig = true;
+            for (int i = 0; i < 4; i++)
+                p.OutputSlotTypes[i] = buffer[OffsetI2S + i];
+            p.BckPin = buffer[OffsetI2S + 4];
+            p.MckPin = buffer[OffsetI2S + 5];
+            p.MckEnabled = buffer[OffsetI2S + 6] != 0;
+            p.MckMultiplierEncoded = buffer[OffsetI2S + 7];
+            // bytes 8-15 reserved
         }
 
         return p;

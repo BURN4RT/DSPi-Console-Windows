@@ -50,6 +50,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // Output pin assignments: Dictionary<pinOutputId, byte>
     private readonly Dictionary<int, byte> _outputPins = new();
 
+    // I2S configuration state
+    private readonly OutputSlotType[] _outputSlotTypes = new OutputSlotType[4];
+    private byte _i2sBckPin = 14;     // firmware default
+    private bool _mckEnabled;
+    private byte _mckPin = 13;        // firmware default
+    private int _mckMultiplier = 128;
+    private uint _sampleRateHz;
+
     // Clip tracking
     private ushort _clipLatched;
     private DateTime? _clipTimestamp;
@@ -246,7 +254,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // Event for notifying UI when graph needs redraw
     public event Action<int>? ChannelNameChanged;
     public event EventHandler? FiltersChanged;
+    public event EventHandler? BypassChanged;
     public event EventHandler? VisibilityChanged;
+
+    // I2S configuration events and accessors
+    public event EventHandler? I2SConfigChanged;
+
+    public OutputSlotType GetOutputSlotType(int slot) =>
+        slot >= 0 && slot < _outputSlotTypes.Length ? _outputSlotTypes[slot] : OutputSlotType.Spdif;
+    public int NumOutputSlots => Platform == "RP2350" ? 4 : 2;
+    public byte I2SBckPin => _i2sBckPin;
+    public bool MckEnabled => _mckEnabled;
+    public byte MckPin => _mckPin;
+    public int MckMultiplier => _mckMultiplier;
+    public uint SampleRateHz => _sampleRateHz;
+    public bool AnySlotIsI2S => _outputSlotTypes.Take(NumOutputSlots).Any(t => t == OutputSlotType.I2S);
 
     public MainViewModel()
     {
@@ -539,6 +561,129 @@ public partial class MainViewModel : ObservableObject, IDisposable
         return status;
     }
 
+    // ── I2S configuration accessors ──
+
+    public void FetchOutputSlotType(int slot)
+    {
+        var type = _device.GetOutputType(slot);
+        if (type.HasValue)
+            _outputSlotTypes[slot] = type.Value;
+    }
+
+    public void FetchI2SBckPin()
+    {
+        var pin = _device.GetI2SBckPin();
+        if (pin.HasValue) _i2sBckPin = pin.Value;
+    }
+
+    public void FetchMckEnable()
+    {
+        var enabled = _device.GetMckEnable();
+        if (enabled.HasValue) _mckEnabled = enabled.Value;
+    }
+
+    public void FetchMckPin()
+    {
+        var pin = _device.GetMckPin();
+        if (pin.HasValue) _mckPin = pin.Value;
+    }
+
+    public void FetchMckMultiplier()
+    {
+        var mult = _device.GetMckMultiplier();
+        if (mult.HasValue) _mckMultiplier = mult.Value;
+    }
+
+    public byte SetOutputSlotType(int slot, OutputSlotType type)
+    {
+        var status = _device.SetOutputType(slot, type);
+        if (status == PinConfigResult.Success)
+        {
+            _outputSlotTypes[slot] = type;
+            UpdateDynamicChannelNames();
+            _dispatcher.TryEnqueue(() => I2SConfigChanged?.Invoke(this, EventArgs.Empty));
+        }
+        return status;
+    }
+
+    public byte SetI2SBckPin(byte pin)
+    {
+        var status = _device.SetI2SBckPin(pin);
+        if (status == PinConfigResult.Success)
+            _i2sBckPin = pin;
+        return status;
+    }
+
+    public byte SetMckEnable(bool enabled)
+    {
+        var status = _device.SetMckEnable(enabled);
+        if (status == PinConfigResult.Success)
+        {
+            _mckEnabled = enabled;
+            _dispatcher.TryEnqueue(() => I2SConfigChanged?.Invoke(this, EventArgs.Empty));
+        }
+        return status;
+    }
+
+    public byte SetMckPin(byte pin)
+    {
+        var status = _device.SetMckPin(pin);
+        if (status == PinConfigResult.Success)
+            _mckPin = pin;
+        return status;
+    }
+
+    public byte SetMckMultiplier(int multiplier)
+    {
+        var status = _device.SetMckMultiplier(multiplier);
+        if (status == PinConfigResult.Success)
+            _mckMultiplier = multiplier;
+        return status;
+    }
+
+    /// <summary>
+    /// Update channel names for output slots based on their current type (S/PDIF vs I2S).
+    /// Only overwrites names that match a known auto-generated pattern.
+    /// </summary>
+    private void UpdateDynamicChannelNames()
+    {
+        int slotCount = Platform == "RP2350" ? 4 : 2;
+        for (int slot = 0; slot < slotCount; slot++)
+        {
+            var type = _outputSlotTypes[slot];
+            string prefix = type == OutputSlotType.I2S ? "I2S" : "SPDIF";
+            int num = slot + 1;
+
+            int leftId = 2 + slot * 2;   // ChannelId: Spdif1L=2, Spdif2L=4, etc.
+            int rightId = leftId + 1;
+
+            string newNameL = $"{prefix} {num} L";
+            string newNameR = $"{prefix} {num} R";
+
+            // Only update if the current name is an auto-generated name (not user-customized)
+            var defaultNameL = Channel.FromIndex(leftId).Name;
+            var currentL = _channelNames.TryGetValue(leftId, out var nl) ? nl : defaultNameL;
+            if (IsAutoGeneratedName(currentL, num, defaultNameL))
+            {
+                _channelNames[leftId] = newNameL;
+                _dispatcher.TryEnqueue(() => ChannelNameChanged?.Invoke(leftId));
+            }
+
+            var defaultNameR = Channel.FromIndex(rightId).Name;
+            var currentR = _channelNames.TryGetValue(rightId, out var nr) ? nr : defaultNameR;
+            if (IsAutoGeneratedName(currentR, num, defaultNameR))
+            {
+                _channelNames[rightId] = newNameR;
+                _dispatcher.TryEnqueue(() => ChannelNameChanged?.Invoke(rightId));
+            }
+        }
+    }
+
+    private static bool IsAutoGeneratedName(string name, int slotNum, string defaultName) =>
+        name == defaultName ||
+        name == $"SPDIF {slotNum} L" || name == $"SPDIF {slotNum} R" ||
+        name == $"I2S {slotNum} L" || name == $"I2S {slotNum} R";
+
     #region USB Commands
 
     private void FetchAll()
@@ -613,6 +758,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
         for (int i = 0; i < bp.Pins.Length; i++)
             _outputPins[i] = bp.Pins[i];
 
+        // I2S config (if present in bulk packet)
+        if (bp.HasI2SConfig)
+        {
+            for (int i = 0; i < 4; i++)
+                _outputSlotTypes[i] = (OutputSlotType)bp.OutputSlotTypes[i];
+            _i2sBckPin = bp.BckPin;
+            _mckPin = bp.MckPin;
+            _mckEnabled = bp.MckEnabled;
+            _mckMultiplier = bp.MckMultiplierEncoded == 1 ? 256 : 128;
+        }
+
+        // Fetch sample rate for MCK multiplier constraint
+        var sr = _device.GetStatusUInt32(15);
+        if (sr.HasValue) _sampleRateHz = sr.Value;
+
         // Channel names
         for (int ch = 0; ch < bp.ChannelNames.Length; ch++)
         {
@@ -657,6 +817,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
             VisibilityChanged?.Invoke(this, EventArgs.Empty);
             FiltersChanged?.Invoke(this, EventArgs.Empty);
+
+            if (bp.HasI2SConfig)
+            {
+                UpdateDynamicChannelNames();
+                I2SConfigChanged?.Invoke(this, EventArgs.Empty);
+            }
         });
     }
 
@@ -697,8 +863,24 @@ public partial class MainViewModel : ObservableObject, IDisposable
         for (int p = 0; p < pinCount; p++)
             FetchOutputPin(p);
 
+        // Fetch I2S configuration
+        int slotCount = Platform == "RP2350" ? 4 : 2;
+        for (int s = 0; s < slotCount; s++)
+            FetchOutputSlotType(s);
+        FetchI2SBckPin();
+        FetchMckEnable();
+        FetchMckPin();
+        FetchMckMultiplier();
+        var sr = _device.GetStatusUInt32(15);
+        if (sr.HasValue) _sampleRateHz = sr.Value;
+
         // Dispatch FiltersChanged to run after all filter updates are processed
-        _dispatcher.TryEnqueue(() => FiltersChanged?.Invoke(this, EventArgs.Empty));
+        _dispatcher.TryEnqueue(() =>
+        {
+            FiltersChanged?.Invoke(this, EventArgs.Empty);
+            UpdateDynamicChannelNames();
+            I2SConfigChanged?.Invoke(this, EventArgs.Empty);
+        });
     }
 
     private void FetchStatus()
@@ -1101,7 +1283,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     partial void OnBypassChanged(bool value)
     {
         Task.Run(() => _device.SetBypass(value));
-        FiltersChanged?.Invoke(this, EventArgs.Empty);
+        BypassChanged?.Invoke(this, EventArgs.Empty);
         CheckDirty();
     }
 
