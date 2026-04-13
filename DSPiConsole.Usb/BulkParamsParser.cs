@@ -57,6 +57,15 @@ public class BulkParams
     public bool MckEnabled;
     public byte MckMultiplierEncoded; // 0=128x, 1=256x
     public bool HasI2SConfig;
+
+    // Volume leveller (offset 2848, 16 bytes) — present when packet >= 2864
+    public bool LevellerEnabled;
+    public byte LevellerSpeed;       // 0=Slow, 1=Medium, 2=Fast
+    public bool LevellerLookahead;
+    public float LevellerAmount;     // 0-100
+    public float LevellerMaxGainDb;  // 0-35
+    public float LevellerGateDb;     // -96 to 0
+    public bool HasLevellerConfig;
 }
 
 /// <summary>
@@ -192,6 +201,20 @@ public static class BulkParamsParser
             p.MckEnabled = buffer[OffsetI2S + 6] != 0;
             p.MckMultiplierEncoded = buffer[OffsetI2S + 7];
             // bytes 8-15 reserved
+        }
+
+        // ── Volume leveller (16 bytes, optional) ──
+        const int OffsetLeveller = 2848;
+        if (buffer.Length >= OffsetLeveller + 16)
+        {
+            p.HasLevellerConfig = true;
+            p.LevellerEnabled = buffer[OffsetLeveller] != 0;
+            p.LevellerSpeed = buffer[OffsetLeveller + 1];
+            p.LevellerLookahead = buffer[OffsetLeveller + 2] != 0;
+            // byte 3 reserved
+            p.LevellerAmount = BitConverter.ToSingle(buffer, OffsetLeveller + 4);
+            p.LevellerMaxGainDb = BitConverter.ToSingle(buffer, OffsetLeveller + 8);
+            p.LevellerGateDb = BitConverter.ToSingle(buffer, OffsetLeveller + 12);
         }
 
         return p;

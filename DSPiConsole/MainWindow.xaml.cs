@@ -39,6 +39,7 @@ public sealed partial class MainWindow : Window
     private GraphWindow? _graphWindow;
     private LoudnessWindow? _loudnessWindow;
     private CrossfeedWindow? _crossfeedWindow;
+    private VolumeLevellerWindow? _levellerWindow;
     private MatrixMixerWindow? _matrixMixerWindow;
 
     // Track output controls for live updates
@@ -1362,6 +1363,9 @@ public sealed partial class MainWindow : Window
                 case nameof(MainViewModel.CrossfeedEnabled):
                     UpdateShortcutIconStates();
                     break;
+                case nameof(MainViewModel.LevellerEnabled):
+                    UpdateShortcutIconStates();
+                    break;
                 case nameof(MainViewModel.Status):
                     UpdateMeters();
                     break;
@@ -2462,6 +2466,28 @@ public sealed partial class MainWindow : Window
         e.Handled = true;
     }
 
+    private void OnSidebarLevellerTapped(object sender, TappedRoutedEventArgs e)
+    {
+        ViewModel.LevellerEnabled = !ViewModel.LevellerEnabled;
+    }
+
+    private void OnSidebarLevellerRightClick(object sender, RightTappedRoutedEventArgs e)
+    {
+        OpenLevellerWindow();
+        e.Handled = true;
+    }
+
+    private void OpenLevellerWindow()
+    {
+        if (_levellerWindow == null)
+        {
+            _levellerWindow = new VolumeLevellerWindow(ViewModel);
+            _levellerWindow.Closed += (s, e) => { _levellerWindow = null; UpdateShortcutIconStates(); };
+        }
+        _levellerWindow.Activate();
+        UpdateShortcutIconStates();
+    }
+
     private void OnSidebarStatsTapped(object sender, TappedRoutedEventArgs e)
     {
         OnStatsClick(sender, new RoutedEventArgs());
@@ -2487,6 +2513,7 @@ public sealed partial class MainWindow : Window
             SetIconColor(SettingsIcon, _iconDimColor);
             SetIconColor(LoudnessIcon, ViewModel.LoudnessEnabled ? _iconActiveColor : _iconDimColor);
             SetIconColor(CrossfeedIcon, ViewModel.CrossfeedEnabled ? _iconActiveColor : _iconDimColor);
+            SetIconColor(LevellerIcon, ViewModel.LevellerEnabled ? _iconActiveColor : _iconDimColor);
             SetIconColor(StatsIcon, _statsWindow != null ? _iconActiveColor : _iconDimColor);
             SetIconColor(BypassIcon, ViewModel.Bypass ? _iconBypassColor : _iconDimColor);
         });
@@ -2502,6 +2529,7 @@ public sealed partial class MainWindow : Window
         if (icon == MatrixMixerIcon) return _matrixMixerWindow != null;
         if (icon == LoudnessIcon) return ViewModel.LoudnessEnabled;
         if (icon == CrossfeedIcon) return ViewModel.CrossfeedEnabled;
+        if (icon == LevellerIcon) return ViewModel.LevellerEnabled;
         if (icon == StatsIcon) return _statsWindow != null;
         if (icon == BypassIcon) return ViewModel.Bypass;
         return false;
@@ -2622,6 +2650,24 @@ public sealed partial class MainWindow : Window
             RefreshAutoEQFavoritesMenu();
             await ShowSuccessDialog("Database reset to built-in version.");
         }
+    }
+
+    private async void OnUpdateFirmwareClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "Firmware Update",
+            Content = "This will reboot the device into bootloader mode.\n\nAudio output will stop immediately. The device will appear as a USB drive to which you can drag a .uf2 firmware file.",
+            PrimaryButtonText = "Reboot into Bootloader",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = Content.XamlRoot
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (!ViewModel.IsDeviceConnected) return;
+
+        _ = Task.Run(() => ViewModel.Device.EnterBootloaderMode());
     }
 
     private void OnExitClick(object sender, RoutedEventArgs e)

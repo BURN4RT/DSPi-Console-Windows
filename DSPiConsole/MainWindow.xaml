@@ -77,6 +77,8 @@
                         <MenuFlyoutItem Text="Revert Preset..." Click="OnRevertPresetClick"/>
                         <MenuFlyoutItem Text="Factory Reset..." Click="OnFactoryResetClick"/>
                         <MenuFlyoutSeparator/>
+                        <MenuFlyoutItem Text="Update Firmware..." Click="OnUpdateFirmwareClick"/>
+                        <MenuFlyoutSeparator/>
                         <MenuFlyoutItem Text="Exit" Click="OnExitClick">
                             <MenuFlyoutItem.KeyboardAccelerators>
                                 <KeyboardAccelerator Modifiers="Menu" Key="F4"/>
@@ -207,6 +209,7 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                         <Border x:Name="SidebarMatrixMixerBtn" Grid.Column="0" Background="Transparent" Padding="0,6"
                                 Tapped="OnSidebarMatrixMixerTapped"
@@ -229,7 +232,7 @@
                                 RightTapped="OnSidebarLoudnessRightClick"
                                 ToolTipService.ToolTip="Loudness Compensation (right-click for settings)"
                                 PointerEntered="OnShortcutIconPointerEntered" PointerExited="OnShortcutIconPointerExited">
-                            <FontIcon x:Name="LoudnessIcon" Glyph="&#xE767;" FontSize="16"
+                            <FontIcon x:Name="LoudnessIcon" Glyph="&#xE708;" FontSize="16"
                                       HorizontalAlignment="Center"
                                       Foreground="{ThemeResource TextFillColorGhostlyBrush}" IsHitTestVisible="False" />
                         </Border>
@@ -242,7 +245,16 @@
                                       HorizontalAlignment="Center"
                                       Foreground="{ThemeResource TextFillColorGhostlyBrush}" IsHitTestVisible="False" />
                         </Border>
-                        <Border x:Name="SidebarStatsBtn" Grid.Column="4" Background="Transparent" Padding="0,6"
+                        <Border x:Name="SidebarLevellerBtn" Grid.Column="4" Background="Transparent" Padding="0,6"
+                                Tapped="OnSidebarLevellerTapped"
+                                RightTapped="OnSidebarLevellerRightClick"
+                                ToolTipService.ToolTip="Volume Leveller (right-click for settings)"
+                                PointerEntered="OnShortcutIconPointerEntered" PointerExited="OnShortcutIconPointerExited">
+                            <FontIcon x:Name="LevellerIcon" Glyph="&#xE994;" FontSize="16"
+                                      HorizontalAlignment="Center"
+                                      Foreground="{ThemeResource TextFillColorGhostlyBrush}" IsHitTestVisible="False" />
+                        </Border>
+                        <Border x:Name="SidebarStatsBtn" Grid.Column="5" Background="Transparent" Padding="0,6"
                                 Tapped="OnSidebarStatsTapped"
                                 ToolTipService.ToolTip="Stats for Nerbs"
                                 PointerEntered="OnShortcutIconPointerEntered" PointerExited="OnShortcutIconPointerExited">
@@ -250,7 +262,7 @@
                                       HorizontalAlignment="Center"
                                       Foreground="{ThemeResource TextFillColorGhostlyBrush}" IsHitTestVisible="False" />
                         </Border>
-                        <Border x:Name="SidebarBypassBtn" Grid.Column="5" Background="Transparent" Padding="0,6"
+                        <Border x:Name="SidebarBypassBtn" Grid.Column="6" Background="Transparent" Padding="0,6"
                                 Tapped="OnSidebarBypassTapped"
                                 ToolTipService.ToolTip="Bypass Master EQ"
                                 PointerEntered="OnShortcutIconPointerEntered" PointerExited="OnShortcutIconPointerExited">

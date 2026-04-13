@@ -92,6 +92,23 @@ public static class VendorCommands
     public const byte GetMckPin        = 0xC7;
     public const byte SetMckMultiplier = 0xC8;
     public const byte GetMckMultiplier = 0xC9;
+
+    // Volume leveller
+    public const byte SetLevellerEnabled   = 0xB4;
+    public const byte GetLevellerEnabled   = 0xB5;
+    public const byte SetLevellerAmount    = 0xB6;
+    public const byte GetLevellerAmount    = 0xB7;
+    public const byte SetLevellerSpeed     = 0xB8;
+    public const byte GetLevellerSpeed     = 0xB9;
+    public const byte SetLevellerMaxGain   = 0xBA;
+    public const byte GetLevellerMaxGain   = 0xBB;
+    public const byte SetLevellerLookahead = 0xBC;
+    public const byte GetLevellerLookahead = 0xBD;
+    public const byte SetLevellerGate      = 0xBE;
+    public const byte GetLevellerGate      = 0xBF;
+
+    // Bootloader
+    public const byte EnterBootloader = 0xF0;
 }
 
 /// <summary>
@@ -1320,14 +1337,97 @@ public partial class DspDevice : ObservableObject, IDisposable
 
     #endregion
 
+    #region Volume Leveller
+
+    public bool SetLevellerEnabled(bool enabled)
+    {
+        return ControlTransferOut(VendorCommands.SetLevellerEnabled, 0, new[] { (byte)(enabled ? 1 : 0) });
+    }
+
+    public bool? GetLevellerEnabled()
+    {
+        var response = ControlTransferIn(VendorCommands.GetLevellerEnabled, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0] != 0;
+    }
+
+    public bool SetLevellerAmount(float amount)
+    {
+        return ControlTransferOut(VendorCommands.SetLevellerAmount, 0, BitConverter.GetBytes(amount));
+    }
+
+    public float? GetLevellerAmount()
+    {
+        var response = ControlTransferIn(VendorCommands.GetLevellerAmount, 0, 4);
+        if (response == null || response.Length < 4) return null;
+        return BitConverter.ToSingle(response, 0);
+    }
+
+    public bool SetLevellerSpeed(int speed)
+    {
+        return ControlTransferOut(VendorCommands.SetLevellerSpeed, 0, new[] { (byte)speed });
+    }
+
+    public int? GetLevellerSpeed()
+    {
+        var response = ControlTransferIn(VendorCommands.GetLevellerSpeed, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0];
+    }
+
+    public bool SetLevellerMaxGain(float db)
+    {
+        return ControlTransferOut(VendorCommands.SetLevellerMaxGain, 0, BitConverter.GetBytes(db));
+    }
+
+    public float? GetLevellerMaxGain()
+    {
+        var response = ControlTransferIn(VendorCommands.GetLevellerMaxGain, 0, 4);
+        if (response == null || response.Length < 4) return null;
+        return BitConverter.ToSingle(response, 0);
+    }
+
+    public bool SetLevellerLookahead(bool enabled)
+    {
+        return ControlTransferOut(VendorCommands.SetLevellerLookahead, 0, new[] { (byte)(enabled ? 1 : 0) });
+    }
+
+    public bool? GetLevellerLookahead()
+    {
+        var response = ControlTransferIn(VendorCommands.GetLevellerLookahead, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0] != 0;
+    }
+
+    public bool SetLevellerGate(float db)
+    {
+        return ControlTransferOut(VendorCommands.SetLevellerGate, 0, BitConverter.GetBytes(db));
+    }
+
+    public float? GetLevellerGate()
+    {
+        var response = ControlTransferIn(VendorCommands.GetLevellerGate, 0, 4);
+        if (response == null || response.Length < 4) return null;
+        return BitConverter.ToSingle(response, 0);
+    }
+
+    #endregion
+
+    /// <summary>
+    /// Reboot the device into UF2 bootloader mode. Device disconnects immediately.
+    /// </summary>
+    public void EnterBootloaderMode()
+    {
+        ControlTransferIn(VendorCommands.EnterBootloader, 0, 1);
+    }
+
     /// <summary>
     /// Fetch all DSP parameters in a single bulk transfer (firmware v2+).
-    /// Returns up to 2848-byte packet (2832 base + 16 optional I2S config),
-    /// or null if unsupported/failed.
+    /// Returns up to 2896-byte packet, or null if unsupported/failed.
     /// </summary>
     public byte[]? GetAllParams()
     {
-        return ControlTransferIn(VendorCommands.GetAllParams, 0, 2848);
+        return ControlTransferIn(VendorCommands.GetAllParams, 0, 2896);
     }
 
     #region Buffer Statistics

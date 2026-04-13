@@ -117,6 +117,25 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _crossfeedItd = true; // Inter-aural Time Delay
 
+    // Volume leveller
+    [ObservableProperty]
+    private bool _levellerEnabled;
+
+    [ObservableProperty]
+    private float _levellerAmount = 50.0f;
+
+    [ObservableProperty]
+    private int _levellerSpeed; // 0=Slow, 1=Medium, 2=Fast
+
+    [ObservableProperty]
+    private float _levellerMaxGainDb = 15.0f;
+
+    [ObservableProperty]
+    private bool _levellerLookahead = true;
+
+    [ObservableProperty]
+    private float _levellerGateDb = -96.0f;
+
     [ObservableProperty]
     private int _activePreset = -1;
 
@@ -823,6 +842,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 UpdateDynamicChannelNames();
                 I2SConfigChanged?.Invoke(this, EventArgs.Empty);
             }
+
+            if (bp.HasLevellerConfig)
+            {
+                LevellerEnabled = bp.LevellerEnabled;
+                LevellerAmount = bp.LevellerAmount;
+                LevellerSpeed = bp.LevellerSpeed;
+                LevellerMaxGainDb = bp.LevellerMaxGainDb;
+                LevellerLookahead = bp.LevellerLookahead;
+                LevellerGateDb = bp.LevellerGateDb;
+            }
         });
     }
 
@@ -874,12 +903,27 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var sr = _device.GetStatusUInt32(15);
         if (sr.HasValue) _sampleRateHz = sr.Value;
 
+        // Fetch volume leveller
+        var lvlEnabled = _device.GetLevellerEnabled();
+        var lvlAmount = _device.GetLevellerAmount();
+        var lvlSpeed = _device.GetLevellerSpeed();
+        var lvlMaxGain = _device.GetLevellerMaxGain();
+        var lvlLookahead = _device.GetLevellerLookahead();
+        var lvlGate = _device.GetLevellerGate();
+
         // Dispatch FiltersChanged to run after all filter updates are processed
         _dispatcher.TryEnqueue(() =>
         {
             FiltersChanged?.Invoke(this, EventArgs.Empty);
             UpdateDynamicChannelNames();
             I2SConfigChanged?.Invoke(this, EventArgs.Empty);
+
+            if (lvlEnabled.HasValue) LevellerEnabled = lvlEnabled.Value;
+            if (lvlAmount.HasValue) LevellerAmount = lvlAmount.Value;
+            if (lvlSpeed.HasValue) LevellerSpeed = lvlSpeed.Value;
+            if (lvlMaxGain.HasValue) LevellerMaxGainDb = lvlMaxGain.Value;
+            if (lvlLookahead.HasValue) LevellerLookahead = lvlLookahead.Value;
+            if (lvlGate.HasValue) LevellerGateDb = lvlGate.Value;
         });
     }
 
@@ -1255,6 +1299,43 @@ public partial class MainViewModel : ObservableObject, IDisposable
     partial void OnCrossfeedItdChanged(bool value)
     {
         Task.Run(() => _device.SetCrossfeedItd(value));
+        CheckDirty();
+    }
+
+    // Volume leveller change handlers
+    partial void OnLevellerEnabledChanged(bool value)
+    {
+        Task.Run(() => _device.SetLevellerEnabled(value));
+        CheckDirty();
+    }
+
+    partial void OnLevellerAmountChanged(float value)
+    {
+        Task.Run(() => _device.SetLevellerAmount(value));
+        CheckDirty();
+    }
+
+    partial void OnLevellerSpeedChanged(int value)
+    {
+        Task.Run(() => _device.SetLevellerSpeed(value));
+        CheckDirty();
+    }
+
+    partial void OnLevellerMaxGainDbChanged(float value)
+    {
+        Task.Run(() => _device.SetLevellerMaxGain(value));
+        CheckDirty();
+    }
+
+    partial void OnLevellerLookaheadChanged(bool value)
+    {
+        Task.Run(() => _device.SetLevellerLookahead(value));
+        CheckDirty();
+    }
+
+    partial void OnLevellerGateDbChanged(float value)
+    {
+        Task.Run(() => _device.SetLevellerGate(value));
         CheckDirty();
     }
 

@@ -855,11 +855,11 @@ public sealed partial class SettingsDialog : ContentDialog
         // MCK Toggle
         HardwarePanel.Children.Add(BuildMckToggleRow());
 
-        // BCK Pin row
-        HardwarePanel.Children.Add(BuildBckPinRow());
-
         // MCK Pin row
         HardwarePanel.Children.Add(BuildMckPinRow());
+
+        // BCK Pin row
+        HardwarePanel.Children.Add(BuildBckPinRow());
 
         // MCK Multiplier row
         HardwarePanel.Children.Add(BuildMckMultiplierRow());
@@ -876,6 +876,7 @@ public sealed partial class SettingsDialog : ContentDialog
         {
             Glyph = "\uEC04", // waveform
             FontSize = 12,
+            Width = 16,
             Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 10, 0)
@@ -914,12 +915,26 @@ public sealed partial class SettingsDialog : ContentDialog
             Header = null,
             OnContent = "On",
             OffContent = "Off",
+            MinWidth = 120,
             Margin = new Thickness(0, 4, 0, 4)
         };
 
         var row = new Grid { Padding = new Thickness(0, 2, 0, 2) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var icon = new FontIcon
+        {
+            Glyph = "\uEA3B", // clock
+            FontSize = 12,
+            Width = 16,
+            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 10, 0)
+        };
+        Grid.SetColumn(icon, 0);
+        row.Children.Add(icon);
 
         var labelStack = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
         labelStack.Children.Add(new TextBlock { Text = "Master Clock (MCK)", FontSize = 13 });
@@ -929,10 +944,10 @@ public sealed partial class SettingsDialog : ContentDialog
             FontSize = 10,
             Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
         });
-        Grid.SetColumn(labelStack, 0);
+        Grid.SetColumn(labelStack, 1);
         row.Children.Add(labelStack);
 
-        Grid.SetColumn(_mckToggle, 1);
+        Grid.SetColumn(_mckToggle, 2);
         row.Children.Add(_mckToggle);
 
         _mckToggle.Toggled += OnMckToggled;
@@ -951,6 +966,7 @@ public sealed partial class SettingsDialog : ContentDialog
         {
             Glyph = "\uE823", // clock
             FontSize = 12,
+            Width = 16,
             Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 10, 0)
@@ -992,6 +1008,7 @@ public sealed partial class SettingsDialog : ContentDialog
         {
             Glyph = "\uE947", // multiply
             FontSize = 12,
+            Width = 16,
             Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 10, 0)
@@ -1008,7 +1025,7 @@ public sealed partial class SettingsDialog : ContentDialog
         Grid.SetColumn(label, 1);
         row.Children.Add(label);
 
-        _mckMultiplierCombo = new ComboBox { Width = 90, VerticalAlignment = VerticalAlignment.Center };
+        _mckMultiplierCombo = new ComboBox { Width = 120, VerticalAlignment = VerticalAlignment.Center };
         _mckMultiplierCombo.Items.Add(new ComboBoxItem { Content = "128x", Tag = 128 });
         _mckMultiplierCombo.Items.Add(new ComboBoxItem { Content = "256x", Tag = 256 });
         _mckMultiplierCombo.SelectedIndex = 0;
