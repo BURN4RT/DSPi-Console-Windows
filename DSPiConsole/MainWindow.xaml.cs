@@ -990,7 +990,7 @@ public sealed partial class MainWindow : Window
             {
                 Minimum = -60, Maximum = 10,
                 Value = ViewModel.GetChannelGain(channel),
-                Tag = channel, StepFrequency = 0.5
+                Tag = channel, StepFrequency = 0.01, SnapsTo = SliderSnapsTo.StepValues
             };
             gainSlider.ValueChanged += OnGainSliderChanged;
             gainSlider.RightTapped += (s, e) =>
@@ -1006,8 +1006,8 @@ public sealed partial class MainWindow : Window
             var gainValuePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0) };
             var gainTextBox = new TextBox
             {
-                Tag = channel, Width = 44,
-                Text = ViewModel.GetChannelGain(channel).ToString("F1", CultureInfo.InvariantCulture),
+                Tag = channel, Width = 50,
+                Text = ViewModel.GetChannelGain(channel).ToString("F2", CultureInfo.InvariantCulture),
                 FontSize = 13,
                 FontFamily = new FontFamily("Cascadia Code, Consolas"),
                 Style = (Style)RootGrid.Resources["InlineValueTextBoxStyle"]
@@ -1030,10 +1030,10 @@ public sealed partial class MainWindow : Window
                 if (delta == 0) return;
                 int direction = delta > 0 ? 1 : -1;
                 float current = ViewModel.GetChannelGain(channel);
-                float newVal = Math.Clamp(current + direction * 0.1f, -60, 10);
+                float newVal = Math.Clamp(current + direction * 0.01f, -60, 10);
                 _isUpdatingGain = true;
                 ViewModel.SetChannelGain((int)channel.Id, newVal);
-                gainTextBox.Text = newVal.ToString("F1", CultureInfo.InvariantCulture);
+                gainTextBox.Text = newVal.ToString("F2", CultureInfo.InvariantCulture);
                 gainSlider.Value = newVal;
                 _isUpdatingGain = false;
                 ev.Handled = true;
@@ -1076,7 +1076,9 @@ public sealed partial class MainWindow : Window
             {
                 Minimum = 0, Maximum = 170,
                 Value = ViewModel.GetChannelDelay(channel),
-                Tag = channel, StepFrequency = 1
+                Tag = channel,
+                StepFrequency = 0.0001,
+                SnapsTo = SliderSnapsTo.StepValues
             };
             delaySlider.ValueChanged += OnDelaySliderChanged;
             delaySlider.RightTapped += (s, e) =>
@@ -1092,7 +1094,7 @@ public sealed partial class MainWindow : Window
             var delayValuePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0) };
             var delayTextBox = new TextBox
             {
-                Tag = channel, Width = 34,
+                Tag = channel, Width = 58,
                 Text = ViewModel.GetChannelDelay(channel).ToString("0.####", CultureInfo.InvariantCulture),
                 FontSize = 13,
                 FontFamily = new FontFamily("Cascadia Code, Consolas"),
@@ -1678,7 +1680,7 @@ public sealed partial class MainWindow : Window
             ViewModel.SetChannelGain((int)channel.Id, (float)e.NewValue);
             if (_currentGainTextBox != null)
             {
-                _currentGainTextBox.Text = e.NewValue.ToString("F1", CultureInfo.InvariantCulture);
+                _currentGainTextBox.Text = e.NewValue.ToString("F2", CultureInfo.InvariantCulture);
             }
             _isUpdatingGain = false;
         }
@@ -1717,8 +1719,8 @@ public sealed partial class MainWindow : Window
             _isUpdatingGain = true;
             if (_currentGainSlider != null)
                 _currentGainSlider.Value = gain;
-            if (_currentGainTextBox != null)
-                _currentGainTextBox.Text = gain.ToString("F1", CultureInfo.InvariantCulture);
+            if (_currentGainTextBox != null && _currentGainTextBox.FocusState == FocusState.Unfocused)
+                _currentGainTextBox.Text = gain.ToString("F2", CultureInfo.InvariantCulture);
             _isUpdatingGain = false;
         }
     }
@@ -1737,7 +1739,7 @@ public sealed partial class MainWindow : Window
             _isUpdatingDelay = true;
             if (_currentDelaySlider != null)
                 _currentDelaySlider.Value = delay;
-            if (_currentDelayTextBox != null)
+            if (_currentDelayTextBox != null && _currentDelayTextBox.FocusState == FocusState.Unfocused)
                 _currentDelayTextBox.Text = delay.ToString("0.####", CultureInfo.InvariantCulture);
             _isUpdatingDelay = false;
         }

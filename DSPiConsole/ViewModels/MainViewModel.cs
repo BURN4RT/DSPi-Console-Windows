@@ -1015,7 +1015,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public void SetDelay(int channel, float ms)
     {
-        ms = MathF.Round(ms, 0);
+        ms = MathF.Round(ms, 4);
         _channelDelays[channel] = ms;
         int outputIndex = GetOutputIndex(channel);
         if (outputIndex >= 0)
@@ -1056,7 +1056,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public void SetChannelGain(int channelId, float db)
     {
-        db = MathF.Round(db, 1);
+        db = MathF.Round(db, 2);
         _channelGains[channelId] = db;
         int outputIndex = GetOutputIndex(channelId);
         if (outputIndex < 0) return;
