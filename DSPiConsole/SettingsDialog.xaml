@@ -132,8 +132,8 @@
                             <TextBlock Text="Startup Mode" FontSize="12"/>
                             <ComboBox x:Name="StartupModeCombo" HorizontalAlignment="Stretch"
                                       SelectionChanged="OnStartupModeChanged">
-                                <ComboBoxItem Content="Last Used" Tag="0"/>
-                                <ComboBoxItem Content="Default Preset" Tag="1"/>
+                                <ComboBoxItem Content="Default Preset" Tag="0"/>
+                                <ComboBoxItem Content="Last Used" Tag="1"/>
                             </ComboBox>
                         </StackPanel>
 

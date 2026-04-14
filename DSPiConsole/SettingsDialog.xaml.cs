@@ -115,7 +115,7 @@ public sealed partial class SettingsDialog : ContentDialog
             });
         }
         DefaultPresetCombo.SelectedIndex = _vm.PresetDefaultSlot;
-        DefaultPresetCombo.IsEnabled = _vm.PresetStartupMode == 1;
+        DefaultPresetCombo.IsEnabled = _vm.PresetStartupMode == 0;
 
         // Include pins
         IncludePinsToggle.IsOn = _vm.PresetIncludePins;
@@ -129,7 +129,7 @@ public sealed partial class SettingsDialog : ContentDialog
         if (StartupModeCombo.SelectedIndex < 0) return;
 
         byte mode = (byte)StartupModeCombo.SelectedIndex;
-        DefaultPresetCombo.IsEnabled = mode == 1;
+        DefaultPresetCombo.IsEnabled = mode == 0;
 
         byte defaultSlot = DefaultPresetCombo.SelectedItem is ComboBoxItem di && di.Tag is int ds ? (byte)ds : (byte)0;
         await _vm.SetPresetStartup(mode, defaultSlot);
