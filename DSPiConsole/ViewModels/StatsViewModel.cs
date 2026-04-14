@@ -27,6 +27,7 @@ public partial class StatsViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _pdmDmaUnderruns = "—";
     [ObservableProperty] private string _spdifOverruns = "—";
     [ObservableProperty] private string _spdifUnderruns = "—";
+    [ObservableProperty] private string _usbRingOverruns = "—";
 
     // Buffer stats
     [ObservableProperty] private int _numSpdifInstances;
@@ -106,6 +107,7 @@ public partial class StatsViewModel : ObservableObject, IDisposable
             var pdmDmaUnder = _device.GetStatusUInt32(6);
             var spdifOver = _device.GetStatusUInt32(7);
             var spdifUnder = _device.GetStatusUInt32(8);
+            var usbRingOver = _device.GetStatusUInt32(22);
 
             var bufferStats = _device.GetBufferStats();
 
@@ -122,6 +124,7 @@ public partial class StatsViewModel : ObservableObject, IDisposable
                 PdmDmaUnderruns = pdmDmaUnder?.ToString() ?? "—";
                 SpdifOverruns = spdifOver?.ToString() ?? "—";
                 SpdifUnderruns = spdifUnder?.ToString() ?? "—";
+                UsbRingOverruns = usbRingOver?.ToString() ?? "—";
 
                 if (bufferStats != null)
                 {

@@ -58,6 +58,7 @@ public sealed partial class StatsWindow : Window
                 PdmDmaUnderText.Text = _viewModel.PdmDmaUnderruns;
                 SpdifOverText.Text = _viewModel.SpdifOverruns;
                 SpdifUnderText.Text = _viewModel.SpdifUnderruns;
+                UsbRingOverText.Text = _viewModel.UsbRingOverruns;
 
                 // SPDIF buffer levels
                 Spdif1FillText.Text = _viewModel.Spdif1Fill;
