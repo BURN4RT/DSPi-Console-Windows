@@ -1983,6 +1983,18 @@ public sealed partial class MainWindow : Window
             });
             ((MenuFlyoutItem)flyout.Items[^1]).Click += async (s, _) => await ShowRenamePresetDialog(ViewModel.ActivePreset);
 
+            bool isAlreadyDefault = ViewModel.PresetStartupMode == 1 && ViewModel.PresetDefaultSlot == ViewModel.ActivePreset;
+            flyout.Items.Add(new MenuFlyoutItem
+            {
+                Text = "Set as Default",
+                Icon = new FontIcon { Glyph = "\uE735" },
+                IsEnabled = !isAlreadyDefault
+            });
+            ((MenuFlyoutItem)flyout.Items[^1]).Click += async (s, _) =>
+            {
+                await ViewModel.SetPresetStartup(1, (byte)ViewModel.ActivePreset);
+            };
+
             flyout.Items.Add(new MenuFlyoutItem
             {
                 Text = "Clear This Preset",
