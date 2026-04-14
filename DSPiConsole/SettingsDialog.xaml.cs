@@ -1,3 +1,4 @@
+using System.Globalization;
 using DSPiConsole.Models;
 using DSPiConsole.Usb;
 using DSPiConsole.ViewModels;
@@ -41,11 +42,11 @@ public sealed partial class SettingsDialog : ContentDialog
         AnimSpeedSlider.Value = settings.GraphAnimationSpeed;
         DebugToggle.IsOn = settings.ShowDebugInfo;
 
-        LineWidthText.Text = settings.GraphLineWidth.ToString("F1");
-        AnimSpeedText.Text = settings.GraphAnimationSpeed.ToString("F2");
+        LineWidthText.Text = settings.GraphLineWidth.ToString("F1", CultureInfo.InvariantCulture);
+        AnimSpeedText.Text = settings.GraphAnimationSpeed.ToString("F2", CultureInfo.InvariantCulture);
 
-        LineWidthSlider.ValueChanged += (s, e) => LineWidthText.Text = e.NewValue.ToString("F1");
-        AnimSpeedSlider.ValueChanged += (s, e) => AnimSpeedText.Text = e.NewValue.ToString("F2");
+        LineWidthSlider.ValueChanged += (s, e) => LineWidthText.Text = e.NewValue.ToString("F1", CultureInfo.InvariantCulture);
+        AnimSpeedSlider.ValueChanged += (s, e) => AnimSpeedText.Text = e.NewValue.ToString("F2", CultureInfo.InvariantCulture);
 
         // Graph scale controls
         DbRangeSlider.Value = settings.GraphDbRange;
@@ -203,7 +204,7 @@ public sealed partial class SettingsDialog : ContentDialog
 
     private static double ReadComboTagDouble(ComboBox combo, double fallback)
     {
-        if (combo.SelectedItem is ComboBoxItem item && item.Tag is string tag && double.TryParse(tag, out var val))
+        if (combo.SelectedItem is ComboBoxItem item && item.Tag is string tag && double.TryParse(tag, NumberStyles.Float, CultureInfo.InvariantCulture, out var val))
             return val;
         return fallback;
     }

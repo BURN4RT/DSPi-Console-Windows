@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using DSPiConsole.Core.Models;
@@ -199,7 +200,7 @@ public static class FilterFileService
         // Extract frequency (Fc XXX Hz)
         float freq = 1000f;
         var fcMatch = Regex.Match(line, @"Fc\s+([\d.]+)", RegexOptions.IgnoreCase);
-        if (fcMatch.Success && float.TryParse(fcMatch.Groups[1].Value, out var freqVal))
+        if (fcMatch.Success && float.TryParse(fcMatch.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var freqVal))
         {
             freq = freqVal;
         }
@@ -207,7 +208,7 @@ public static class FilterFileService
         // Extract gain (Gain XXX dB)
         float gain = 0f;
         var gainMatch = Regex.Match(line, @"Gain\s+([+-]?[\d.]+)", RegexOptions.IgnoreCase);
-        if (gainMatch.Success && float.TryParse(gainMatch.Groups[1].Value, out var gainVal))
+        if (gainMatch.Success && float.TryParse(gainMatch.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var gainVal))
         {
             gain = gainVal;
         }
@@ -215,7 +216,7 @@ public static class FilterFileService
         // Extract Q
         float q = 0.707f;
         var qMatch = Regex.Match(line, @"\sQ\s+([\d.]+)", RegexOptions.IgnoreCase);
-        if (qMatch.Success && float.TryParse(qMatch.Groups[1].Value, out var qVal))
+        if (qMatch.Success && float.TryParse(qMatch.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var qVal))
         {
             q = qVal;
         }

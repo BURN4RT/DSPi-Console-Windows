@@ -1,3 +1,4 @@
+using System.Globalization;
 using DSPiConsole.Core.Models;
 using DSPiConsole.ViewModels;
 using Microsoft.UI;
@@ -92,9 +93,9 @@ public sealed partial class CrossfeedWindow : Window
     private void SyncFreqFeedControls()
     {
         FreqSlider.Value = _viewModel.CrossfeedFreq;
-        FreqTextBox.Text = _viewModel.CrossfeedFreq.ToString("F0");
+        FreqTextBox.Text = _viewModel.CrossfeedFreq.ToString("F0", CultureInfo.InvariantCulture);
         FeedSlider.Value = _viewModel.CrossfeedFeed;
-        FeedTextBox.Text = _viewModel.CrossfeedFeed.ToString("F1");
+        FeedTextBox.Text = _viewModel.CrossfeedFeed.ToString("F1", CultureInfo.InvariantCulture);
     }
 
     /// <summary>
@@ -132,12 +133,12 @@ public sealed partial class CrossfeedWindow : Window
                     break;
                 case nameof(MainViewModel.CrossfeedFreq):
                     FreqSlider.Value = _viewModel.CrossfeedFreq;
-                    FreqTextBox.Text = _viewModel.CrossfeedFreq.ToString("F0");
+                    FreqTextBox.Text = _viewModel.CrossfeedFreq.ToString("F0", CultureInfo.InvariantCulture);
                     DrawGraph();
                     break;
                 case nameof(MainViewModel.CrossfeedFeed):
                     FeedSlider.Value = _viewModel.CrossfeedFeed;
-                    FeedTextBox.Text = _viewModel.CrossfeedFeed.ToString("F1");
+                    FeedTextBox.Text = _viewModel.CrossfeedFeed.ToString("F1", CultureInfo.InvariantCulture);
                     DrawGraph();
                     break;
                 case nameof(MainViewModel.CrossfeedItd):
@@ -185,7 +186,7 @@ public sealed partial class CrossfeedWindow : Window
         if (_isUpdating) return;
         _isUpdating = true;
         _viewModel.CrossfeedFreq = (float)e.NewValue;
-        FreqTextBox.Text = e.NewValue.ToString("F0");
+        FreqTextBox.Text = e.NewValue.ToString("F0", CultureInfo.InvariantCulture);
         _isUpdating = false;
         DrawGraph();
     }
@@ -193,7 +194,7 @@ public sealed partial class CrossfeedWindow : Window
     private void OnFreqTextChanged(object sender, TextChangedEventArgs e)
     {
         if (_isUpdating) return;
-        if (float.TryParse(FreqTextBox.Text, out float value))
+        if (float.TryParse(FreqTextBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
         {
             _isUpdating = true;
             value = Math.Clamp(value, 500, 2000);
@@ -209,7 +210,7 @@ public sealed partial class CrossfeedWindow : Window
         if (_isUpdating) return;
         _isUpdating = true;
         _viewModel.CrossfeedFeed = (float)e.NewValue;
-        FeedTextBox.Text = e.NewValue.ToString("F1");
+        FeedTextBox.Text = e.NewValue.ToString("F1", CultureInfo.InvariantCulture);
         _isUpdating = false;
         DrawGraph();
     }
@@ -217,7 +218,7 @@ public sealed partial class CrossfeedWindow : Window
     private void OnFeedTextChanged(object sender, TextChangedEventArgs e)
     {
         if (_isUpdating) return;
-        if (float.TryParse(FeedTextBox.Text, out float value))
+        if (float.TryParse(FeedTextBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
         {
             _isUpdating = true;
             value = Math.Clamp(value, 0, 15);

@@ -1,3 +1,4 @@
+using System.Globalization;
 using DSPiConsole.Core.Models;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
@@ -103,12 +104,12 @@ public class FloatFormatConverter : IValueConverter
     {
         if (value is not float f) return "";
         string format = parameter as string ?? "F1";
-        return f.ToString(format);
+        return f.ToString(format, CultureInfo.InvariantCulture);
     }
 
     public object ConvertBack(object value, Type targetType, object parameter, string language)
     {
-        if (value is string s && float.TryParse(s, out float result))
+        if (value is string s && float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out float result))
             return result;
         return 0f;
     }

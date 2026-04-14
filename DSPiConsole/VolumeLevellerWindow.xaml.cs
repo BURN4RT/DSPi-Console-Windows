@@ -1,3 +1,4 @@
+using System.Globalization;
 using DSPiConsole.ViewModels;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
@@ -59,11 +60,11 @@ public sealed partial class VolumeLevellerWindow : Window
         _isUpdating = true;
         EnableToggle.IsOn = _viewModel.LevellerEnabled;
         AmountSlider.Value = _viewModel.LevellerAmount;
-        AmountTextBox.Text = _viewModel.LevellerAmount.ToString("F0");
+        AmountTextBox.Text = _viewModel.LevellerAmount.ToString("F0", CultureInfo.InvariantCulture);
         MaxGainSlider.Value = _viewModel.LevellerMaxGainDb;
-        MaxGainTextBox.Text = _viewModel.LevellerMaxGainDb.ToString("F1");
+        MaxGainTextBox.Text = _viewModel.LevellerMaxGainDb.ToString("F1", CultureInfo.InvariantCulture);
         GateSlider.Value = _viewModel.LevellerGateDb;
-        GateTextBox.Text = _viewModel.LevellerGateDb.ToString("F0");
+        GateTextBox.Text = _viewModel.LevellerGateDb.ToString("F0", CultureInfo.InvariantCulture);
         LookaheadToggle.IsOn = _viewModel.LevellerLookahead;
         SetSpeedRadio(_viewModel.LevellerSpeed);
         UpdateSpeedDescription(_viewModel.LevellerSpeed);
@@ -87,7 +88,7 @@ public sealed partial class VolumeLevellerWindow : Window
                     break;
                 case nameof(MainViewModel.LevellerAmount):
                     AmountSlider.Value = _viewModel.LevellerAmount;
-                    AmountTextBox.Text = _viewModel.LevellerAmount.ToString("F0");
+                    AmountTextBox.Text = _viewModel.LevellerAmount.ToString("F0", CultureInfo.InvariantCulture);
                     break;
                 case nameof(MainViewModel.LevellerSpeed):
                     SetSpeedRadio(_viewModel.LevellerSpeed);
@@ -95,14 +96,14 @@ public sealed partial class VolumeLevellerWindow : Window
                     break;
                 case nameof(MainViewModel.LevellerMaxGainDb):
                     MaxGainSlider.Value = _viewModel.LevellerMaxGainDb;
-                    MaxGainTextBox.Text = _viewModel.LevellerMaxGainDb.ToString("F1");
+                    MaxGainTextBox.Text = _viewModel.LevellerMaxGainDb.ToString("F1", CultureInfo.InvariantCulture);
                     break;
                 case nameof(MainViewModel.LevellerLookahead):
                     LookaheadToggle.IsOn = _viewModel.LevellerLookahead;
                     break;
                 case nameof(MainViewModel.LevellerGateDb):
                     GateSlider.Value = _viewModel.LevellerGateDb;
-                    GateTextBox.Text = _viewModel.LevellerGateDb.ToString("F0");
+                    GateTextBox.Text = _viewModel.LevellerGateDb.ToString("F0", CultureInfo.InvariantCulture);
                     break;
             }
             _isUpdating = false;
@@ -121,14 +122,14 @@ public sealed partial class VolumeLevellerWindow : Window
         if (_isUpdating) return;
         _isUpdating = true;
         _viewModel.LevellerAmount = (float)e.NewValue;
-        AmountTextBox.Text = e.NewValue.ToString("F0");
+        AmountTextBox.Text = e.NewValue.ToString("F0", CultureInfo.InvariantCulture);
         _isUpdating = false;
     }
 
     private void OnAmountTextChanged(object sender, TextChangedEventArgs e)
     {
         if (_isUpdating) return;
-        if (float.TryParse(AmountTextBox.Text, out float value))
+        if (float.TryParse(AmountTextBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
         {
             _isUpdating = true;
             value = Math.Clamp(value, 0, 100);
@@ -170,14 +171,14 @@ public sealed partial class VolumeLevellerWindow : Window
         if (_isUpdating) return;
         _isUpdating = true;
         _viewModel.LevellerMaxGainDb = (float)e.NewValue;
-        MaxGainTextBox.Text = e.NewValue.ToString("F1");
+        MaxGainTextBox.Text = e.NewValue.ToString("F1", CultureInfo.InvariantCulture);
         _isUpdating = false;
     }
 
     private void OnMaxGainTextChanged(object sender, TextChangedEventArgs e)
     {
         if (_isUpdating) return;
-        if (float.TryParse(MaxGainTextBox.Text, out float value))
+        if (float.TryParse(MaxGainTextBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
         {
             _isUpdating = true;
             value = Math.Clamp(value, 0, 35);
@@ -193,14 +194,14 @@ public sealed partial class VolumeLevellerWindow : Window
         if (_isUpdating) return;
         _isUpdating = true;
         _viewModel.LevellerGateDb = (float)e.NewValue;
-        GateTextBox.Text = e.NewValue.ToString("F0");
+        GateTextBox.Text = e.NewValue.ToString("F0", CultureInfo.InvariantCulture);
         _isUpdating = false;
     }
 
     private void OnGateTextChanged(object sender, TextChangedEventArgs e)
     {
         if (_isUpdating) return;
-        if (float.TryParse(GateTextBox.Text, out float value))
+        if (float.TryParse(GateTextBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
         {
             _isUpdating = true;
             value = Math.Clamp(value, -96, 0);

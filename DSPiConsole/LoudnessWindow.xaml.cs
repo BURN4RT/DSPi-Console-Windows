@@ -1,3 +1,4 @@
+using System.Globalization;
 using DSPiConsole.Core.Models;
 using DSPiConsole.ViewModels;
 using Microsoft.UI;
@@ -50,9 +51,9 @@ public sealed partial class LoudnessWindow : Window
         _isUpdating = true;
         EnableToggle.IsOn = _viewModel.LoudnessEnabled;
         RefSPLSlider.Value = _viewModel.LoudnessRefSPL;
-        RefSPLTextBox.Text = _viewModel.LoudnessRefSPL.ToString("F0");
+        RefSPLTextBox.Text = _viewModel.LoudnessRefSPL.ToString("F0", CultureInfo.InvariantCulture);
         IntensitySlider.Value = _viewModel.LoudnessIntensity;
-        IntensityTextBox.Text = _viewModel.LoudnessIntensity.ToString("F0");
+        IntensityTextBox.Text = _viewModel.LoudnessIntensity.ToString("F0", CultureInfo.InvariantCulture);
         _isUpdating = false;
 
         // Subscribe to ViewModel changes
@@ -76,11 +77,11 @@ public sealed partial class LoudnessWindow : Window
                     break;
                 case nameof(MainViewModel.LoudnessRefSPL):
                     RefSPLSlider.Value = _viewModel.LoudnessRefSPL;
-                    RefSPLTextBox.Text = _viewModel.LoudnessRefSPL.ToString("F0");
+                    RefSPLTextBox.Text = _viewModel.LoudnessRefSPL.ToString("F0", CultureInfo.InvariantCulture);
                     break;
                 case nameof(MainViewModel.LoudnessIntensity):
                     IntensitySlider.Value = _viewModel.LoudnessIntensity;
-                    IntensityTextBox.Text = _viewModel.LoudnessIntensity.ToString("F0");
+                    IntensityTextBox.Text = _viewModel.LoudnessIntensity.ToString("F0", CultureInfo.InvariantCulture);
                     break;
             }
             _isUpdating = false;
@@ -98,7 +99,7 @@ public sealed partial class LoudnessWindow : Window
         if (_isUpdating) return;
         _isUpdating = true;
         _viewModel.LoudnessRefSPL = (float)e.NewValue;
-        RefSPLTextBox.Text = e.NewValue.ToString("F0");
+        RefSPLTextBox.Text = e.NewValue.ToString("F0", CultureInfo.InvariantCulture);
         _isUpdating = false;
         DrawCurve();
     }
@@ -106,7 +107,7 @@ public sealed partial class LoudnessWindow : Window
     private void OnRefSPLTextChanged(object sender, TextChangedEventArgs e)
     {
         if (_isUpdating) return;
-        if (float.TryParse(RefSPLTextBox.Text, out float value))
+        if (float.TryParse(RefSPLTextBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
         {
             _isUpdating = true;
             value = Math.Clamp(value, 40, 100);
@@ -122,7 +123,7 @@ public sealed partial class LoudnessWindow : Window
         if (_isUpdating) return;
         _isUpdating = true;
         _viewModel.LoudnessIntensity = (float)e.NewValue;
-        IntensityTextBox.Text = e.NewValue.ToString("F0");
+        IntensityTextBox.Text = e.NewValue.ToString("F0", CultureInfo.InvariantCulture);
         _isUpdating = false;
         DrawCurve();
     }
@@ -130,7 +131,7 @@ public sealed partial class LoudnessWindow : Window
     private void OnIntensityTextChanged(object sender, TextChangedEventArgs e)
     {
         if (_isUpdating) return;
-        if (float.TryParse(IntensityTextBox.Text, out float value))
+        if (float.TryParse(IntensityTextBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
         {
             _isUpdating = true;
             value = Math.Clamp(value, 0, 200);

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Linq;
 using DSPiConsole.Controls;
 using DSPiConsole.Core.Models;
@@ -1006,7 +1007,7 @@ public sealed partial class MainWindow : Window
             var gainTextBox = new TextBox
             {
                 Tag = channel, Width = 44,
-                Text = ViewModel.GetChannelGain(channel).ToString("F1"),
+                Text = ViewModel.GetChannelGain(channel).ToString("F1", CultureInfo.InvariantCulture),
                 FontSize = 13,
                 FontFamily = new FontFamily("Cascadia Code, Consolas"),
                 Style = (Style)RootGrid.Resources["InlineValueTextBoxStyle"]
@@ -1032,7 +1033,7 @@ public sealed partial class MainWindow : Window
                 float newVal = Math.Clamp(current + direction * 0.1f, -60, 10);
                 _isUpdatingGain = true;
                 ViewModel.SetChannelGain((int)channel.Id, newVal);
-                gainTextBox.Text = newVal.ToString("F1");
+                gainTextBox.Text = newVal.ToString("F1", CultureInfo.InvariantCulture);
                 gainSlider.Value = newVal;
                 _isUpdatingGain = false;
                 ev.Handled = true;
@@ -1092,7 +1093,7 @@ public sealed partial class MainWindow : Window
             var delayTextBox = new TextBox
             {
                 Tag = channel, Width = 34,
-                Text = ViewModel.GetChannelDelay(channel).ToString("F0"),
+                Text = ViewModel.GetChannelDelay(channel).ToString("0.####", CultureInfo.InvariantCulture),
                 FontSize = 13,
                 FontFamily = new FontFamily("Cascadia Code, Consolas"),
                 Style = (Style)RootGrid.Resources["InlineValueTextBoxStyle"]
@@ -1118,7 +1119,7 @@ public sealed partial class MainWindow : Window
                 float newVal = Math.Clamp(current + direction, 0, 170);
                 _isUpdatingDelay = true;
                 ViewModel.SetDelay((int)channel.Id, newVal);
-                delayTextBox.Text = newVal.ToString("F0");
+                delayTextBox.Text = newVal.ToString("0.####", CultureInfo.InvariantCulture);
                 delaySlider.Value = newVal;
                 _isUpdatingDelay = false;
                 ev.Handled = true;
@@ -1244,7 +1245,7 @@ public sealed partial class MainWindow : Window
     }
 
     private static string FormatFilterValue(float value, int decimals = 2) =>
-        decimals > 0 ? value.ToString($"F{decimals}").TrimEnd('0').TrimEnd('.') : value.ToString("F0");
+        decimals > 0 ? value.ToString($"F{decimals}", CultureInfo.InvariantCulture).TrimEnd('0').TrimEnd('.') : value.ToString("F0", CultureInfo.InvariantCulture);
 
     private static string FormatFilterValueSigned(float value) =>
         (value >= 0 ? "+" : "") + FormatFilterValue(value);
@@ -1643,7 +1644,7 @@ public sealed partial class MainWindow : Window
             ViewModel.SetDelay((int)channel.Id, (float)e.NewValue);
             if (_currentDelayTextBox != null)
             {
-                _currentDelayTextBox.Text = e.NewValue.ToString("F0");
+                _currentDelayTextBox.Text = e.NewValue.ToString("0.####", CultureInfo.InvariantCulture);
             }
             _isUpdatingDelay = false;
         }
@@ -1654,7 +1655,7 @@ public sealed partial class MainWindow : Window
         if (_isUpdatingDelay) return;
         if (sender is TextBox textBox && textBox.Tag is Channel channel)
         {
-            if (float.TryParse(textBox.Text, out float value))
+            if (float.TryParse(textBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
             {
                 _isUpdatingDelay = true;
                 value = Math.Clamp(value, 0, 170);
@@ -1677,7 +1678,7 @@ public sealed partial class MainWindow : Window
             ViewModel.SetChannelGain((int)channel.Id, (float)e.NewValue);
             if (_currentGainTextBox != null)
             {
-                _currentGainTextBox.Text = e.NewValue.ToString("F1");
+                _currentGainTextBox.Text = e.NewValue.ToString("F1", CultureInfo.InvariantCulture);
             }
             _isUpdatingGain = false;
         }
@@ -1688,7 +1689,7 @@ public sealed partial class MainWindow : Window
         if (_isUpdatingGain) return;
         if (sender is TextBox textBox && textBox.Tag is Channel channel)
         {
-            if (float.TryParse(textBox.Text, out float value))
+            if (float.TryParse(textBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
             {
                 _isUpdatingGain = true;
                 value = Math.Clamp(value, -60, 10);
@@ -1717,7 +1718,7 @@ public sealed partial class MainWindow : Window
             if (_currentGainSlider != null)
                 _currentGainSlider.Value = gain;
             if (_currentGainTextBox != null)
-                _currentGainTextBox.Text = gain.ToString("F1");
+                _currentGainTextBox.Text = gain.ToString("F1", CultureInfo.InvariantCulture);
             _isUpdatingGain = false;
         }
     }
@@ -1737,7 +1738,7 @@ public sealed partial class MainWindow : Window
             if (_currentDelaySlider != null)
                 _currentDelaySlider.Value = delay;
             if (_currentDelayTextBox != null)
-                _currentDelayTextBox.Text = delay.ToString("F0");
+                _currentDelayTextBox.Text = delay.ToString("0.####", CultureInfo.InvariantCulture);
             _isUpdatingDelay = false;
         }
     }
@@ -1799,7 +1800,7 @@ public sealed partial class MainWindow : Window
     {
         if (sender is TextBox textBox && textBox.Tag is (Channel channel, int bandIndex, string param))
         {
-            if (float.TryParse(textBox.Text, out float value))
+            if (float.TryParse(textBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
             {
                 var filters = ViewModel.GetFilters(channel);
                 if (bandIndex < filters.Count)

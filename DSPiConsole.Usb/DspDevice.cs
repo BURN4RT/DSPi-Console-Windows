@@ -1320,8 +1320,7 @@ public partial class DspDevice : ObservableObject, IDisposable
     /// </summary>
     public byte SetMckMultiplier(int multiplier)
     {
-        ushort wValue = (ushort)(multiplier == 256 ? 1 : 0);
-        var response = ControlTransferIn(VendorCommands.SetMckMultiplier, wValue, 1);
+        var response = ControlTransferIn(VendorCommands.SetMckMultiplier, (ushort)multiplier, 1);
         return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
     }
 

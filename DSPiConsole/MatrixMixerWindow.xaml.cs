@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using DSPiConsole.Core.Models;
 using DSPiConsole.ViewModels;
@@ -999,17 +1000,17 @@ public sealed partial class MatrixMixerWindow : Window
         db == 0f ? "0 dB" : $"{db:+0.#;-0.#} dB";
 
     private static string FormatDelay(float ms) =>
-        ms == 0f ? "0 ms" : $"{ms:0} ms";
+        ms == 0f ? "0 ms" : string.Format(CultureInfo.InvariantCulture, "{0:0} ms", ms);
 
     private static bool ParseGainText(string text, out float value)
     {
         var s = text.Replace("dB", "").Trim();
-        return float.TryParse(s, out value);
+        return float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
     }
 
     private static bool ParseDelayText(string text, out float value)
     {
         var s = text.Replace("ms", "").Trim();
-        return float.TryParse(s, out value);
+        return float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
     }
 }
