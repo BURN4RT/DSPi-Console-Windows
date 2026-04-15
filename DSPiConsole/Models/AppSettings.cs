@@ -35,6 +35,9 @@ public class AppSettings
     // Whether the popout graph follows the selected channel editor page
     public bool PopoutFollowsSelectedChannel { get; set; } = true;
 
+    // Master L/R PEQ link
+    public bool MasterPeqLinked { get; set; }
+
     public event EventHandler? SettingsChanged;
 
     public void NotifyChanged()

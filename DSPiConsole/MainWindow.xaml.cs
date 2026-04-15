@@ -94,6 +94,7 @@ public sealed partial class MainWindow : Window
         TitleBarMenuButton.SizeChanged += (_, _) => UpdateTitleBarDragRegion();
 
         ViewModel = new MainViewModel();
+        ViewModel.MasterPeqLinked = AppSettings.Instance.MasterPeqLinked;
         BodePlot.DataContext = ViewModel;
         BodePlot.SetDottedInactiveEnabled(AppSettings.Instance.DottedInactiveChannels);
 
@@ -942,9 +943,43 @@ public sealed partial class MainWindow : Window
 
         if (channel.Id == ChannelId.MasterLeft || channel.Id == ChannelId.MasterRight)
         {
-            var clearBtn = new Button { Content = "Clear All Master PEQ", HorizontalAlignment = HorizontalAlignment.Right };
+            var headerRow = new Grid();
+            headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var linkBtn = new ToggleButton
+            {
+                Content = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 6,
+                    Children =
+                    {
+                        new FontIcon { Glyph = "\uE71B", FontSize = 14 },
+                        new TextBlock { Text = "Link L/R", FontSize = 12 }
+                    }
+                },
+                IsChecked = ViewModel.MasterPeqLinked,
+                Padding = new Thickness(10, 6, 10, 6)
+            };
+            linkBtn.Click += async (s, e) =>
+            {
+                ViewModel.MasterPeqLinked = linkBtn.IsChecked == true;
+                AppSettings.Instance.MasterPeqLinked = ViewModel.MasterPeqLinked;
+                AppSettings.Instance.Save();
+                if (ViewModel.MasterPeqLinked)
+                    await ViewModel.SyncMasterFilters((int)channel.Id);
+            };
+            Grid.SetColumn(linkBtn, 0);
+            headerRow.Children.Add(linkBtn);
+
+            var clearBtn = new Button { Content = "Clear All Master PEQ" };
             clearBtn.Click += (s, e) => ViewModel.ClearAllMasterCommand.Execute(null);
-            ChannelEditorPanel.Children.Add(clearBtn);
+            Grid.SetColumn(clearBtn, 2);
+            headerRow.Children.Add(clearBtn);
+
+            ChannelEditorPanel.Children.Add(headerRow);
         }
 
         // Output channel controls: Gain, Delay, Mute

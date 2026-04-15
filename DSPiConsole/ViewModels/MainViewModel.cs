@@ -143,6 +143,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private bool _presetsDirty;
 
     [ObservableProperty]
+    private bool _masterPeqLinked;
+
+    [ObservableProperty]
     private string _platform = "";
 
     public IReadOnlyList<Channel> ActiveOutputs => Platform switch
@@ -963,10 +966,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public async Task<bool> SetFilter(int channel, int band, FilterParams p)
     {
         if (_channelData.TryGetValue(channel, out var filters) && band < filters.Count)
-        {
             filters[band] = p;
-        }
         var success = await Task.Run(() => _device.SetFilter(channel, band, p));
+
+        // Mirror to linked master channel
+        if (_masterPeqLinked && IsMasterChannel(channel))
+        {
+            int other = GetLinkedMasterChannel(channel);
+            if (_channelData.TryGetValue(other, out var otherFilters) && band < otherFilters.Count)
+                otherFilters[band] = p;
+            await Task.Run(() => _device.SetFilter(other, band, p));
+        }
+
         FiltersChanged?.Invoke(this, EventArgs.Empty);
         CheckDirty();
         return success;
@@ -981,9 +992,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public void SetFilterDeferred(int channel, int band, FilterParams p)
     {
         if (_channelData.TryGetValue(channel, out var filters) && band < filters.Count)
-        {
             filters[band] = p;
+
+        // Mirror to linked master channel (local state)
+        if (_masterPeqLinked && IsMasterChannel(channel))
+        {
+            int other = GetLinkedMasterChannel(channel);
+            if (_channelData.TryGetValue(other, out var otherFilters) && band < otherFilters.Count)
+                otherFilters[band] = p;
         }
+
         FiltersChanged?.Invoke(this, EventArgs.Empty);
         CheckDirty();
 
@@ -996,9 +1014,31 @@ public partial class MainViewModel : ObservableObject, IDisposable
             {
                 await Task.Delay(500, token);
                 _device.SetFilter(channel, band, p);
+                if (_masterPeqLinked && IsMasterChannel(channel))
+                    _device.SetFilter(GetLinkedMasterChannel(channel), band, p);
             }
             catch (TaskCanceledException) { }
         });
+    }
+
+    private static bool IsMasterChannel(int channelId) =>
+        channelId == (int)ChannelId.MasterLeft || channelId == (int)ChannelId.MasterRight;
+
+    private static int GetLinkedMasterChannel(int channelId) =>
+        channelId == (int)ChannelId.MasterLeft ? (int)ChannelId.MasterRight : (int)ChannelId.MasterLeft;
+
+    public async Task SyncMasterFilters(int sourceChannel)
+    {
+        int other = GetLinkedMasterChannel(sourceChannel);
+        if (!_channelData.TryGetValue(sourceChannel, out var srcFilters)) return;
+        for (int i = 0; i < srcFilters.Count; i++)
+        {
+            var p = srcFilters[i];
+            if (_channelData.TryGetValue(other, out var dstFilters) && i < dstFilters.Count)
+                dstFilters[i] = p;
+            await Task.Run(() => _device.SetFilter(other, i, p));
+        }
+        FiltersChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void FetchFilter(int channel, int band)
