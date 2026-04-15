@@ -97,6 +97,7 @@ public sealed partial class MainWindow : Window
         ViewModel.MasterPeqLinked = AppSettings.Instance.MasterPeqLinked;
         BodePlot.DataContext = ViewModel;
         BodePlot.SetDottedInactiveEnabled(AppSettings.Instance.DottedInactiveChannels);
+        BodePlot.SetMasterLinkedGradient(ViewModel.MasterPeqLinked);
 
         // Set window size
         var appWindow = GetAppWindow();
@@ -984,6 +985,8 @@ public sealed partial class MainWindow : Window
                 AppSettings.Instance.Save();
                 if (ViewModel.MasterPeqLinked)
                     await ViewModel.SyncMasterFilters((int)channel.Id);
+                BodePlot.SetMasterLinkedGradient(ViewModel.MasterPeqLinked);
+                ViewModel.UpdateChannelSelection(channel);
                 UpdateChannelListSelection();
             };
             Grid.SetColumn(linkBtn, 0);
@@ -1379,8 +1382,8 @@ public sealed partial class MainWindow : Window
     private void ShowDashboard()
     {
         _selectedChannel = null;
+        BodePlot.SetMasterLinkedGradient(ViewModel.MasterPeqLinked);
         BodePlot.SetSelectedChannel(-1);
-        BodePlot.SetMasterLinkedGradient(false);
         if (AppSettings.Instance.PopoutFollowsSelectedChannel)
             _graphWindow?.SetSelectedChannel(-1);
         ChannelEditorPanel.Visibility = Visibility.Collapsed;
