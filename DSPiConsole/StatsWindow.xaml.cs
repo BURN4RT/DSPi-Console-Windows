@@ -4,11 +4,15 @@ using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using WinRT.Interop;
+using System.Runtime.InteropServices;
 
 namespace DSPiConsole;
 
 public sealed partial class StatsWindow : Window
 {
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
+
     private readonly StatsViewModel _viewModel;
 
     public StatsWindow(DspDevice device)
@@ -21,7 +25,8 @@ public sealed partial class StatsWindow : Window
         var hWnd = WindowNative.GetWindowHandle(this);
         var windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
         var appWindow = AppWindow.GetFromWindowId(windowId);
-        appWindow?.Resize(new Windows.Graphics.SizeInt32(400, 1000));
+        double dpiScale = GetDpiForWindow(hWnd) / 96.0;
+        appWindow?.Resize(new Windows.Graphics.SizeInt32((int)(400 * dpiScale), (int)(1000 * dpiScale)));
         appWindow!.Title = "Stats for nerbs";
 
         if (appWindow.TitleBar is { } titleBar)

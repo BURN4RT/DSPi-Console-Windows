@@ -21,11 +21,15 @@ using Windows.Storage.Pickers;
 using Windows.UI;
 using WinRT.Interop;
 using WinRT;
+using System.Runtime.InteropServices;
 
 namespace DSPiConsole;
 
 public sealed partial class MainWindow : Window
 {
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
+
     public MainViewModel ViewModel { get; }
     public IReadOnlyList<Channel> InputChannels => Channel.Inputs;
     public IReadOnlyList<Channel> OutputChannels => Channel.Outputs;
@@ -99,11 +103,12 @@ public sealed partial class MainWindow : Window
         BodePlot.SetDottedInactiveEnabled(AppSettings.Instance.DottedInactiveChannels);
         BodePlot.SetMasterLinkedGradient(ViewModel.MasterPeqLinked);
 
-        // Set window size
+        // Set window size (scale for DPI)
         var appWindow = GetAppWindow();
         if (appWindow != null)
         {
-            appWindow.Resize(new Windows.Graphics.SizeInt32(1000, 825));
+            double dpiScale = GetDpiForWindow(WindowNative.GetWindowHandle(this)) / 96.0;
+            appWindow.Resize(new Windows.Graphics.SizeInt32((int)(1000 * dpiScale), (int)(825 * dpiScale)));
             appWindow.Title = "DSPi Console";
             appWindow.Closing += OnAppWindowClosing;
         }

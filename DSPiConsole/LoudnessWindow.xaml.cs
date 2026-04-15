@@ -9,11 +9,15 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.UI;
 using WinRT.Interop;
+using System.Runtime.InteropServices;
 
 namespace DSPiConsole;
 
 public sealed partial class LoudnessWindow : Window
 {
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
+
     private readonly MainViewModel _viewModel;
     private bool _isUpdating = true;
 
@@ -30,7 +34,8 @@ public sealed partial class LoudnessWindow : Window
         var hWnd = WindowNative.GetWindowHandle(this);
         var windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
         var appWindow = AppWindow.GetFromWindowId(windowId);
-        appWindow?.Resize(new Windows.Graphics.SizeInt32(400, 600));
+        double dpiScale = GetDpiForWindow(hWnd) / 96.0;
+        appWindow?.Resize(new Windows.Graphics.SizeInt32((int)(400 * dpiScale), (int)(600 * dpiScale)));
         appWindow!.Title = "Loudness Compensation";
 
         if (appWindow.TitleBar is { } titleBar)

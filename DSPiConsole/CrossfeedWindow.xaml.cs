@@ -10,11 +10,15 @@ using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.UI;
 using WinRT.Interop;
+using System.Runtime.InteropServices;
 
 namespace DSPiConsole;
 
 public sealed partial class CrossfeedWindow : Window
 {
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
+
     private readonly MainViewModel _viewModel;
     private bool _isUpdating = true;
     private readonly DispatcherTimer _scrollbarFadeTimer;
@@ -46,7 +50,8 @@ public sealed partial class CrossfeedWindow : Window
         var hWnd = WindowNative.GetWindowHandle(this);
         var windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
         var appWindow = AppWindow.GetFromWindowId(windowId);
-        appWindow?.Resize(new Windows.Graphics.SizeInt32(380, 560));
+        double dpiScale = GetDpiForWindow(hWnd) / 96.0;
+        appWindow?.Resize(new Windows.Graphics.SizeInt32((int)(380 * dpiScale), (int)(560 * dpiScale)));
         appWindow!.Title = "Crossfeed";
 
         if (appWindow.TitleBar is { } titleBar)

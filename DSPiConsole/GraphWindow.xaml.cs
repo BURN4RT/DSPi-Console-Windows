@@ -9,11 +9,15 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.UI;
 using WinRT.Interop;
+using System.Runtime.InteropServices;
 
 namespace DSPiConsole;
 
 public sealed partial class GraphWindow : Window
 {
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
+
     private readonly MainViewModel _viewModel;
 
     public GraphWindow(MainViewModel viewModel)
@@ -27,7 +31,8 @@ public sealed partial class GraphWindow : Window
         var hWnd = WindowNative.GetWindowHandle(this);
         var windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
         var appWindow = AppWindow.GetFromWindowId(windowId);
-        appWindow?.Resize(new Windows.Graphics.SizeInt32(800, 500));
+        double dpiScale = GetDpiForWindow(hWnd) / 96.0;
+        appWindow?.Resize(new Windows.Graphics.SizeInt32((int)(800 * dpiScale), (int)(500 * dpiScale)));
         appWindow!.Title = "Filter Response";
 
         if (appWindow.TitleBar is { } titleBar)
