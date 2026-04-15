@@ -25,6 +25,7 @@ public sealed class BodePlotControl : UserControl
     private bool _dottedInactiveEnabled = true;
     private bool _isPopout;
     private bool _ignoreVisibility;
+    private bool _masterLinkedGradient;
     private Dictionary<int, bool>? _localVisibility;
 
     /// <summary>
@@ -36,6 +37,19 @@ public sealed class BodePlotControl : UserControl
         if (_selectedChannelId == channelId) return;
         _selectedChannelId = channelId;
         Redraw(gridChanged: true);
+    }
+
+    /// <summary>
+    /// When true, Master L and R curves render with a horizontal gradient
+    /// blending both channel colors to indicate they are linked.
+    /// </summary>
+    /// <summary>
+    /// Sets gradient mode for linked master curves. Does not trigger a redraw —
+    /// call SetSelectedChannel or Invalidate after to apply the change.
+    /// </summary>
+    public void SetMasterLinkedGradient(bool enabled)
+    {
+        _masterLinkedGradient = enabled;
     }
 
     /// <summary>
@@ -558,7 +572,10 @@ public sealed class BodePlotControl : UserControl
             var polylines = new List<Polyline>();
 
             var points = BuildPoints(magnitudes, plotWidth, plotHeight);
-            bool isDotted = _dottedInactiveEnabled && _selectedChannelId >= 0 && id != _selectedChannelId;
+            // Don't dot master channels when they're linked — both are "active"
+            bool isLinkedMaster = _masterLinkedGradient &&
+                (channel.Id == ChannelId.MasterLeft || channel.Id == ChannelId.MasterRight);
+            bool isDotted = _dottedInactiveEnabled && _selectedChannelId >= 0 && id != _selectedChannelId && !isLinkedMaster;
             var dashArray = isDotted ? new DoubleCollection { 4, 3 } : null;
 
             if (showGlow && !isDotted)
@@ -584,9 +601,28 @@ public sealed class BodePlotControl : UserControl
                 polylines.Add(innerGlow);
             }
 
+            // Use gradient stroke for linked master channels
+            Brush strokeBrush;
+            if (_masterLinkedGradient &&
+                (channel.Id == ChannelId.MasterLeft || channel.Id == ChannelId.MasterRight))
+            {
+                var gradient = new LinearGradientBrush
+                {
+                    StartPoint = new Windows.Foundation.Point(0, 0.5),
+                    EndPoint = new Windows.Foundation.Point(1, 0.5)
+                };
+                gradient.GradientStops.Add(new GradientStop { Color = Channel.MasterLeft.Color, Offset = 0.3 });
+                gradient.GradientStops.Add(new GradientStop { Color = Channel.MasterRight.Color, Offset = 0.7 });
+                strokeBrush = gradient;
+            }
+            else
+            {
+                strokeBrush = new SolidColorBrush(channel.Color);
+            }
+
             var mainLine = new Polyline
             {
-                Stroke = new SolidColorBrush(channel.Color),
+                Stroke = strokeBrush,
                 StrokeThickness = lineWidth,
                 StrokeLineJoin = PenLineJoin.Round,
                 StrokeDashArray = dashArray,

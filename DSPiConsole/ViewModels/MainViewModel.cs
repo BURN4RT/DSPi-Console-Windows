@@ -452,10 +452,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         if (channel != null)
         {
-            // Show only selected channel
+            // When linked and a master channel is selected, show both Master L and R
+            bool showBothMasters = _masterPeqLinked && IsMasterChannel((int)channel.Id);
+
             foreach (var ch in Channel.All)
             {
-                _channelVisibility[(int)ch.Id] = ch.Id == channel.Id;
+                if (showBothMasters)
+                    _channelVisibility[(int)ch.Id] = IsMasterChannel((int)ch.Id);
+                else
+                    _channelVisibility[(int)ch.Id] = ch.Id == channel.Id;
             }
         }
         else

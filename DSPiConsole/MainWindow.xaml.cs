@@ -319,6 +319,13 @@ public sealed partial class MainWindow : Window
         };
         item.Tapped += OnChannelItemTapped;
 
+        // When linked, hovering one master channel highlights both
+        if (channel.Id == ChannelId.MasterLeft || channel.Id == ChannelId.MasterRight)
+        {
+            item.PointerEntered += OnMasterItemPointerEntered;
+            item.PointerExited += OnMasterItemPointerExited;
+        }
+
         var grid = new Grid { Height = 32, HorizontalAlignment = HorizontalAlignment.Stretch };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(74, GridUnitType.Pixel) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -933,9 +940,16 @@ public sealed partial class MainWindow : Window
     private void ShowChannelEditor(Channel channel)
     {
         _selectedChannel = channel;
+
+        // Set gradient flag before SetSelectedChannel to avoid a redraw without it
+        bool linkedMaster = ViewModel.MasterPeqLinked &&
+            (channel.Id == ChannelId.MasterLeft || channel.Id == ChannelId.MasterRight);
+        BodePlot.SetMasterLinkedGradient(linkedMaster);
+
         BodePlot.SetSelectedChannel((int)channel.Id);
         if (AppSettings.Instance.PopoutFollowsSelectedChannel)
             _graphWindow?.SetSelectedChannel((int)channel.Id);
+
         DashboardPanel.Visibility = Visibility.Collapsed;
         ChannelEditorPanel.Visibility = Visibility.Visible;
 
@@ -970,6 +984,7 @@ public sealed partial class MainWindow : Window
                 AppSettings.Instance.Save();
                 if (ViewModel.MasterPeqLinked)
                     await ViewModel.SyncMasterFilters((int)channel.Id);
+                UpdateChannelListSelection();
             };
             Grid.SetColumn(linkBtn, 0);
             headerRow.Children.Add(linkBtn);
@@ -1365,6 +1380,7 @@ public sealed partial class MainWindow : Window
     {
         _selectedChannel = null;
         BodePlot.SetSelectedChannel(-1);
+        BodePlot.SetMasterLinkedGradient(false);
         if (AppSettings.Instance.PopoutFollowsSelectedChannel)
             _graphWindow?.SetSelectedChannel(-1);
         ChannelEditorPanel.Visibility = Visibility.Collapsed;
@@ -1631,6 +1647,44 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// When hovering a master channel item with link enabled, force the other master
+    /// item into PointerOver visual state so both highlight together.
+    /// </summary>
+    private void OnMasterItemPointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        if (!ViewModel.MasterPeqLinked) return;
+        var other = GetPairedMasterItem(sender);
+        if (other != null)
+            VisualStateManager.GoToState(other, "PointerOver", true);
+    }
+
+    private void OnMasterItemPointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (!ViewModel.MasterPeqLinked) return;
+        var other = GetPairedMasterItem(sender);
+        if (other == null) return;
+
+        // If the other item is selected, restore to Selected state, not Normal
+        bool isSelected = InputChannelsList.SelectedItems.Contains(other);
+        VisualStateManager.GoToState(other, isSelected ? "Selected" : "Normal", true);
+    }
+
+    /// <summary>
+    /// Finds the other master channel ListViewItem in the InputChannelsList.
+    /// </summary>
+    private ListViewItem? GetPairedMasterItem(object sender)
+    {
+        if (sender is not ListViewItem item || item.Tag is not (Channel ch, int _)) return null;
+        var targetId = ch.Id == ChannelId.MasterLeft ? ChannelId.MasterRight : ChannelId.MasterLeft;
+        foreach (var child in InputChannelsList.Items)
+        {
+            if (child is ListViewItem other && other.Tag is (Channel otherCh, int _) && otherCh.Id == targetId)
+                return other;
+        }
+        return null;
+    }
+
     private void UpdateChannelListSelection()
     {
         // Clear all selections first
@@ -1641,10 +1695,30 @@ public sealed partial class MainWindow : Window
         if (_selectedChannelIndex > 0 && _selectedChannelIndex <= _channelListItems.Count)
         {
             var item = _channelListItems[_selectedChannelIndex - 1];
-            if (InputChannelsList.Items.Contains(item))
-                InputChannelsList.SelectedItem = item;
-            else if (OutputChannelsList.Items.Contains(item))
-                OutputChannelsList.SelectedItem = item;
+
+            // When linked and a master channel is selected, highlight both master items
+            if (ViewModel.MasterPeqLinked && item.Tag is (Channel ch, int _) &&
+                (ch.Id == ChannelId.MasterLeft || ch.Id == ChannelId.MasterRight) &&
+                Channel.Inputs.Count >= 2)
+            {
+                InputChannelsList.SelectionMode = ListViewSelectionMode.Multiple;
+                InputChannelsList.SelectedItems.Clear();
+                foreach (var inputItem in InputChannelsList.Items)
+                    InputChannelsList.SelectedItems.Add(inputItem);
+            }
+            else
+            {
+                InputChannelsList.SelectionMode = ListViewSelectionMode.Single;
+                if (InputChannelsList.Items.Contains(item))
+                    InputChannelsList.SelectedItem = item;
+                else if (OutputChannelsList.Items.Contains(item))
+                    OutputChannelsList.SelectedItem = item;
+            }
+        }
+        else
+        {
+            // Nothing selected — ensure single mode
+            InputChannelsList.SelectionMode = ListViewSelectionMode.Single;
         }
     }
 
