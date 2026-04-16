@@ -38,6 +38,10 @@ public class AppSettings
     // Master L/R PEQ link
     public bool MasterPeqLinked { get; set; }
 
+    // Per-channel gain/delay lock state (key = ChannelId int)
+    public Dictionary<int, bool> GainLocked { get; set; } = new();
+    public Dictionary<int, bool> DelayLocked { get; set; } = new();
+
     public event EventHandler? SettingsChanged;
 
     public void NotifyChanged()

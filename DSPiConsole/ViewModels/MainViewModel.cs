@@ -1727,6 +1727,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>
     /// Capture the current state as the "saved" baseline for change detection.
     /// </summary>
+    public PresetSnapshot? SavedSnapshot => _savedSnapshot;
+
     public void UpdateSavedSnapshot()
     {
         _savedSnapshot = PresetSnapshot.Capture(this);

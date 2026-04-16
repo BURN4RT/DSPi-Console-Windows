@@ -54,6 +54,12 @@ public sealed partial class MainWindow : Window
     private Slider? _currentDelaySlider;
     private TextBlock? _currentDelayUnitText;
 
+    // Route indicator controls for current output channel
+    private readonly Dictionary<int, Border> _currentRouteCircles = new();
+    private readonly Dictionary<int, TextBlock> _currentRouteNameTexts = new();
+    private readonly Dictionary<int, TextBox> _currentRouteGainTexts = new();
+    private readonly Dictionary<int, TextBlock> _currentRouteInvTexts = new();
+    private int _currentOutputIndex = -1;
 
     // Graph resize state
     private const double GraphMinHeight = 250;
@@ -167,6 +173,9 @@ public sealed partial class MainWindow : Window
 
         ViewModel.MatrixOutputDelayChanged += outputIndex =>
             DispatcherQueue.TryEnqueue(() => SyncDelayFromViewModel(outputIndex));
+
+        ViewModel.MatrixRouteChanged += (input, output) =>
+            DispatcherQueue.TryEnqueue(() => SyncRouteIndicator(input, output));
 
         ViewModel.PresetsChanged += (_, _) =>
             DispatcherQueue.TryEnqueue(RefreshPresetComboBox);
@@ -1009,6 +1018,16 @@ public sealed partial class MainWindow : Window
         // Output channel controls: Gain, Delay, Mute
         if (channel.IsOutput)
         {
+            // Determine output index for matrix routing
+            _currentRouteCircles.Clear();
+            _currentRouteNameTexts.Clear();
+            _currentRouteGainTexts.Clear();
+            _currentRouteInvTexts.Clear();
+            _currentOutputIndex = -1;
+            var activeOutputs = ViewModel.ActiveOutputs;
+            for (int i = 0; i < activeOutputs.Count; i++)
+                if (activeOutputs[i].Id == channel.Id) { _currentOutputIndex = i; break; }
+
             bool isMuted = ViewModel.GetChannelMute(channel);
             var dimBrush = new SolidColorBrush(Color.FromArgb(160, 180, 180, 180));
             var unitBrush = new SolidColorBrush(Color.FromArgb(140, 180, 180, 180));
@@ -1017,7 +1036,7 @@ public sealed partial class MainWindow : Window
             {
                 Background = new SolidColorBrush(Color.FromArgb(128, 45, 45, 48)),
                 CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(16, 8, 16, 8),
+                Padding = new Thickness(16, 4, 16, 4),
                 Margin = new Thickness(0, 4, 0, 4)
             };
 
@@ -1031,39 +1050,43 @@ public sealed partial class MainWindow : Window
             // ── Gain section (col 0) ──
             var gainSection = new StackPanel { Spacing = 4 };
 
+            Slider gainSlider = null!;
+            TextBox gainTextBox = null!;
+            var gainHeaderRow = new Grid { Margin = new Thickness(0, 11, 0, 0) };
+            gainHeaderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            gainHeaderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
             var gainLabelPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            gainLabelPanel.Children.Add(new FontIcon { Glyph = "\uE767", FontSize = 12, Foreground = dimBrush });
             gainLabelPanel.Children.Add(new TextBlock
             {
                 Text = "GAIN", FontSize = 11,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 Foreground = dimBrush
             });
-            gainSection.Children.Add(gainLabelPanel);
-
-            var gainSliderRow = new Grid();
-            gainSliderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            gainSliderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var gainSlider = new Slider
+            bool gainLocked = AppSettings.Instance.GainLocked.TryGetValue((int)channel.Id, out var gl) && gl;
+            var gainLockIcon = new FontIcon
             {
-                Minimum = -60, Maximum = 10,
-                Value = ViewModel.GetChannelGain(channel),
-                Tag = channel, StepFrequency = 0.01, SnapsTo = SliderSnapsTo.StepValues
+                Glyph = gainLocked ? "\uE72E" : "\uE785",
+                FontSize = 10,
+                Foreground = dimBrush,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, -4, 0, 0)
             };
-            gainSlider.ValueChanged += OnGainSliderChanged;
-            gainSlider.RightTapped += (s, e) =>
+            gainLockIcon.Tapped += (s, e) =>
             {
-                e.Handled = true;
-                if (s is Slider sl && sl.Tag is Channel ch)
-                { ViewModel.SetChannelGain((int)ch.Id, 0); sl.Value = 0; }
+                bool locking = gainLockIcon.Glyph == "\uE785";
+                gainLockIcon.Glyph = locking ? "\uE72E" : "\uE785";
+                gainSlider.IsEnabled = !locking;
+                gainTextBox.IsEnabled = !locking;
+                AppSettings.Instance.GainLocked[(int)channel.Id] = locking;
+                AppSettings.Instance.Save();
             };
-            Grid.SetColumn(gainSlider, 0);
-            gainSliderRow.Children.Add(gainSlider);
-            _currentGainSlider = gainSlider;
+            gainLabelPanel.Children.Add(gainLockIcon);
+            Grid.SetColumn(gainLabelPanel, 0);
+            gainHeaderRow.Children.Add(gainLabelPanel);
 
-            var gainValuePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0) };
-            var gainTextBox = new TextBox
+            var gainValuePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
+            gainTextBox = new TextBox
             {
                 Tag = channel, Width = 50,
                 Text = ViewModel.GetChannelGain(channel).ToString("F2", CultureInfo.InvariantCulture),
@@ -1077,7 +1100,6 @@ public sealed partial class MainWindow : Window
                 if (e.Key == Windows.System.VirtualKey.Enter)
                 {
                     e.Handled = true;
-                    // Move focus to hidden sink to clear selection and cursor
                     FocusSink.Focus(FocusState.Programmatic);
                 }
             };
@@ -1098,10 +1120,39 @@ public sealed partial class MainWindow : Window
                 ev.Handled = true;
             };
             Grid.SetColumn(gainValuePanel, 1);
-            gainSliderRow.Children.Add(gainValuePanel);
+            gainHeaderRow.Children.Add(gainValuePanel);
             _currentGainTextBox = gainTextBox;
 
-            gainSection.Children.Add(gainSliderRow);
+            gainSection.Children.Add(gainHeaderRow);
+
+            gainSlider = new Slider
+            {
+                Minimum = -60, Maximum = 10,
+                Value = ViewModel.GetChannelGain(channel),
+                Tag = channel, StepFrequency = 1, SnapsTo = SliderSnapsTo.StepValues,
+                IsEnabled = !gainLocked
+            };
+            gainTextBox.IsEnabled = !gainLocked;
+            gainSlider.ValueChanged += OnGainSliderChanged;
+            gainSlider.RightTapped += (s, e) =>
+            {
+                e.Handled = true;
+                if (s is Slider sl && sl.Tag is Channel ch && sl.IsEnabled)
+                {
+                    float saved = 0f;
+                    if (ViewModel.SavedSnapshot?.OutputGains.TryGetValue((int)ch.Id, out var sg) == true)
+                        saved = sg;
+                    _isUpdatingGain = true;
+                    ViewModel.SetChannelGain((int)ch.Id, saved);
+                    sl.Value = saved;
+                    if (_currentGainTextBox != null)
+                        _currentGainTextBox.Text = saved.ToString("F2", CultureInfo.InvariantCulture);
+                    _isUpdatingGain = false;
+                }
+            };
+            _currentGainSlider = gainSlider;
+
+            gainSection.Children.Add(gainSlider);
             Grid.SetColumn(gainSection, 0);
             cardGrid.Children.Add(gainSection);
 
@@ -1109,7 +1160,8 @@ public sealed partial class MainWindow : Window
             var separator = new Border
             {
                 Background = new SolidColorBrush(Color.FromArgb(25, 255, 255, 255)),
-                Width = 1, VerticalAlignment = VerticalAlignment.Stretch
+                Width = 1, VerticalAlignment = VerticalAlignment.Stretch,
+                Margin = new Thickness(0, 4, 0, 4)
             };
             Grid.SetColumn(separator, 1);
             cardGrid.Children.Add(separator);
@@ -1117,44 +1169,46 @@ public sealed partial class MainWindow : Window
             // ── Delay section (col 2) ──
             var delaySection = new StackPanel { Spacing = 4 };
 
+            Slider delaySlider = null!;
+            TextBox delayTextBox = null!;
+            var delayHeaderRow = new Grid { Margin = new Thickness(0, 11, 0, 0) };
+            delayHeaderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            delayHeaderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
             var delayLabelPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            delayLabelPanel.Children.Add(new FontIcon { Glyph = "\uED5A", FontSize = 12, Foreground = dimBrush });
             delayLabelPanel.Children.Add(new TextBlock
             {
                 Text = "DELAY", FontSize = 11,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 Foreground = dimBrush
             });
-            delaySection.Children.Add(delayLabelPanel);
-
-            var delaySliderRow = new Grid();
-            delaySliderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            delaySliderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var delaySlider = new Slider
+            bool delayLocked = AppSettings.Instance.DelayLocked.TryGetValue((int)channel.Id, out var dl) && dl;
+            var delayLockIcon = new FontIcon
             {
-                Minimum = 0, Maximum = 170,
-                Value = ViewModel.GetChannelDelay(channel),
-                Tag = channel,
-                StepFrequency = 0.0001,
-                SnapsTo = SliderSnapsTo.StepValues
+                Glyph = delayLocked ? "\uE72E" : "\uE785",
+                FontSize = 10,
+                Foreground = dimBrush,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, -4, 0, 0)
             };
-            delaySlider.ValueChanged += OnDelaySliderChanged;
-            delaySlider.RightTapped += (s, e) =>
+            delayLockIcon.Tapped += (s, e) =>
             {
-                e.Handled = true;
-                if (s is Slider sl && sl.Tag is Channel ch)
-                { ViewModel.SetDelay((int)ch.Id, 0); sl.Value = 0; }
+                bool locking = delayLockIcon.Glyph == "\uE785";
+                delayLockIcon.Glyph = locking ? "\uE72E" : "\uE785";
+                delaySlider.IsEnabled = !locking;
+                delayTextBox.IsEnabled = !locking;
+                AppSettings.Instance.DelayLocked[(int)channel.Id] = locking;
+                AppSettings.Instance.Save();
             };
-            Grid.SetColumn(delaySlider, 0);
-            delaySliderRow.Children.Add(delaySlider);
-            _currentDelaySlider = delaySlider;
+            delayLabelPanel.Children.Add(delayLockIcon);
+            Grid.SetColumn(delayLabelPanel, 0);
+            delayHeaderRow.Children.Add(delayLabelPanel);
 
-            var delayValuePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0) };
-            var delayTextBox = new TextBox
+            var delayValuePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
+            delayTextBox = new TextBox
             {
                 Tag = channel, Width = 58,
-                Text = ViewModel.GetChannelDelay(channel).ToString("0.####", CultureInfo.InvariantCulture),
+                Text = ViewModel.GetChannelDelay(channel).ToString("F2", CultureInfo.InvariantCulture),
                 FontSize = 13,
                 FontFamily = new FontFamily("Cascadia Code, Consolas"),
                 Style = (Style)RootGrid.Resources["InlineValueTextBoxStyle"]
@@ -1165,7 +1219,6 @@ public sealed partial class MainWindow : Window
                 if (e.Key == Windows.System.VirtualKey.Enter)
                 {
                     e.Handled = true;
-                    // Move focus to hidden sink to clear selection and cursor
                     FocusSink.Focus(FocusState.Programmatic);
                 }
             };
@@ -1214,19 +1267,51 @@ public sealed partial class MainWindow : Window
                 if (delta == 0) return;
                 int direction = delta > 0 ? 1 : -1;
                 float current = ViewModel.GetChannelDelay(channel);
-                float newVal = Math.Clamp(current + direction, 0, 170);
+                float maxDelay = ViewModel.Platform == "RP2350" ? 85 : 170;
+                float newVal = Math.Clamp(current + direction, 0, maxDelay);
                 _isUpdatingDelay = true;
                 ViewModel.SetDelay((int)channel.Id, newVal);
-                delayTextBox.Text = newVal.ToString("0.####", CultureInfo.InvariantCulture);
+                delayTextBox.Text = newVal.ToString("F2", CultureInfo.InvariantCulture);
                 delaySlider.Value = newVal;
                 _isUpdatingDelay = false;
                 ev.Handled = true;
             };
             Grid.SetColumn(delayValuePanel, 1);
-            delaySliderRow.Children.Add(delayValuePanel);
+            delayHeaderRow.Children.Add(delayValuePanel);
             _currentDelayTextBox = delayTextBox;
 
-            delaySection.Children.Add(delaySliderRow);
+            delaySection.Children.Add(delayHeaderRow);
+
+            delaySlider = new Slider
+            {
+                Minimum = 0, Maximum = ViewModel.Platform == "RP2350" ? 85 : 170,
+                Value = ViewModel.GetChannelDelay(channel),
+                Tag = channel,
+                StepFrequency = 1,
+                SnapsTo = SliderSnapsTo.StepValues,
+                IsEnabled = !delayLocked
+            };
+            delayTextBox.IsEnabled = !delayLocked;
+            delaySlider.ValueChanged += OnDelaySliderChanged;
+            delaySlider.RightTapped += (s, e) =>
+            {
+                e.Handled = true;
+                if (s is Slider sl && sl.Tag is Channel ch && sl.IsEnabled)
+                {
+                    float saved = 0f;
+                    if (ViewModel.SavedSnapshot?.Delays.TryGetValue((int)ch.Id, out var sd) == true)
+                        saved = sd;
+                    _isUpdatingDelay = true;
+                    ViewModel.SetDelay((int)ch.Id, saved);
+                    sl.Value = saved;
+                    if (_currentDelayTextBox != null)
+                        _currentDelayTextBox.Text = saved.ToString("F2", CultureInfo.InvariantCulture);
+                    _isUpdatingDelay = false;
+                }
+            };
+            _currentDelaySlider = delaySlider;
+
+            delaySection.Children.Add(delaySlider);
 
             Grid.SetColumn(delaySection, 2);
             cardGrid.Children.Add(delaySection);
@@ -1235,7 +1320,8 @@ public sealed partial class MainWindow : Window
             var muteSeparator = new Border
             {
                 Background = new SolidColorBrush(Color.FromArgb(25, 255, 255, 255)),
-                Width = 1, VerticalAlignment = VerticalAlignment.Stretch
+                Width = 1, VerticalAlignment = VerticalAlignment.Stretch,
+                Margin = new Thickness(0, 4, 0, 4)
             };
             Grid.SetColumn(muteSeparator, 3);
             cardGrid.Children.Add(muteSeparator);
@@ -1260,6 +1346,151 @@ public sealed partial class MainWindow : Window
             muteBtn.Click += OnMuteToggleClick;
             Grid.SetColumn(muteBtn, 4);
             cardGrid.Children.Add(muteBtn);
+
+            // ── Routing section (left side) ──
+            var dimGray = Color.FromArgb(90, 160, 160, 170);
+            var routeSection = new StackPanel { Spacing = 12, VerticalAlignment = VerticalAlignment.Center };
+
+            for (int input = 0; input < Channel.Inputs.Count; input++)
+            {
+                var inputCh = Channel.Inputs[input];
+                bool routed = _currentOutputIndex >= 0 && ViewModel.GetMatrixRouting(input, _currentOutputIndex);
+                float routeGain = _currentOutputIndex >= 0 ? ViewModel.GetMatrixGain(input, _currentOutputIndex) : 0f;
+                bool inverted = _currentOutputIndex >= 0 && ViewModel.GetMatrixInvert(input, _currentOutputIndex);
+                int capturedInput = input;
+
+                var cell = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+
+                // Connection circle
+                var circle = new Border
+                {
+                    Width = 14, Height = 14,
+                    CornerRadius = new CornerRadius(7),
+                    BorderThickness = routed ? new Thickness(0) : new Thickness(2),
+                    BorderBrush = new SolidColorBrush(dimGray),
+                    Background = routed ? new SolidColorBrush(inputCh.Color) : new SolidColorBrush(Colors.Transparent),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                circle.Tapped += (s, e) =>
+                {
+                    if (_currentOutputIndex < 0) return;
+                    bool nowRouted = !ViewModel.GetMatrixRouting(capturedInput, _currentOutputIndex);
+                    float g = ViewModel.GetMatrixGain(capturedInput, _currentOutputIndex);
+                    bool inv = ViewModel.GetMatrixInvert(capturedInput, _currentOutputIndex);
+                    ViewModel.SetMatrixRoute(capturedInput, _currentOutputIndex, nowRouted, g, inv);
+                };
+                _currentRouteCircles[input] = circle;
+                cell.Children.Add(circle);
+
+                // Input name
+                var nameText = new TextBlock
+                {
+                    Text = inputCh.Name,
+                    FontSize = 11,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = new SolidColorBrush(routed ? inputCh.Color : dimGray),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                _currentRouteNameTexts[input] = nameText;
+                cell.Children.Add(nameText);
+
+                // Gain text (only visible when routed)
+                var gainText = new TextBox
+                {
+                    Text = routeGain == 0f ? "0.00 dB" : string.Format(CultureInfo.InvariantCulture, "{0:+0.00;-0.00} dB", routeGain),
+                    FontSize = 10,
+                    FontFamily = new FontFamily("Cascadia Code, Consolas"),
+                    Foreground = new SolidColorBrush(Color.FromArgb(140, 255, 255, 255)),
+                    Style = (Style)RootGrid.Resources["InlineValueTextBoxStyle"],
+                    Width = 64,
+                    Visibility = routed ? Visibility.Visible : Visibility.Collapsed,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(-9, 3, 0, 0)
+                };
+                gainText.LostFocus += (s, e) =>
+                {
+                    if (_currentOutputIndex < 0 || s is not TextBox tb) return;
+                    var str = tb.Text.Replace("dB", "").Trim();
+                    if (float.TryParse(str, NumberStyles.Float, CultureInfo.InvariantCulture, out float val))
+                    {
+                        val = Math.Clamp(val, -60f, 12f);
+                        bool en = ViewModel.GetMatrixRouting(capturedInput, _currentOutputIndex);
+                        bool inv = ViewModel.GetMatrixInvert(capturedInput, _currentOutputIndex);
+                        ViewModel.SetMatrixRoute(capturedInput, _currentOutputIndex, en, val, inv);
+                    }
+                };
+                gainText.KeyDown += (s, e) =>
+                {
+                    if (e.Key == Windows.System.VirtualKey.Enter)
+                    {
+                        e.Handled = true;
+                        FocusSink.Focus(FocusState.Programmatic);
+                    }
+                };
+                gainText.PointerWheelChanged += (s, ev) =>
+                {
+                    ev.Handled = true;
+                    if (_currentOutputIndex < 0) return;
+                    int delta = ev.GetCurrentPoint(gainText).Properties.MouseWheelDelta;
+                    float step = delta > 0 ? 0.5f : -0.5f;
+                    float current = ViewModel.GetMatrixGain(capturedInput, _currentOutputIndex);
+                    float newGain = Math.Clamp(current + step, -60f, 12f);
+                    bool en = ViewModel.GetMatrixRouting(capturedInput, _currentOutputIndex);
+                    bool inv = ViewModel.GetMatrixInvert(capturedInput, _currentOutputIndex);
+                    ViewModel.SetMatrixRoute(capturedInput, _currentOutputIndex, en, newGain, inv);
+                };
+                _currentRouteGainTexts[input] = gainText;
+                cell.Children.Add(gainText);
+
+                // INV label
+                var invText = new TextBlock
+                {
+                    Text = "INV",
+                    FontSize = 9,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = new SolidColorBrush(inverted ? Color.FromArgb(175, 255, 255, 255) : Color.FromArgb(60, 200, 200, 220)),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Visibility = routed ? Visibility.Visible : Visibility.Collapsed,
+                    Margin = new Thickness(-2, 0, 0, 0)
+                };
+                invText.Tapped += (s, e) =>
+                {
+                    if (_currentOutputIndex < 0) return;
+                    bool nowInv = !ViewModel.GetMatrixInvert(capturedInput, _currentOutputIndex);
+                    bool en = ViewModel.GetMatrixRouting(capturedInput, _currentOutputIndex);
+                    float g = ViewModel.GetMatrixGain(capturedInput, _currentOutputIndex);
+                    ViewModel.SetMatrixRoute(capturedInput, _currentOutputIndex, en, g, nowInv);
+                };
+                _currentRouteInvTexts[input] = invText;
+                cell.Children.Add(invText);
+
+                routeSection.Children.Add(cell);
+            }
+
+            // ── Reorganize card: Route section | separator | Gain | sep | Delay | sep | Mute ──
+            cardGrid.ColumnDefinitions.Insert(0, new ColumnDefinition { Width = GridLength.Auto });
+            cardGrid.ColumnDefinitions.Insert(1, new ColumnDefinition { Width = new GridLength(1) });
+
+            // Shift existing children right by 2 columns
+            foreach (var child in cardGrid.Children)
+            {
+                if (child is FrameworkElement fe)
+                    Grid.SetColumn(fe, Grid.GetColumn(fe) + 2);
+            }
+
+            // Add route section at col 0
+            Grid.SetColumn(routeSection, 0);
+            cardGrid.Children.Add(routeSection);
+
+            // Add separator at col 1
+            var routeSep = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(25, 255, 255, 255)),
+                Width = 1, VerticalAlignment = VerticalAlignment.Stretch,
+                Margin = new Thickness(0, 4, 0, 4)
+            };
+            Grid.SetColumn(routeSep, 1);
+            cardGrid.Children.Add(routeSep);
 
             outputCard.Child = cardGrid;
             ChannelEditorPanel.Children.Add(outputCard);
@@ -1799,10 +2030,11 @@ public sealed partial class MainWindow : Window
         if (sender is Slider slider && slider.Tag is Channel channel)
         {
             _isUpdatingDelay = true;
-            ViewModel.SetDelay((int)channel.Id, (float)e.NewValue);
+            float snapped = MathF.Round((float)e.NewValue);
+            ViewModel.SetDelay((int)channel.Id, snapped);
             if (_currentDelayTextBox != null)
             {
-                _currentDelayTextBox.Text = e.NewValue.ToString("0.####", CultureInfo.InvariantCulture);
+                _currentDelayTextBox.Text = snapped.ToString("F2", CultureInfo.InvariantCulture);
             }
             _isUpdatingDelay = false;
         }
@@ -1816,7 +2048,7 @@ public sealed partial class MainWindow : Window
             if (float.TryParse(textBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
             {
                 _isUpdatingDelay = true;
-                value = Math.Clamp(value, 0, 170);
+                value = Math.Clamp(value, 0, ViewModel.Platform == "RP2350" ? 85 : 170);
                 ViewModel.SetDelay((int)channel.Id, value);
                 if (_currentDelaySlider != null)
                 {
@@ -1843,10 +2075,11 @@ public sealed partial class MainWindow : Window
         if (sender is Slider slider && slider.Tag is Channel channel)
         {
             _isUpdatingGain = true;
-            ViewModel.SetChannelGain((int)channel.Id, (float)e.NewValue);
+            float snapped = MathF.Round((float)e.NewValue);
+            ViewModel.SetChannelGain((int)channel.Id, snapped);
             if (_currentGainTextBox != null)
             {
-                _currentGainTextBox.Text = e.NewValue.ToString("F2", CultureInfo.InvariantCulture);
+                _currentGainTextBox.Text = snapped.ToString("F2", CultureInfo.InvariantCulture);
             }
             _isUpdatingGain = false;
         }
@@ -1906,9 +2139,37 @@ public sealed partial class MainWindow : Window
             if (_currentDelaySlider != null)
                 _currentDelaySlider.Value = delay;
             if (_currentDelayTextBox != null && _currentDelayTextBox.FocusState == FocusState.Unfocused)
-                _currentDelayTextBox.Text = delay.ToString("0.####", CultureInfo.InvariantCulture);
+                _currentDelayTextBox.Text = delay.ToString("F2", CultureInfo.InvariantCulture);
             _isUpdatingDelay = false;
         }
+    }
+
+    private void SyncRouteIndicator(int input, int output)
+    {
+        if (output != _currentOutputIndex) return;
+        if (!_currentRouteCircles.ContainsKey(input)) return;
+
+        var inputCh = Channel.Inputs[input];
+        bool routed = ViewModel.GetMatrixRouting(input, output);
+        float gain = ViewModel.GetMatrixGain(input, output);
+        bool inverted = ViewModel.GetMatrixInvert(input, output);
+        var dimGray = Color.FromArgb(90, 160, 160, 170);
+
+        var circle = _currentRouteCircles[input];
+        circle.Background = routed ? new SolidColorBrush(inputCh.Color) : new SolidColorBrush(Colors.Transparent);
+        circle.BorderThickness = routed ? new Thickness(0) : new Thickness(2);
+
+        var nameText = _currentRouteNameTexts[input];
+        nameText.Foreground = new SolidColorBrush(routed ? inputCh.Color : dimGray);
+
+        var gainText = _currentRouteGainTexts[input];
+        gainText.Visibility = routed ? Visibility.Visible : Visibility.Collapsed;
+        if (gainText.FocusState == FocusState.Unfocused)
+            gainText.Text = gain == 0f ? "0.00 dB" : string.Format(CultureInfo.InvariantCulture, "{0:+0.00;-0.00} dB", gain);
+
+        var invText = _currentRouteInvTexts[input];
+        invText.Visibility = routed ? Visibility.Visible : Visibility.Collapsed;
+        invText.Foreground = new SolidColorBrush(inverted ? Color.FromArgb(175, 255, 255, 255) : Color.FromArgb(60, 200, 200, 220));
     }
 
     private void RefreshDashboardHeaderStats(Channel channel)
