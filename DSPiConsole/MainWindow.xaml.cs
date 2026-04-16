@@ -52,6 +52,7 @@ public sealed partial class MainWindow : Window
     private TextBox? _currentDelayTextBox;
     private Slider? _currentGainSlider;
     private Slider? _currentDelaySlider;
+    private TextBlock? _currentDelayUnitText;
 
 
     // Graph resize state
@@ -1016,7 +1017,7 @@ public sealed partial class MainWindow : Window
             {
                 Background = new SolidColorBrush(Color.FromArgb(128, 45, 45, 48)),
                 CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(16, 12, 16, 16),
+                Padding = new Thickness(16, 8, 16, 8),
                 Margin = new Thickness(0, 4, 0, 4)
             };
 
@@ -1028,7 +1029,7 @@ public sealed partial class MainWindow : Window
             cardGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
             // ── Gain section (col 0) ──
-            var gainSection = new StackPanel { Spacing = 6 };
+            var gainSection = new StackPanel { Spacing = 4 };
 
             var gainLabelPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
             gainLabelPanel.Children.Add(new FontIcon { Glyph = "\uE767", FontSize = 12, Foreground = dimBrush });
@@ -1114,7 +1115,7 @@ public sealed partial class MainWindow : Window
             cardGrid.Children.Add(separator);
 
             // ── Delay section (col 2) ──
-            var delaySection = new StackPanel { Spacing = 6 };
+            var delaySection = new StackPanel { Spacing = 4 };
 
             var delayLabelPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
             delayLabelPanel.Children.Add(new FontIcon { Glyph = "\uED5A", FontSize = 12, Foreground = dimBrush });
@@ -1168,8 +1169,45 @@ public sealed partial class MainWindow : Window
                     FocusSink.Focus(FocusState.Programmatic);
                 }
             };
-            delayValuePanel.Children.Add(delayTextBox);
-            delayValuePanel.Children.Add(new TextBlock { Text = "ms", FontSize = 10, VerticalAlignment = VerticalAlignment.Center, Foreground = unitBrush });
+            var delayCmOverlay = new TextBlock
+            {
+                FontSize = 13,
+                FontFamily = new FontFamily("Cascadia Code, Consolas"),
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 0, 1, 0),
+                Foreground = delayTextBox.Foreground,
+                Visibility = Visibility.Collapsed
+            };
+            var delayBoxContainer = new Grid { Width = 58 };
+            delayBoxContainer.Children.Add(delayTextBox);
+            delayBoxContainer.Children.Add(delayCmOverlay);
+            delayValuePanel.Children.Add(delayBoxContainer);
+
+            var delayUnitText = new TextBlock { Text = "ms", FontSize = 10, VerticalAlignment = VerticalAlignment.Center, Foreground = unitBrush, Width = 20 };
+            delayUnitText.PointerPressed += (s, ev) =>
+            {
+                ev.Handled = true;
+                float ms = ViewModel.GetChannelDelay(channel);
+                delayCmOverlay.Text = FormatDelayCm(ms);
+                delayCmOverlay.Visibility = Visibility.Visible;
+                delayTextBox.Opacity = 0;
+                delayUnitText.Text = "cm";
+            };
+            delayUnitText.PointerReleased += (s, ev) =>
+            {
+                delayCmOverlay.Visibility = Visibility.Collapsed;
+                delayTextBox.Opacity = 1;
+                delayUnitText.Text = "ms";
+            };
+            delayUnitText.PointerExited += (s, ev) =>
+            {
+                delayCmOverlay.Visibility = Visibility.Collapsed;
+                delayTextBox.Opacity = 1;
+                delayUnitText.Text = "ms";
+            };
+            _currentDelayUnitText = delayUnitText;
+            delayValuePanel.Children.Add(delayUnitText);
             delayValuePanel.PointerWheelChanged += (s, ev) =>
             {
                 var delta = ev.GetCurrentPoint(delayValuePanel).Properties.MouseWheelDelta;
@@ -1189,6 +1227,7 @@ public sealed partial class MainWindow : Window
             _currentDelayTextBox = delayTextBox;
 
             delaySection.Children.Add(delaySliderRow);
+
             Grid.SetColumn(delaySection, 2);
             cardGrid.Children.Add(delaySection);
 
@@ -1240,8 +1279,8 @@ public sealed partial class MainWindow : Window
         {
             Background = new SolidColorBrush(Color.FromArgb(128, 45, 45, 48)),
             CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(8),
-            Margin = new Thickness(0, 4, 0, 0)
+            Padding = new Thickness(8, 6, 8, 6),
+            Margin = new Thickness(0, 2, 0, 0)
         };
 
         var grid = new Grid();
@@ -1266,7 +1305,7 @@ public sealed partial class MainWindow : Window
         grid.Children.Add(bandLabel);
 
         // Filter type selector
-        var typeCombo = new ComboBox { Width = 120, Tag = (channel, bandIndex) };
+        var typeCombo = new ComboBox { Width = 120, Tag = (channel, bandIndex), Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] };
         foreach (var type in Enum.GetValues<FilterType>())
         {
             typeCombo.Items.Add(new ComboBoxItem { Content = type.GetDisplayName(), Tag = type });
@@ -1786,6 +1825,16 @@ public sealed partial class MainWindow : Window
                 _isUpdatingDelay = false;
             }
         }
+    }
+
+    private string FormatDelayCm(float ms)
+    {
+        if (ms == 0f) return "0";
+        uint sr = ViewModel.SampleRateHz;
+        if (sr == 0) sr = 48000;
+        float samples = MathF.Round(ms / 1000f * sr);
+        float cm = samples / sr * 34300f;
+        return string.Format(CultureInfo.InvariantCulture, "{0:0.#}", cm);
     }
 
     private void OnGainSliderChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
