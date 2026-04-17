@@ -71,6 +71,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private bool _presetIncludePins;
     private PresetSnapshot? _savedSnapshot;
 
+    // Suppress dirty detection while bulk-fetching state from the device.
+    // Setters fired during FetchAll would otherwise each capture a snapshot
+    // and diff it against the previous (stale) snapshot, flipping PresetsDirty
+    // true. FetchAll callers set this, then clear it after UpdateSavedSnapshot.
+    private volatile bool _suppressDirtyCheck;
+
     // Channel copy/paste clipboard
     private ChannelClipboard? _channelClipboard;
     public bool HasChannelClipboard => _channelClipboard != null;
@@ -164,7 +170,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public bool IsPresetOccupied(int slot) => (_presetOccupiedMask & (1 << slot)) != 0;
     public ushort PresetOccupiedMask => _presetOccupiedMask;
     public string GetPresetName(int slot) => !string.IsNullOrEmpty(_presetNames[slot]) ? _presetNames[slot] : $"Preset {slot + 1}";
-    public string GetPresetDisplayName(int slot) => IsPresetOccupied(slot) ? GetPresetName(slot) : $"Preset {slot + 1}";
+    // Display name keyed on the fetched name, not the occupied mask — a transient
+    // USB failure on GetPresetDirectory shouldn't hide the real name if we got it.
+    public string GetPresetDisplayName(int slot) =>
+        !string.IsNullOrEmpty(_presetNames[slot]) ? _presetNames[slot] : $"Preset {slot + 1}";
     public byte PresetStartupMode => _presetStartupMode;
     public byte PresetDefaultSlot => _presetDefaultSlot;
     public bool PresetIncludePins => _presetIncludePins;
@@ -325,6 +334,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                     IsDeviceConnected = _device.IsConnected;
                     if (_device.IsConnected)
                     {
+                        _suppressDirtyCheck = true;
                         Task.Run(() =>
                         {
                             var info = _device.GetDeviceInfo();
@@ -335,7 +345,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
                             System.Threading.Thread.Sleep(100);
                             FetchAll();
                             FetchPresetInfo();
-                            _dispatcher.TryEnqueue(() => UpdateSavedSnapshot());
+                            _dispatcher.TryEnqueue(() =>
+                            {
+                                UpdateSavedSnapshot();
+                                PresetsDirty = false;
+                                _suppressDirtyCheck = false;
+                            });
                         });
                     }
                     else
@@ -345,6 +360,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                         _presetsChecked = false;
                         ActivePreset = -1;
                         PresetsDirty = false;
+                        _savedSnapshot = null;
                     }
                 });
             }
@@ -1472,8 +1488,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var result = _device.LoadParams();
             if (result == FlashResult.Ok)
             {
+                _suppressDirtyCheck = true;
                 FetchAll();
-                _dispatcher.TryEnqueue(() => { PresetsDirty = false; UpdateSavedSnapshot(); });
+                _dispatcher.TryEnqueue(() =>
+                {
+                    UpdateSavedSnapshot();
+                    PresetsDirty = false;
+                    _suppressDirtyCheck = false;
+                });
             }
             return result;
         });
@@ -1490,8 +1512,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var result = _device.FactoryReset();
             if (result == FlashResult.Ok)
             {
+                _suppressDirtyCheck = true;
                 FetchAll();
-                _dispatcher.TryEnqueue(() => { PresetsDirty = false; UpdateSavedSnapshot(); });
+                _dispatcher.TryEnqueue(() =>
+                {
+                    UpdateSavedSnapshot();
+                    PresetsDirty = false;
+                    _suppressDirtyCheck = false;
+                });
             }
             return result;
         });
@@ -1526,18 +1554,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
                     ? lastActive : 0;
             }
 
-            // Fetch names for occupied slots
+            // Fetch names for all slots unconditionally (matching macOS). The occupied
+            // mask and the name query are independent on the device — don't gate one on
+            // the other, or a transient directory failure would leave names blank.
             for (int i = 0; i < PresetSlotCount; i++)
             {
-                if (IsPresetOccupied(i))
-                {
-                    var name = _device.GetPresetName(i);
-                    _presetNames[i] = name ?? "";
-                }
-                else
-                {
-                    _presetNames[i] = "";
-                }
+                var name = _device.GetPresetName(i);
+                _presetNames[i] = name ?? "";
             }
 
             _dispatcher.TryEnqueue(() =>
@@ -1548,41 +1571,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
             });
         }
         catch { }
-    }
-
-    private void RefreshPresetMetadata()
-    {
-        var dir = _device.GetPresetDirectory();
-        if (dir == null) return;
-
-        _presetOccupiedMask = dir.Value.OccupiedMask;
-        _presetStartupMode = dir.Value.StartupMode;
-        _presetDefaultSlot = dir.Value.DefaultSlot;
-        var lastActive = dir.Value.LastActiveSlot;
-        _presetIncludePins = dir.Value.IncludePins;
-
-        // Use firmware's active slot if valid and occupied, otherwise default to slot 0
-        _activePresetSlot = (lastActive < PresetSlotCount && (_presetOccupiedMask & (1 << lastActive)) != 0)
-            ? lastActive : 0;
-
-        for (int i = 0; i < PresetSlotCount; i++)
-        {
-            if (IsPresetOccupied(i))
-            {
-                var name = _device.GetPresetName(i);
-                _presetNames[i] = name ?? "";
-            }
-            else
-            {
-                _presetNames[i] = "";
-            }
-        }
-
-        _dispatcher.TryEnqueue(() =>
-        {
-            ActivePreset = _activePresetSlot;
-            PresetsChanged?.Invoke(this, EventArgs.Empty);
-        });
     }
 
     /// <summary>
@@ -1599,11 +1587,23 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var result = _device.SavePreset(slot);
             if (result == PresetResult.Ok)
             {
-                RefreshPresetMetadata();
+                // Firmware defers both REQ_PRESET_SET_NAME and REQ_PRESET_SAVE
+                // flash writes to its main loop. Reading the directory or names
+                // back immediately (via GetPresetDirectory / GetPresetName) races
+                // those deferred writes and returns stale data — which would
+                // overwrite the name we just set. Update local state
+                // optimistically instead, matching the macOS app's behavior.
+                _presetOccupiedMask |= (ushort)(1 << slot);
+                _activePresetSlot = slot;
+                if (!string.IsNullOrEmpty(name))
+                    _presetNames[slot] = name;
+
                 _dispatcher.TryEnqueue(() =>
                 {
+                    ActivePreset = slot;
                     PresetsDirty = false;
                     UpdateSavedSnapshot();
+                    PresetsChanged?.Invoke(this, EventArgs.Empty);
                 });
             }
             return result;
@@ -1621,15 +1621,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var result = _device.LoadPreset(slot);
             if (result == PresetResult.Ok)
             {
-                // Wait for firmware mute period to end before re-syncing
-                System.Threading.Thread.Sleep(10);
-                FetchAll();
+                // Advance active-slot state before resyncing so property-change
+                // listeners triggered by FetchAll see the new slot immediately.
                 _activePresetSlot = slot;
+                _dispatcher.TryEnqueue(() => ActivePreset = slot);
+
+                // Wait for firmware to finish copying preset from flash to RAM
+                System.Threading.Thread.Sleep(100);
+                _suppressDirtyCheck = true;
+                FetchAll();
+
                 _dispatcher.TryEnqueue(() =>
                 {
-                    ActivePreset = slot;
-                    PresetsDirty = false;
                     UpdateSavedSnapshot();
+                    PresetsDirty = false;
+                    _suppressDirtyCheck = false;
                     PresetsChanged?.Invoke(this, EventArgs.Empty);
                 });
             }
@@ -1648,7 +1654,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var result = _device.DeletePreset(slot);
             if (result == PresetResult.Ok)
             {
-                RefreshPresetMetadata();
+                // Firmware defers the delete to its main loop, so reading back
+                // the directory immediately is racy. Update local state
+                // optimistically: clear the occupied bit and name. If this was
+                // the active slot the firmware will factory-reset live state;
+                // the caller is expected to trigger a reload in that case.
+                _presetOccupiedMask &= (ushort)~(1 << slot);
+                _presetNames[slot] = "";
+                _dispatcher.TryEnqueue(() => PresetsChanged?.Invoke(this, EventArgs.Empty));
             }
             return result;
         });
@@ -1739,6 +1752,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     private void CheckDirty()
     {
+        if (_suppressDirtyCheck) return;
         if (_savedSnapshot == null) return;
         var current = PresetSnapshot.Capture(this);
         var changes = PresetDiff.Diff(_savedSnapshot, current, this);

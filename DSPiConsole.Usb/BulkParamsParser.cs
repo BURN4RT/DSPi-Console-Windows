@@ -66,15 +66,26 @@ public class BulkParams
     public float LevellerMaxGainDb;  // 0-35
     public float LevellerGateDb;     // -96 to 0
     public bool HasLevellerConfig;
+
+    // Per-channel preamp (offset 2864, 16 bytes) — V6+, present when packet >= 2872
+    public float PreampLDb;
+    public float PreampRDb;
+    public bool HasPerChannelPreamp;
+
+    // Master volume (offset 2880, 16 bytes) — V6+, present when packet >= 2884
+    public float MasterVolumeDb;
+    public bool HasMasterVolume;
 }
 
 /// <summary>
-/// Parses the 2832-byte bulk parameter packet from firmware.
+/// Parses the bulk parameter packet from firmware. V2 is 2832 bytes; V3+ grows
+/// with trailing optional sections (I2S, leveller, per-channel preamp, master
+/// volume). Accept any version >= V2 so newer firmwares aren't rejected.
 /// </summary>
 public static class BulkParamsParser
 {
     public const int PacketSize = 2832;
-    public const byte ExpectedFormatVersion = 2;
+    public const byte MinFormatVersion = 2;
 
     // Section offsets
     private const int OffsetHeader = 0;
@@ -97,7 +108,7 @@ public static class BulkParamsParser
 
         // ── Header (16 bytes) ──
         p.FormatVersion = buffer[OffsetHeader + 0];
-        if (p.FormatVersion != ExpectedFormatVersion)
+        if (p.FormatVersion < MinFormatVersion)
             return null;
 
         p.PlatformId = buffer[OffsetHeader + 1];
@@ -215,6 +226,23 @@ public static class BulkParamsParser
             p.LevellerAmount = BitConverter.ToSingle(buffer, OffsetLeveller + 4);
             p.LevellerMaxGainDb = BitConverter.ToSingle(buffer, OffsetLeveller + 8);
             p.LevellerGateDb = BitConverter.ToSingle(buffer, OffsetLeveller + 12);
+        }
+
+        // ── Per-channel preamp (16 bytes, V6+) ──
+        const int OffsetPreamp = 2864;
+        if (p.FormatVersion >= 6 && buffer.Length >= OffsetPreamp + 8)
+        {
+            p.HasPerChannelPreamp = true;
+            p.PreampLDb = BitConverter.ToSingle(buffer, OffsetPreamp + 0);
+            p.PreampRDb = BitConverter.ToSingle(buffer, OffsetPreamp + 4);
+        }
+
+        // ── Master volume (16 bytes, V6+) ──
+        const int OffsetMasterVol = 2880;
+        if (p.FormatVersion >= 6 && buffer.Length >= OffsetMasterVol + 4)
+        {
+            p.HasMasterVolume = true;
+            p.MasterVolumeDb = BitConverter.ToSingle(buffer, OffsetMasterVol + 0);
         }
 
         return p;
