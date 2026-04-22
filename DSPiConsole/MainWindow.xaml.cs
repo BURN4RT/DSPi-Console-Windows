@@ -200,12 +200,20 @@ public sealed partial class MainWindow : Window
             {
                 DispatcherQueue.TryEnqueue(UpdateDeviceSelector);
             }
-            else if (e.PropertyName == nameof(MainViewModel.PresetsDirty) ||
-                     e.PropertyName == nameof(MainViewModel.ActivePreset))
+            else if (e.PropertyName == nameof(MainViewModel.ActivePreset))
             {
                 DispatcherQueue.TryEnqueue(() =>
                 {
-                    RefreshPresetComboBox();
+                    UpdateActivePresetSelection();
+                    UpdatePresetDirtyIndicator();
+                    UpdateWindowTitle();
+                });
+            }
+            else if (e.PropertyName == nameof(MainViewModel.PresetsDirty))
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    UpdatePresetDirtyIndicator();
                     UpdateWindowTitle();
                 });
             }
@@ -2288,34 +2296,71 @@ public sealed partial class MainWindow : Window
     private void RefreshPresetComboBox()
     {
         _isUpdatingPresetCombo = true;
-        PresetComboBox.Items.Clear();
-
-        if (!ViewModel.PresetsSupported)
+        try
         {
-            PresetSection.Visibility = Visibility.Collapsed;
-            _isUpdatingPresetCombo = false;
-            return;
-        }
-
-        PresetSection.Visibility = ViewModel.IsDeviceConnected ? Visibility.Visible : Visibility.Collapsed;
-
-        for (int i = 0; i < MainViewModel.PresetSlotCount; i++)
-        {
-            PresetComboBox.Items.Add(new ComboBoxItem
+            if (!ViewModel.PresetsSupported)
             {
-                Content = ViewModel.GetPresetDisplayName(i),
-                Tag = i
-            });
+                PresetSection.Visibility = Visibility.Collapsed;
+                PresetComboBox.Items.Clear();
+                return;
+            }
+
+            PresetSection.Visibility = ViewModel.IsDeviceConnected ? Visibility.Visible : Visibility.Collapsed;
+
+            // Only clear+rebuild items if their content has actually changed.
+            // Tearing down and re-adding items while the ComboBox is in a focus
+            // or flyout transition can throw inside Microsoft.ui.xaml.
+            bool itemsMatch = PresetComboBox.Items.Count == MainViewModel.PresetSlotCount;
+            if (itemsMatch)
+            {
+                for (int i = 0; i < MainViewModel.PresetSlotCount; i++)
+                {
+                    if (PresetComboBox.Items[i] is ComboBoxItem cbi &&
+                        cbi.Content is string s &&
+                        s == ViewModel.GetPresetDisplayName(i))
+                        continue;
+                    itemsMatch = false;
+                    break;
+                }
+            }
+
+            if (!itemsMatch)
+            {
+                PresetComboBox.Items.Clear();
+                for (int i = 0; i < MainViewModel.PresetSlotCount; i++)
+                {
+                    PresetComboBox.Items.Add(new ComboBoxItem
+                    {
+                        Content = ViewModel.GetPresetDisplayName(i),
+                        Tag = i
+                    });
+                }
+            }
+
+            UpdateActivePresetSelection();
+            UpdatePresetDirtyIndicator();
         }
+        finally
+        {
+            _isUpdatingPresetCombo = false;
+        }
+    }
 
-        UpdatePresetDirtyIndicator();
-
-        if (ViewModel.ActivePreset >= 0 && ViewModel.ActivePreset < MainViewModel.PresetSlotCount)
-            PresetComboBox.SelectedIndex = ViewModel.ActivePreset;
-        else
-            PresetComboBox.SelectedIndex = -1;
-
-        _isUpdatingPresetCombo = false;
+    private void UpdateActivePresetSelection()
+    {
+        _isUpdatingPresetCombo = true;
+        try
+        {
+            int target = ViewModel.ActivePreset >= 0 && ViewModel.ActivePreset < PresetComboBox.Items.Count
+                ? ViewModel.ActivePreset
+                : -1;
+            if (PresetComboBox.SelectedIndex != target)
+                PresetComboBox.SelectedIndex = target;
+        }
+        finally
+        {
+            _isUpdatingPresetCombo = false;
+        }
     }
 
     private void UpdateWindowTitle()
@@ -2323,7 +2368,8 @@ public sealed partial class MainWindow : Window
         var title = ViewModel.PresetsDirty
             ? "DSPi Console — Unsaved Changes"
             : "DSPi Console";
-        AppTitleText.Text = title;
+        if (AppTitleText != null)
+            AppTitleText.Text = title;
         var appWindow = GetAppWindow();
         if (appWindow != null)
             appWindow.Title = title;
@@ -2333,32 +2379,41 @@ public sealed partial class MainWindow : Window
     // the ComboBox, without letting it affect the ComboBox's measured width.
     private void UpdatePresetDirtyIndicator()
     {
-        if (!ViewModel.PresetsDirty || ViewModel.ActivePreset < 0 || !ViewModel.PresetsSupported)
+        try
+        {
+            if (!ViewModel.PresetsDirty || ViewModel.ActivePreset < 0 ||
+                ViewModel.ActivePreset >= MainViewModel.PresetSlotCount ||
+                !ViewModel.PresetsSupported)
+            {
+                PresetDirtyIndicator.Visibility = Visibility.Collapsed;
+                PresetSaveButton.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            PresetSaveButton.Visibility = AppSettings.Instance.ShowPresetSaveButton
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+            var name = ViewModel.GetPresetDisplayName(ViewModel.ActivePreset);
+            var measure = new TextBlock
+            {
+                Text = name,
+                FontSize = PresetComboBox.FontSize,
+                FontFamily = PresetComboBox.FontFamily,
+                FontWeight = PresetComboBox.FontWeight,
+                FontStyle = PresetComboBox.FontStyle
+            };
+            measure.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+
+            var leftOffset = PresetComboBox.Padding.Left + measure.DesiredSize.Width + 2;
+            PresetDirtyIndicator.Margin = new Thickness(leftOffset, 0, 0, 0);
+            PresetDirtyIndicator.Visibility = Visibility.Visible;
+        }
+        catch
         {
             PresetDirtyIndicator.Visibility = Visibility.Collapsed;
             PresetSaveButton.Visibility = Visibility.Collapsed;
-            return;
         }
-
-        PresetSaveButton.Visibility = AppSettings.Instance.ShowPresetSaveButton
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-
-        var name = ViewModel.GetPresetDisplayName(ViewModel.ActivePreset);
-        var measure = new TextBlock
-        {
-            Text = name,
-            FontSize = PresetComboBox.FontSize,
-            FontFamily = PresetComboBox.FontFamily,
-            FontWeight = PresetComboBox.FontWeight,
-            FontStyle = PresetComboBox.FontStyle
-        };
-        measure.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
-
-        // ComboBox's inner ContentPresenter starts after the control's left padding.
-        var leftOffset = PresetComboBox.Padding.Left + measure.DesiredSize.Width + 2;
-        PresetDirtyIndicator.Margin = new Thickness(leftOffset, 0, 0, 0);
-        PresetDirtyIndicator.Visibility = Visibility.Visible;
     }
 
     private void OnPresetComboPointerEntered(object sender, PointerRoutedEventArgs e)
@@ -2373,12 +2428,32 @@ public sealed partial class MainWindow : Window
         PresetComboBox.Background = new SolidColorBrush(Colors.Transparent);
     }
 
+    private bool _presetSwitchInProgress;
+
     private async void OnPresetSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_isUpdatingPresetCombo) return;
         if (PresetComboBox.SelectedItem is not ComboBoxItem item || item.Tag is not int slot) return;
 
         if (!ViewModel.IsDeviceConnected) return;
+
+        // Prevent re-entry: if a previous switch is mid-flight (dialog open or
+        // LoadPreset awaiting), ignore new selection changes. Without this, a
+        // second click can race the first and crash during the refresh.
+        if (_presetSwitchInProgress) { RevertPresetCombo(); return; }
+        _presetSwitchInProgress = true;
+        try
+        {
+            await PresetSwitchAsync(slot);
+        }
+        finally
+        {
+            _presetSwitchInProgress = false;
+        }
+    }
+
+    private async Task PresetSwitchAsync(int slot)
+    {
 
         // If dirty, ask about unsaved changes
         if (ViewModel.PresetsDirty && ViewModel.ActivePreset >= 0)

@@ -34,6 +34,14 @@ public class PresetSnapshot
     public FilterParams[,] Eq = new FilterParams[11, 12];
     public Dictionary<int, string> ChannelNames = new();
 
+    public Dictionary<int, byte> OutputPins = new();
+    public byte[] OutputSlotTypes = new byte[4];
+
+    public byte I2SBckPin;
+    public bool MckEnabled;
+    public byte MckPin;
+    public int MckMultiplier;
+
     /// <summary>
     /// Capture a snapshot from the current ViewModel state.
     /// </summary>
@@ -100,6 +108,18 @@ public class PresetSnapshot
             if (name != ch.Name)
                 snap.ChannelNames[id] = name;
         }
+
+        // Pin assignments (per pin-output id) and output slot types
+        for (int id = 0; id < 5; id++)
+            snap.OutputPins[id] = vm.GetOutputPinValue(id);
+        for (int s = 0; s < snap.OutputSlotTypes.Length; s++)
+            snap.OutputSlotTypes[s] = (byte)vm.GetOutputSlotType(s);
+
+        // I2S hardware config
+        snap.I2SBckPin = vm.I2SBckPin;
+        snap.MckEnabled = vm.MckEnabled;
+        snap.MckPin = vm.MckPin;
+        snap.MckMultiplier = vm.MckMultiplier;
 
         return snap;
     }
@@ -223,6 +243,34 @@ public static class PresetDiff
             if (oldName != curName)
                 changes.Add($"{oldName} \u2192 {curName}");
         }
+
+        // Pin assignments
+        int pinChanges = 0;
+        foreach (var key in old.OutputPins.Keys)
+        {
+            byte oldPin = old.OutputPins[key];
+            byte curPin = cur.OutputPins.TryGetValue(key, out var cp) ? cp : (byte)0;
+            if (oldPin != curPin) pinChanges++;
+        }
+        if (pinChanges > 0)
+            changes.Add($"{pinChanges} pin assignment{(pinChanges == 1 ? "" : "s")} changed");
+
+        // Output slot types (SPDIF/I2S)
+        int slotChanges = 0;
+        for (int s = 0; s < old.OutputSlotTypes.Length; s++)
+            if (old.OutputSlotTypes[s] != cur.OutputSlotTypes[s]) slotChanges++;
+        if (slotChanges > 0)
+            changes.Add($"{slotChanges} output slot type{(slotChanges == 1 ? "" : "s")} changed");
+
+        // I2S hardware config
+        if (old.I2SBckPin != cur.I2SBckPin)
+            changes.Add($"I2S BCK pin: {old.I2SBckPin} → {cur.I2SBckPin}");
+        if (old.MckEnabled != cur.MckEnabled)
+            changes.Add($"MCK: {(cur.MckEnabled ? "enabled" : "disabled")}");
+        if (old.MckPin != cur.MckPin)
+            changes.Add($"MCK pin: {old.MckPin} → {cur.MckPin}");
+        if (old.MckMultiplier != cur.MckMultiplier)
+            changes.Add($"MCK multiplier: {old.MckMultiplier}x → {cur.MckMultiplier}x");
 
         return changes;
     }

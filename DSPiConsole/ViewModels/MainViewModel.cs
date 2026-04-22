@@ -612,7 +612,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         var status = _device.SetOutputPin(pinOutputId, pin);
         if (status == Usb.PinConfigResult.Success)
+        {
             _outputPins[pinOutputId] = pin;
+            CheckDirty();
+        }
         return status;
     }
 
@@ -657,6 +660,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             _outputSlotTypes[slot] = type;
             UpdateDynamicChannelNames();
             _dispatcher.TryEnqueue(() => I2SConfigChanged?.Invoke(this, EventArgs.Empty));
+            CheckDirty();
         }
         return status;
     }
@@ -665,7 +669,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         var status = _device.SetI2SBckPin(pin);
         if (status == PinConfigResult.Success)
+        {
             _i2sBckPin = pin;
+            CheckDirty();
+        }
         return status;
     }
 
@@ -676,6 +683,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             _mckEnabled = enabled;
             _dispatcher.TryEnqueue(() => I2SConfigChanged?.Invoke(this, EventArgs.Empty));
+            CheckDirty();
         }
         return status;
     }
@@ -684,7 +692,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         var status = _device.SetMckPin(pin);
         if (status == PinConfigResult.Success)
+        {
             _mckPin = pin;
+            CheckDirty();
+        }
         return status;
     }
 
@@ -692,7 +703,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         var status = _device.SetMckMultiplier(multiplier);
         if (status == PinConfigResult.Success)
+        {
             _mckMultiplier = multiplier;
+            CheckDirty();
+        }
         return status;
     }
 
