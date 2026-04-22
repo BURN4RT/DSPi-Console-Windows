@@ -156,7 +156,7 @@ public enum OutputSlotType : byte
 }
 
 /// <summary>
-/// Directory info returned by PresetGetDir (0x95): 6 bytes.
+/// Directory info returned by PresetGetDir (0x95): 6 bytes (legacy) or 7 bytes (V12+).
 /// </summary>
 public struct PresetDirectoryInfo
 {
@@ -1517,11 +1517,13 @@ public partial class DspDevice : ObservableObject, IDisposable
 
     /// <summary>
     /// Get the full preset directory: occupied mask, startup config, last active, include-pins.
-    /// Uses GET_DIR (0x95) which returns 6 bytes.
+    /// GET_DIR (0x95) returns 7 bytes on V12+ firmware (adds include_master_volume at byte 6)
+    /// and 6 bytes on earlier firmware. Request 7 so newer firmware doesn't overflow the
+    /// host's buffer (WinUSB treats a device-overrun as a babble error and fails the transfer).
     /// </summary>
     public PresetDirectoryInfo? GetPresetDirectory()
     {
-        var response = ControlTransferIn(VendorCommands.PresetGetDir, 0, 6);
+        var response = ControlTransferIn(VendorCommands.PresetGetDir, 0, 7);
         if (response == null || response.Length < 6) return null;
         return new PresetDirectoryInfo
         {
@@ -1561,6 +1563,11 @@ public partial class DspDevice : ObservableObject, IDisposable
             var result = DeletePreset(i);
             if (result != PresetResult.Ok && result != PresetResult.SlotEmpty)
                 return result;
+            // Firmware defers each delete to its main loop (~45ms flash erase
+            // with interrupts disabled). Pacing avoids ramming the next control
+            // transfer into a USB blackout window, which otherwise shows up as
+            // a transport failure even though every slot still gets cleared.
+            if (i < 9) System.Threading.Thread.Sleep(50);
         }
         return PresetResult.Ok;
     }

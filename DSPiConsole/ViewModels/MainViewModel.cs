@@ -170,10 +170,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public bool IsPresetOccupied(int slot) => (_presetOccupiedMask & (1 << slot)) != 0;
     public ushort PresetOccupiedMask => _presetOccupiedMask;
     public string GetPresetName(int slot) => !string.IsNullOrEmpty(_presetNames[slot]) ? _presetNames[slot] : $"Preset {slot + 1}";
-    // Display name keyed on the fetched name, not the occupied mask — a transient
-    // USB failure on GetPresetDirectory shouldn't hide the real name if we got it.
-    public string GetPresetDisplayName(int slot) =>
-        !string.IsNullOrEmpty(_presetNames[slot]) ? _presetNames[slot] : $"Preset {slot + 1}";
+    public string GetPresetDisplayName(int slot)
+    {
+        if (!IsPresetOccupied(slot)) return "Empty";
+        return !string.IsNullOrEmpty(_presetNames[slot]) ? _presetNames[slot] : $"Preset {slot + 1}";
+    }
     public byte PresetStartupMode => _presetStartupMode;
     public byte PresetDefaultSlot => _presetDefaultSlot;
     public bool PresetIncludePins => _presetIncludePins;
@@ -189,6 +190,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>Callback for showing unsaved changes dialog. Registered by MainWindow.</summary>
     public Func<string?, Task<UnsavedAction>>? ShowUnsavedChangesDialog { get; set; }
+
+    /// <summary>Callback to prompt the user for a name when saving to an empty slot.
+    /// Returns the chosen name, or null if the user cancelled.</summary>
+    public Func<int, Task<string?>>? PromptForPresetName { get; set; }
 
     partial void OnPlatformChanged(string value)
     {
@@ -420,7 +425,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 case UnsavedAction.Save:
                     if (ActivePreset >= 0)
                     {
-                        var saveResult = await SavePreset(ActivePreset, null);
+                        string? name = null;
+                        if (!IsPresetOccupied(ActivePreset))
+                        {
+                            if (PromptForPresetName == null) return;
+                            name = await PromptForPresetName(ActivePreset);
+                            if (name == null) return; // user cancelled
+                        }
+                        var saveResult = await SavePreset(ActivePreset, name);
                         if (saveResult != Usb.PresetResult.Ok)
                             return; // save failed, abort switch
                     }

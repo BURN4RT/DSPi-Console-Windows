@@ -189,6 +189,7 @@ public sealed partial class MainWindow : Window
 
         // Multi-device: register unsaved changes dialog
         ViewModel.ShowUnsavedChangesDialog = ShowUnsavedChangesDialogAsync;
+        ViewModel.PromptForPresetName = PromptForPresetNameAsync;
 
         // Multi-device: update device selector when available devices change
         ViewModel.PropertyChanged += (s, e) =>
@@ -2312,13 +2313,6 @@ public sealed partial class MainWindow : Window
 
         if (!ViewModel.IsDeviceConnected) return;
 
-        // Selecting an empty slot → offer to save
-        if (!ViewModel.IsPresetOccupied(slot))
-        {
-            await SaveToPresetSlot(slot);
-            return;
-        }
-
         // If dirty, ask about unsaved changes
         if (ViewModel.PresetsDirty && ViewModel.ActivePreset >= 0)
         {
@@ -2341,8 +2335,14 @@ public sealed partial class MainWindow : Window
             var result = await dialog.ShowAsync();
             if (result == ContentDialogResult.Primary)
             {
-                // Save current preset first
-                var saveResult = await ViewModel.SavePreset(ViewModel.ActivePreset, null);
+                // Save current preset first; prompt for a name if it's empty.
+                string? name = null;
+                if (!ViewModel.IsPresetOccupied(ViewModel.ActivePreset))
+                {
+                    name = await PromptForPresetNameAsync(ViewModel.ActivePreset);
+                    if (name == null) { RevertPresetCombo(); return; }
+                }
+                var saveResult = await ViewModel.SavePreset(ViewModel.ActivePreset, name);
                 if (saveResult != Usb.PresetResult.Ok)
                 {
                     await ShowErrorDialog("Failed to save current preset");
@@ -2485,8 +2485,15 @@ public sealed partial class MainWindow : Window
 
         if (ViewModel.ActivePreset >= 0)
         {
-            // Quick-save to active slot
-            var result = await ViewModel.SavePreset(ViewModel.ActivePreset, null);
+            // Quick-save to active slot. Empty slots have no stored name yet,
+            // so prompt the user to name it before writing.
+            string? name = null;
+            if (!ViewModel.IsPresetOccupied(ViewModel.ActivePreset))
+            {
+                name = await PromptForPresetNameAsync(ViewModel.ActivePreset);
+                if (name == null) return; // user cancelled
+            }
+            var result = await ViewModel.SavePreset(ViewModel.ActivePreset, name);
             if (result != Usb.PresetResult.Ok)
                 await ShowErrorDialog("Failed to save preset");
         }
@@ -2495,6 +2502,32 @@ public sealed partial class MainWindow : Window
             // No active preset — show slot picker
             await ShowSaveToSlotDialog();
         }
+    }
+
+    /// <summary>
+    /// Prompt the user for a name when saving into an empty slot. Returns the
+    /// chosen name (or default fallback) on Save, or null if the user cancelled.
+    /// </summary>
+    private async Task<string?> PromptForPresetNameAsync(int slot)
+    {
+        var nameBox = new TextBox
+        {
+            PlaceholderText = $"Preset {slot + 1}",
+            MaxLength = 31
+        };
+
+        var dialog = new ContentDialog
+        {
+            Title = $"Name Preset {slot + 1}",
+            Content = nameBox,
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return null;
+        return string.IsNullOrWhiteSpace(nameBox.Text) ? $"Preset {slot + 1}" : nameBox.Text.Trim();
     }
 
     private async Task SaveToPresetSlot(int slot)
@@ -2721,7 +2754,13 @@ public sealed partial class MainWindow : Window
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary && ViewModel.PresetsSupported && ViewModel.ActivePreset >= 0)
         {
-            var saveResult = await ViewModel.SavePreset(ViewModel.ActivePreset, null);
+            string? name = null;
+            if (!ViewModel.IsPresetOccupied(ViewModel.ActivePreset))
+            {
+                name = await PromptForPresetNameAsync(ViewModel.ActivePreset);
+                if (name == null) return; // user cancelled — abort close
+            }
+            var saveResult = await ViewModel.SavePreset(ViewModel.ActivePreset, name);
             if (saveResult != Usb.PresetResult.Ok)
             {
                 await ShowErrorDialog("Failed to save preset. Close anyway?");
