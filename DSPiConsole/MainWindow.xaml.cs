@@ -142,6 +142,7 @@ public sealed partial class MainWindow : Window
         ViewModel.BypassChanged += (_, _) => BodePlot.Invalidate();
         AppSettings.Instance.SettingsChanged += (_, _) =>
         {
+            DispatcherQueue.TryEnqueue(UpdatePresetDirtyIndicator);
             if (_graphWindow == null) return;
             bool follows = AppSettings.Instance.PopoutFollowsSelectedChannel;
             _graphWindow.SetIgnoreVisibility(!follows);
@@ -202,7 +203,11 @@ public sealed partial class MainWindow : Window
             else if (e.PropertyName == nameof(MainViewModel.PresetsDirty) ||
                      e.PropertyName == nameof(MainViewModel.ActivePreset))
             {
-                DispatcherQueue.TryEnqueue(RefreshPresetComboBox);
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    RefreshPresetComboBox();
+                    UpdateWindowTitle();
+                });
             }
         };
         ViewModel.AvailableDevices.CollectionChanged += (s, e) =>
@@ -2313,6 +2318,17 @@ public sealed partial class MainWindow : Window
         _isUpdatingPresetCombo = false;
     }
 
+    private void UpdateWindowTitle()
+    {
+        var title = ViewModel.PresetsDirty
+            ? "DSPi Console — Unsaved Changes"
+            : "DSPi Console";
+        AppTitleText.Text = title;
+        var appWindow = GetAppWindow();
+        if (appWindow != null)
+            appWindow.Title = title;
+    }
+
     // Positions an overlay "*" immediately after the active preset's name inside
     // the ComboBox, without letting it affect the ComboBox's measured width.
     private void UpdatePresetDirtyIndicator()
@@ -2320,8 +2336,13 @@ public sealed partial class MainWindow : Window
         if (!ViewModel.PresetsDirty || ViewModel.ActivePreset < 0 || !ViewModel.PresetsSupported)
         {
             PresetDirtyIndicator.Visibility = Visibility.Collapsed;
+            PresetSaveButton.Visibility = Visibility.Collapsed;
             return;
         }
+
+        PresetSaveButton.Visibility = AppSettings.Instance.ShowPresetSaveButton
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
         var name = ViewModel.GetPresetDisplayName(ViewModel.ActivePreset);
         var measure = new TextBlock

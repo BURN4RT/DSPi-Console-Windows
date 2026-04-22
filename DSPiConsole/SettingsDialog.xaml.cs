@@ -74,6 +74,7 @@ public sealed partial class SettingsDialog : ContentDialog
         DbUnitsToggle.IsOn = settings.ShowDbUnits;
         DottedInactiveToggle.IsOn = settings.DottedInactiveChannels;
         PopoutFollowsChannelToggle.IsOn = settings.PopoutFollowsSelectedChannel;
+        ShowSaveButtonToggle.IsOn = settings.ShowPresetSaveButton;
 
         PrimaryButtonClick += OnSave;
 
@@ -171,6 +172,7 @@ public sealed partial class SettingsDialog : ContentDialog
         settings.ShowDbUnits = DbUnitsToggle.IsOn;
         settings.DottedInactiveChannels = DottedInactiveToggle.IsOn;
         settings.PopoutFollowsSelectedChannel = PopoutFollowsChannelToggle.IsOn;
+        settings.ShowPresetSaveButton = ShowSaveButtonToggle.IsOn;
 
         settings.Save();
         settings.NotifyChanged();

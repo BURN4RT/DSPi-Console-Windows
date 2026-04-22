@@ -147,6 +147,9 @@
                         <ToggleSwitch x:Name="IncludePinsToggle" Header="Include Pin Assignments in Presets"
                                       OnContent="On" OffContent="Off"
                                       Toggled="OnIncludePinsToggled"/>
+
+                        <ToggleSwitch x:Name="ShowSaveButtonToggle" Header="Show Save Button When Changes Pending"
+                                      OnContent="On" OffContent="Off"/>
                     </StackPanel>
                 </ScrollViewer>
             </TabViewItem>

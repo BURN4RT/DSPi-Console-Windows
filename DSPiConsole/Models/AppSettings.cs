@@ -42,6 +42,9 @@ public class AppSettings
     public Dictionary<int, bool> GainLocked { get; set; } = new();
     public Dictionary<int, bool> DelayLocked { get; set; } = new();
 
+    // Show the quick-save button next to the preset dropdown when dirty
+    public bool ShowPresetSaveButton { get; set; } = true;
+
     public event EventHandler? SettingsChanged;
 
     public void NotifyChanged()
