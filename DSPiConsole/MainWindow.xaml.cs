@@ -199,6 +199,11 @@ public sealed partial class MainWindow : Window
             {
                 DispatcherQueue.TryEnqueue(UpdateDeviceSelector);
             }
+            else if (e.PropertyName == nameof(MainViewModel.PresetsDirty) ||
+                     e.PropertyName == nameof(MainViewModel.ActivePreset))
+            {
+                DispatcherQueue.TryEnqueue(RefreshPresetComboBox);
+            }
         };
         ViewModel.AvailableDevices.CollectionChanged += (s, e) =>
             DispatcherQueue.TryEnqueue(UpdateDeviceSelector);
@@ -2291,13 +2296,14 @@ public sealed partial class MainWindow : Window
 
         for (int i = 0; i < MainViewModel.PresetSlotCount; i++)
         {
-            var displayName = ViewModel.GetPresetDisplayName(i);
             PresetComboBox.Items.Add(new ComboBoxItem
             {
-                Content = displayName,
+                Content = ViewModel.GetPresetDisplayName(i),
                 Tag = i
             });
         }
+
+        UpdatePresetDirtyIndicator();
 
         if (ViewModel.ActivePreset >= 0 && ViewModel.ActivePreset < MainViewModel.PresetSlotCount)
             PresetComboBox.SelectedIndex = ViewModel.ActivePreset;
@@ -2305,6 +2311,33 @@ public sealed partial class MainWindow : Window
             PresetComboBox.SelectedIndex = -1;
 
         _isUpdatingPresetCombo = false;
+    }
+
+    // Positions an overlay "*" immediately after the active preset's name inside
+    // the ComboBox, without letting it affect the ComboBox's measured width.
+    private void UpdatePresetDirtyIndicator()
+    {
+        if (!ViewModel.PresetsDirty || ViewModel.ActivePreset < 0 || !ViewModel.PresetsSupported)
+        {
+            PresetDirtyIndicator.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var name = ViewModel.GetPresetDisplayName(ViewModel.ActivePreset);
+        var measure = new TextBlock
+        {
+            Text = name,
+            FontSize = PresetComboBox.FontSize,
+            FontFamily = PresetComboBox.FontFamily,
+            FontWeight = PresetComboBox.FontWeight,
+            FontStyle = PresetComboBox.FontStyle
+        };
+        measure.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+
+        // ComboBox's inner ContentPresenter starts after the control's left padding.
+        var leftOffset = PresetComboBox.Padding.Left + measure.DesiredSize.Width + 2;
+        PresetDirtyIndicator.Margin = new Thickness(leftOffset, 0, 0, 0);
+        PresetDirtyIndicator.Visibility = Visibility.Visible;
     }
 
     private void OnPresetComboPointerEntered(object sender, PointerRoutedEventArgs e)

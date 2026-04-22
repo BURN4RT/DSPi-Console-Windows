@@ -1668,12 +1668,33 @@ public partial class MainViewModel : ObservableObject, IDisposable
             {
                 // Firmware defers the delete to its main loop, so reading back
                 // the directory immediately is racy. Update local state
-                // optimistically: clear the occupied bit and name. If this was
-                // the active slot the firmware will factory-reset live state;
-                // the caller is expected to trigger a reload in that case.
+                // optimistically: clear the occupied bit and name.
                 _presetOccupiedMask &= (ushort)~(1 << slot);
                 _presetNames[slot] = "";
-                _dispatcher.TryEnqueue(() => PresetsChanged?.Invoke(this, EventArgs.Empty));
+
+                // Firmware factory-resets live state when the active slot is
+                // deleted. Mirror that locally so the UI reflects the actual
+                // device state and the saved snapshot isn't stale.
+                if (slot == _activePresetSlot)
+                {
+                    // Firmware defers the flash erase + live-state reset to its
+                    // main loop (~45ms). Wait before fetching so we don't read
+                    // back the old parameters.
+                    System.Threading.Thread.Sleep(50);
+                    _suppressDirtyCheck = true;
+                    FetchAll();
+                    _dispatcher.TryEnqueue(() =>
+                    {
+                        UpdateSavedSnapshot();
+                        PresetsDirty = false;
+                        _suppressDirtyCheck = false;
+                        PresetsChanged?.Invoke(this, EventArgs.Empty);
+                    });
+                }
+                else
+                {
+                    _dispatcher.TryEnqueue(() => PresetsChanged?.Invoke(this, EventArgs.Empty));
+                }
             }
             return result;
         });

@@ -280,12 +280,18 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Preset" FontSize="12" VerticalAlignment="Center"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <ComboBox x:Name="PresetComboBox" Grid.Column="1" Margin="8,0,0,0"
-                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                  SelectionChanged="OnPresetSelectionChanged"
-                                  Background="Transparent" BorderBrush="Transparent"
-                                  PointerEntered="OnPresetComboPointerEntered"
-                                  PointerExited="OnPresetComboPointerExited" />
+                        <Grid Grid.Column="1" Margin="8,0,0,0">
+                            <ComboBox x:Name="PresetComboBox"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                      SelectionChanged="OnPresetSelectionChanged"
+                                      Background="Transparent" BorderBrush="Transparent"
+                                      PointerEntered="OnPresetComboPointerEntered"
+                                      PointerExited="OnPresetComboPointerExited" />
+                            <TextBlock x:Name="PresetDirtyIndicator" Text="*"
+                                       VerticalAlignment="Center" HorizontalAlignment="Left"
+                                       IsHitTestVisible="False" Visibility="Collapsed"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </Grid>
                     </Grid>
 
                     <StackPanel Spacing="4">
