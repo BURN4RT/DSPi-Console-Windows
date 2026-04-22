@@ -1315,12 +1315,14 @@ public partial class DspDevice : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Set MCK multiplier. Wire encoding: 0 = 128x, 1 = 256x.
-    /// Returns status byte, or 0xFF on transfer failure.
+    /// Set MCK multiplier. Accepts 128 or 256 and encodes to the firmware's
+    /// wire value (0 = 128x, 1 = 256x). Returns status byte, or 0xFF on
+    /// transfer failure.
     /// </summary>
     public byte SetMckMultiplier(int multiplier)
     {
-        var response = ControlTransferIn(VendorCommands.SetMckMultiplier, (ushort)multiplier, 1);
+        ushort encoded = multiplier == 256 ? (ushort)1 : (ushort)0;
+        var response = ControlTransferIn(VendorCommands.SetMckMultiplier, encoded, 1);
         return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
     }
 
