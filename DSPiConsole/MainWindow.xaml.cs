@@ -1350,7 +1350,7 @@ public sealed partial class MainWindow : Window
 
             // ── Routing section (left side) ──
             var dimGray = Color.FromArgb(90, 160, 160, 170);
-            var routeSection = new StackPanel { Spacing = 12, VerticalAlignment = VerticalAlignment.Center };
+            var routeSection = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
 
             for (int input = 0; input < Channel.Inputs.Count; input++)
             {
@@ -1395,18 +1395,21 @@ public sealed partial class MainWindow : Window
                 _currentRouteNameTexts[input] = nameText;
                 cell.Children.Add(nameText);
 
-                // Gain text (only visible when routed)
+                // Gain text — always shown, grayed out and non-interactive when unrouted.
+                // Master R's "R" glyph is wider than Master L's "L", so nudge the right
+                // row 2px left to keep the gain/inv columns visually aligned.
+                double gainLeftMargin = input == 1 ? -11 : -9;
                 var gainText = new TextBox
                 {
                     Text = routeGain == 0f ? "0.00 dB" : string.Format(CultureInfo.InvariantCulture, "{0:+0.00;-0.00} dB", routeGain),
                     FontSize = 10,
                     FontFamily = new FontFamily("Cascadia Code, Consolas"),
-                    Foreground = new SolidColorBrush(Color.FromArgb(140, 255, 255, 255)),
+                    Foreground = GetRouteGainBrush(routed),
                     Style = (Style)RootGrid.Resources["InlineValueTextBoxStyle"],
                     Width = 64,
-                    Visibility = routed ? Visibility.Visible : Visibility.Collapsed,
+                    IsHitTestVisible = routed,
                     VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(-9, 3, 0, 0)
+                    Margin = new Thickness(gainLeftMargin, 3, 0, 0)
                 };
                 gainText.LostFocus += (s, e) =>
                 {
@@ -1443,15 +1446,15 @@ public sealed partial class MainWindow : Window
                 _currentRouteGainTexts[input] = gainText;
                 cell.Children.Add(gainText);
 
-                // INV label
+                // INV label — always shown, grayed out and non-interactive when unrouted
                 var invText = new TextBlock
                 {
                     Text = "INV",
                     FontSize = 9,
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    Foreground = new SolidColorBrush(inverted ? Color.FromArgb(175, 255, 255, 255) : Color.FromArgb(60, 200, 200, 220)),
+                    Foreground = GetRouteInvBrush(routed, inverted),
                     VerticalAlignment = VerticalAlignment.Center,
-                    Visibility = routed ? Visibility.Visible : Visibility.Collapsed,
+                    IsHitTestVisible = routed,
                     Margin = new Thickness(-2, 0, 0, 0)
                 };
                 invText.Tapped += (s, e) =>
@@ -2164,13 +2167,23 @@ public sealed partial class MainWindow : Window
         nameText.Foreground = new SolidColorBrush(routed ? inputCh.Color : dimGray);
 
         var gainText = _currentRouteGainTexts[input];
-        gainText.Visibility = routed ? Visibility.Visible : Visibility.Collapsed;
+        gainText.IsHitTestVisible = routed;
+        gainText.Foreground = GetRouteGainBrush(routed);
         if (gainText.FocusState == FocusState.Unfocused)
             gainText.Text = gain == 0f ? "0.00 dB" : string.Format(CultureInfo.InvariantCulture, "{0:+0.00;-0.00} dB", gain);
 
         var invText = _currentRouteInvTexts[input];
-        invText.Visibility = routed ? Visibility.Visible : Visibility.Collapsed;
-        invText.Foreground = new SolidColorBrush(inverted ? Color.FromArgb(175, 255, 255, 255) : Color.FromArgb(60, 200, 200, 220));
+        invText.IsHitTestVisible = routed;
+        invText.Foreground = GetRouteInvBrush(routed, inverted);
+    }
+
+    private static Brush GetRouteGainBrush(bool routed) =>
+        new SolidColorBrush(routed ? Color.FromArgb(140, 255, 255, 255) : Color.FromArgb(45, 255, 255, 255));
+
+    private static Brush GetRouteInvBrush(bool routed, bool inverted)
+    {
+        if (!routed) return new SolidColorBrush(Color.FromArgb(30, 200, 200, 220));
+        return new SolidColorBrush(inverted ? Color.FromArgb(175, 255, 255, 255) : Color.FromArgb(60, 200, 200, 220));
     }
 
     private void RefreshDashboardHeaderStats(Channel channel)
