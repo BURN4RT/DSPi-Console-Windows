@@ -1108,6 +1108,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 dstFilters[i] = p;
             await Task.Run(() => _device.SetFilter(other, i, p));
         }
+
+        // Mirror the preamp from source to other so the two input channels are
+        // fully aligned when link is turned on.
+        if (sourceChannel == (int)ChannelId.MasterLeft)
+            InputPreampRDb = InputPreampLDb;
+        else
+            InputPreampLDb = InputPreampRDb;
+
         FiltersChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -1453,6 +1461,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         var rounded = MathF.Round(value, 1);
         Task.Run(() => _device.SetInputPreamp(0, rounded));
+        if (_masterPeqLinked && Math.Abs(InputPreampRDb - rounded) > 0.05f)
+            InputPreampRDb = rounded;
         CheckDirty();
     }
 
@@ -1460,6 +1470,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         var rounded = MathF.Round(value, 1);
         Task.Run(() => _device.SetInputPreamp(1, rounded));
+        if (_masterPeqLinked && Math.Abs(InputPreampLDb - rounded) > 0.05f)
+            InputPreampLDb = rounded;
         CheckDirty();
     }
 
