@@ -172,10 +172,10 @@ public sealed partial class MainWindow : Window
             DispatcherQueue.TryEnqueue(() => { OnOutputEnabledChanged(outputIndex, enabled); InitializeLegend(); if (DashboardPanel.Visibility == Visibility.Visible) UpdateDashboardCards(); });
 
         ViewModel.MatrixOutputGainChanged += outputIndex =>
-            DispatcherQueue.TryEnqueue(() => SyncGainFromViewModel(outputIndex));
+            DispatcherQueue.TryEnqueue(() => { SyncGainFromViewModel(outputIndex); BodePlot.Invalidate(); });
 
         ViewModel.MatrixOutputDelayChanged += outputIndex =>
-            DispatcherQueue.TryEnqueue(() => SyncDelayFromViewModel(outputIndex));
+            DispatcherQueue.TryEnqueue(() => { SyncDelayFromViewModel(outputIndex); BodePlot.Invalidate(); });
 
         ViewModel.MatrixRouteChanged += (input, output) =>
             DispatcherQueue.TryEnqueue(() => SyncRouteIndicator(input, output));
@@ -2699,6 +2699,40 @@ public sealed partial class MainWindow : Window
         _isUpdatingPresetCombo = false;
     }
 
+    private async Task CopyPresetToSlot(int slot)
+    {
+        if (!ViewModel.IsDeviceConnected)
+        {
+            await ShowErrorDialog("Not connected to device");
+            return;
+        }
+
+        string? name;
+        if (ViewModel.IsPresetOccupied(slot))
+        {
+            var confirm = new ContentDialog
+            {
+                Title = "Overwrite Preset",
+                Content = $"Overwrite \"{ViewModel.GetPresetName(slot)}\" with the current configuration?",
+                PrimaryButtonText = "Overwrite",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = Content.XamlRoot
+            };
+            if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+            name = null; // keep existing name
+        }
+        else
+        {
+            name = await PromptForPresetNameAsync(slot);
+            if (name == null) return;
+        }
+
+        var result = await ViewModel.CopyToPreset(slot, name);
+        if (result != Usb.PresetResult.Ok)
+            await ShowErrorDialog("Failed to copy preset");
+    }
+
     private void OnPresetComboRightTapped(object sender, RightTappedRoutedEventArgs e)
     {
         e.Handled = true;
@@ -2710,6 +2744,25 @@ public sealed partial class MainWindow : Window
             Icon = new FontIcon { Glyph = "\uE74E" }
         });
         ((MenuFlyoutItem)flyout.Items[0]).Click += async (s, _) => await QuickSavePreset();
+
+        // "Copy to..." submenu — writes the current configuration to another
+        // slot without changing the active preset. Disabled while dirty to
+        // avoid silently persisting unsaved changes into a second slot.
+        var copyToSub = new MenuFlyoutSubItem
+        {
+            Text = "Copy to...",
+            Icon = new FontIcon { Glyph = "" },
+            IsEnabled = !ViewModel.PresetsDirty
+        };
+        for (int i = 0; i < MainViewModel.PresetSlotCount; i++)
+        {
+            if (i == ViewModel.ActivePreset) continue;
+            int slot = i;
+            var item = new MenuFlyoutItem { Text = ViewModel.GetPresetDisplayName(slot) };
+            item.Click += async (s, _) => await CopyPresetToSlot(slot);
+            copyToSub.Items.Add(item);
+        }
+        flyout.Items.Add(copyToSub);
 
         if (ViewModel.ActivePreset >= 0 && ViewModel.IsPresetOccupied(ViewModel.ActivePreset))
         {

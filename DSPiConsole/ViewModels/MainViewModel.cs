@@ -1181,7 +1181,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
         Task.Run(() => _device.SetOutputGain(outputIndex, db));
         OnPropertyChanged(nameof(ChannelGains));
         MatrixOutputGainChanged?.Invoke(outputIndex);
-        FiltersChanged?.Invoke(this, EventArgs.Empty);
         CheckDirty();
     }
 
@@ -1670,6 +1669,30 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>
     /// Save current parameters to a preset slot, optionally setting a name.
     /// </summary>
+    /// <summary>
+    /// Write the current configuration to another preset slot without changing
+    /// the active preset. Does not update PresetsDirty or the saved snapshot.
+    /// </summary>
+    public async Task<byte> CopyToPreset(int slot, string? name)
+    {
+        if (!IsDeviceConnected) return PresetResult.FlashWriteError;
+        return await Task.Run(() =>
+        {
+            if (!string.IsNullOrEmpty(name))
+                _device.SetPresetName(slot, name);
+
+            var result = _device.SavePreset(slot);
+            if (result == PresetResult.Ok)
+            {
+                _presetOccupiedMask |= (ushort)(1 << slot);
+                if (!string.IsNullOrEmpty(name))
+                    _presetNames[slot] = name;
+                _dispatcher.TryEnqueue(() => PresetsChanged?.Invoke(this, EventArgs.Empty));
+            }
+            return result;
+        });
+    }
+
     public async Task<byte> SavePreset(int slot, string? name)
     {
         if (!IsDeviceConnected) return PresetResult.FlashWriteError;

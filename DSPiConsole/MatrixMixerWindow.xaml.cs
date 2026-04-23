@@ -329,6 +329,8 @@ public sealed partial class MatrixMixerWindow : Window
                     float current = _viewModel.GetOutputGainDb(o);
                     float newGain = Math.Clamp(current + step, -60f, 12f);
                     _viewModel.SetOutputGainDb(o, newGain);
+                    // SyncOutputGainUI skips focused boxes; refresh directly.
+                    text.Text = FormatGain(_viewModel.GetOutputGainDb(o));
                 };
                 text.KeyDown += (s, e) =>
                 {
@@ -356,6 +358,7 @@ public sealed partial class MatrixMixerWindow : Window
                 {
                     e.Handled = true;
                     _viewModel.SetOutputGainDb(o, 0f);
+                    text.Text = FormatGain(_viewModel.GetOutputGainDb(o));
                 };
                 _outputGainTexts[o] = text;
                 return text;
@@ -384,6 +387,7 @@ public sealed partial class MatrixMixerWindow : Window
                     float current = _viewModel.GetOutputDelayMs(o);
                     float newDelay = Math.Max(0f, current + step);
                     _viewModel.SetOutputDelayMs(o, newDelay);
+                    text.Text = FormatDelay(_viewModel.GetOutputDelayMs(o));
                 };
                 text.KeyDown += (s, e) =>
                 {
@@ -411,6 +415,7 @@ public sealed partial class MatrixMixerWindow : Window
                 {
                     e.Handled = true;
                     _viewModel.SetOutputDelayMs(o, 0f);
+                    text.Text = FormatDelay(_viewModel.GetOutputDelayMs(o));
                 };
                 _outputDelayTexts[o] = text;
                 return text;
@@ -683,6 +688,7 @@ public sealed partial class MatrixMixerWindow : Window
             bool enabled = _viewModel.GetMatrixRouting(input, output);
             bool inv = _viewModel.GetMatrixInvert(input, output);
             _viewModel.SetMatrixRoute(input, output, enabled, newGain, inv);
+            gainText.Text = FormatGain(_viewModel.GetMatrixGain(input, output));
         };
         gainText.KeyDown += (s, e) =>
         {
@@ -724,6 +730,7 @@ public sealed partial class MatrixMixerWindow : Window
             bool enabled = _viewModel.GetMatrixRouting(input, output);
             bool inv = _viewModel.GetMatrixInvert(input, output);
             _viewModel.SetMatrixRoute(input, output, enabled, 0f, inv);
+            gainText.Text = FormatGain(_viewModel.GetMatrixGain(input, output));
         };
         _routeGainTexts[(input, output)] = gainText;
         panel.Children.Add(gainText);
