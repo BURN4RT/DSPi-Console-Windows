@@ -184,7 +184,7 @@ public static class PresetDiff
             int id = (int)ch.Id;
             float oldD = old.Delays.TryGetValue(id, out var od) ? od : 0;
             float curD = cur.Delays.TryGetValue(id, out var cd) ? cd : 0;
-            if (Math.Abs(oldD - curD) > 0.005f)
+            if (Math.Abs(oldD - curD) > 0.00005f)
             {
                 var name = vm.GetChannelName(ch);
                 changes.Add($"{name} delay: {FormatVal(oldD)} ms \u2192 {FormatVal(curD)} ms");
@@ -200,7 +200,7 @@ public static class PresetDiff
             {
                 if (old.MatrixRouting[inp, o] != cur.MatrixRouting[inp, o] ||
                     old.MatrixInvert[inp, o] != cur.MatrixInvert[inp, o] ||
-                    Math.Abs(old.MatrixGain[inp, o] - cur.MatrixGain[inp, o]) > 0.05f)
+                    Math.Abs(old.MatrixGain[inp, o] - cur.MatrixGain[inp, o]) > 0.005f)
                     crosspointChanges++;
             }
         }
@@ -221,7 +221,7 @@ public static class PresetDiff
             int chId = (int)outputs[o].Id;
             float oldG = old.OutputGains.TryGetValue(chId, out var og) ? og : 0;
             float curG = cur.OutputGains.TryGetValue(chId, out var cg) ? cg : 0;
-            if (Math.Abs(oldG - curG) > 0.05f)
+            if (Math.Abs(oldG - curG) > 0.005f)
                 changes.Add($"{name} gain: {FormatDb(oldG)} \u2192 {FormatDb(curG)}");
         }
 

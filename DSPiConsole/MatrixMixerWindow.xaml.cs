@@ -306,7 +306,7 @@ public sealed partial class MatrixMixerWindow : Window
                 return btn;
             });
 
-        AddOutputDataRow(grid, 7, "GAIN", outputCount, isLast: false,
+        AddOutputDataRow(grid, 7, "GAIN", outputCount, isLast: false, unit: "dB",
             makeCell: o =>
             {
                 float initGain = _viewModel.GetOutputGainDb(o);
@@ -317,8 +317,9 @@ public sealed partial class MatrixMixerWindow : Window
                     FontFamily = new FontFamily("Cascadia Code, Consolas"),
                     Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(180, 255, 255, 255)),
                     HorizontalAlignment = HorizontalAlignment.Center,
+                    TextAlignment = TextAlignment.Center,
                     Style = (Style)RootGrid.Resources["InlineTextBoxStyle"],
-                    Width = 60
+                    Width = 56
                 };
                 text.PointerWheelChanged += (s, e) =>
                 {
@@ -360,7 +361,7 @@ public sealed partial class MatrixMixerWindow : Window
                 return text;
             });
 
-        AddOutputDataRow(grid, 8, "DELAY", outputCount, isLast: false,
+        AddOutputDataRow(grid, 8, "DELAY", outputCount, isLast: false, unit: "ms",
             makeCell: o =>
             {
                 float initDelay = _viewModel.GetOutputDelayMs(o);
@@ -371,8 +372,9 @@ public sealed partial class MatrixMixerWindow : Window
                     FontFamily = new FontFamily("Cascadia Code, Consolas"),
                     Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(180, 255, 255, 255)),
                     HorizontalAlignment = HorizontalAlignment.Center,
+                    TextAlignment = TextAlignment.Center,
                     Style = (Style)RootGrid.Resources["InlineTextBoxStyle"],
-                    Width = 60
+                    Width = 56
                 };
                 text.PointerWheelChanged += (s, e) =>
                 {
@@ -380,7 +382,7 @@ public sealed partial class MatrixMixerWindow : Window
                     int delta = e.GetCurrentPoint(text).Properties.MouseWheelDelta;
                     float step = delta > 0 ? 1f : -1f;
                     float current = _viewModel.GetOutputDelayMs(o);
-                    float newDelay = Math.Max(0f, MathF.Round(current + step));
+                    float newDelay = Math.Max(0f, current + step);
                     _viewModel.SetOutputDelayMs(o, newDelay);
                 };
                 text.KeyDown += (s, e) =>
@@ -389,7 +391,7 @@ public sealed partial class MatrixMixerWindow : Window
                     {
                         e.Handled = true;
                         if (ParseDelayText(text.Text, out float val))
-                            _viewModel.SetOutputDelayMs(o, Math.Max(0f, MathF.Round(val)));
+                            _viewModel.SetOutputDelayMs(o, Math.Max(0f, val));
                         FocusSink.Focus(FocusState.Programmatic);
                     }
                     else if (e.Key == Windows.System.VirtualKey.Escape)
@@ -401,7 +403,7 @@ public sealed partial class MatrixMixerWindow : Window
                 text.LostFocus += (s, e) =>
                 {
                     if (ParseDelayText(text.Text, out float val))
-                        _viewModel.SetOutputDelayMs(o, Math.Max(0f, MathF.Round(val)));
+                        _viewModel.SetOutputDelayMs(o, Math.Max(0f, val));
                     else
                         text.Text = FormatDelay(_viewModel.GetOutputDelayMs(o));
                 };
@@ -573,26 +575,57 @@ public sealed partial class MatrixMixerWindow : Window
 
     // Adds an output data row (bottom section) with label in col 0 and cell content per output
     private void AddOutputDataRow(Grid grid, int row, string labelText, int outputCount,
-        bool isLast, Func<int, UIElement> makeCell)
+        bool isLast, Func<int, UIElement> makeCell, string? unit = null)
     {
         var bottomBorder = isLast ? 0 : 1;
 
-        // Label cell (col 0)
+        // Label cell (col 0) — row header, with optional small unit suffix.
         var labelCell = new Border
         {
             BorderBrush = CellBorderBrush,
             BorderThickness = new Thickness(0, 0, 0, bottomBorder),
             Padding = new Thickness(14, 12, 0, 12)
         };
-        labelCell.Child = new TextBlock
+        var labelColor = new SolidColorBrush(Windows.UI.Color.FromArgb(110, 255, 255, 255));
+        if (unit == null)
         {
-            Text = labelText,
-            FontSize = 10,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(110, 255, 255, 255)),
-            CharacterSpacing = 80,
-            VerticalAlignment = VerticalAlignment.Center
-        };
+            labelCell.Child = new TextBlock
+            {
+                Text = labelText,
+                FontSize = 10,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = labelColor,
+                CharacterSpacing = 80,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+        }
+        else
+        {
+            var stack = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 4,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            stack.Children.Add(new TextBlock
+            {
+                Text = labelText,
+                FontSize = 10,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = labelColor,
+                CharacterSpacing = 80,
+                VerticalAlignment = VerticalAlignment.Bottom
+            });
+            stack.Children.Add(new TextBlock
+            {
+                Text = unit,
+                FontSize = 8,
+                Foreground = labelColor,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 0, 0, 1)
+            });
+            labelCell.Child = stack;
+        }
         Grid.SetColumn(labelCell, 0);
         Grid.SetRow(labelCell, row);
         grid.Children.Add(labelCell);
@@ -636,8 +669,9 @@ public sealed partial class MatrixMixerWindow : Window
             FontFamily = new FontFamily("Cascadia Code, Consolas"),
             Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(140, 255, 255, 255)),
             HorizontalAlignment = HorizontalAlignment.Center,
+            TextAlignment = TextAlignment.Center,
             Style = (Style)RootGrid.Resources["InlineTextBoxStyle"],
-            Width = 60
+            Width = 56
         };
         gainText.PointerWheelChanged += (s, e) =>
         {
@@ -997,10 +1031,10 @@ public sealed partial class MatrixMixerWindow : Window
     }
 
     private static string FormatGain(float db) =>
-        db == 0f ? "0 dB" : $"{db:+0.#;-0.#} dB";
+        string.Format(CultureInfo.InvariantCulture, "{0:+0.00;-0.00;0.00}", db);
 
     private static string FormatDelay(float ms) =>
-        ms == 0f ? "0 ms" : string.Format(CultureInfo.InvariantCulture, "{0:0} ms", ms);
+        string.Format(CultureInfo.InvariantCulture, "{0:0.00##}", ms);
 
     private static bool ParseGainText(string text, out float value)
     {
