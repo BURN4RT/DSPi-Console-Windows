@@ -303,14 +303,16 @@
 
                     <StackPanel Spacing="4">
                         <Grid>
-                            <TextBlock Text="Preamp" FontSize="12"
+                            <TextBlock Text="Master Volume" FontSize="12"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <TextBlock x:Name="PreampValueText" HorizontalAlignment="Right"
+                            <TextBlock x:Name="MasterVolumeValueText" HorizontalAlignment="Right"
                                        FontSize="12" FontFamily="Cascadia Code, Consolas"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </Grid>
-                        <Slider x:Name="PreampSlider" Minimum="-60" Maximum="10"
-                                ValueChanged="OnPreampSliderChanged">
+                        <Slider x:Name="MasterVolumeSlider" Minimum="0" Maximum="104"
+                                StepFrequency="1" SmallChange="1" LargeChange="10"
+                                IsThumbToolTipEnabled="False"
+                                ValueChanged="OnMasterVolumeSliderChanged">
                             <Slider.Resources>
                                 <SolidColorBrush x:Key="SliderTrackValueFill" Color="{ThemeResource SystemAccentColor}" />
                                 <SolidColorBrush x:Key="SliderTrackValueFillPointerOver" Color="{ThemeResource SystemAccentColor}" />

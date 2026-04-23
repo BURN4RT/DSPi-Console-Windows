@@ -81,8 +81,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private ChannelClipboard? _channelClipboard;
     public bool HasChannelClipboard => _channelClipboard != null;
 
+    // Per-input-channel preamp (dB). Index 0 = L (MasterLeft), 1 = R (MasterRight).
     [ObservableProperty]
-    private float _preampDb;
+    private float _inputPreampLDb;
+
+    [ObservableProperty]
+    private float _inputPreampRDb;
+
+    // Global master volume (dB). Adjustment range [-127, 0]; -128 = mute sentinel.
+    [ObservableProperty]
+    private float _masterVolumeDb;
 
     [ObservableProperty]
     private bool _bypass;
@@ -469,7 +477,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 _channelMutes[id] = false;
             }
         }
-        PreampDb = 0;
+        InputPreampLDb = 0;
+        InputPreampRDb = 0;
+        MasterVolumeDb = 0;
         Bypass = false;
         FiltersChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -853,7 +863,19 @@ public partial class MainViewModel : ObservableObject, IDisposable
         // Dispatch all UI updates
         _dispatcher.TryEnqueue(() =>
         {
-            PreampDb = bp.PreampGainDb;
+            if (bp.HasPerChannelPreamp)
+            {
+                InputPreampLDb = bp.PreampLDb;
+                InputPreampRDb = bp.PreampRDb;
+            }
+            else
+            {
+                // Pre-V6 firmware: legacy uniform preamp in PreampGainDb
+                InputPreampLDb = bp.PreampGainDb;
+                InputPreampRDb = bp.PreampGainDb;
+            }
+            if (bp.HasMasterVolume)
+                MasterVolumeDb = bp.MasterVolumeDb;
             Bypass = bp.Bypass;
             LoudnessEnabled = bp.LoudnessEnabled;
             LoudnessRefSPL = bp.LoudnessRefSpl;
@@ -907,7 +929,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     private void FetchAllLegacy()
     {
-        if (!FetchPreamp()) return;
+        if (!FetchInputPreamps()) return;
+        FetchMasterVolume();
         FetchBypass();
 
         foreach (var channel in Channel.All)
@@ -1426,26 +1449,59 @@ public partial class MainViewModel : ObservableObject, IDisposable
         CheckDirty();
     }
 
-    partial void OnPreampDbChanged(float value)
+    partial void OnInputPreampLDbChanged(float value)
     {
         var rounded = MathF.Round(value, 1);
-        Task.Run(() => _device.SetPreamp(rounded));
+        Task.Run(() => _device.SetInputPreamp(0, rounded));
         CheckDirty();
     }
 
-    private bool FetchPreamp()
+    partial void OnInputPreampRDbChanged(float value)
     {
-        var preamp = _device.GetPreamp();
-        if (preamp.HasValue)
+        var rounded = MathF.Round(value, 1);
+        Task.Run(() => _device.SetInputPreamp(1, rounded));
+        CheckDirty();
+    }
+
+    partial void OnMasterVolumeDbChanged(float value)
+    {
+        var send = value <= -127.5f ? -128f : MathF.Round(value, 1);
+        Task.Run(() => _device.SetMasterVolume(send));
+        CheckDirty();
+    }
+
+    private bool FetchInputPreamps()
+    {
+        var l = _device.GetInputPreamp(0);
+        var r = _device.GetInputPreamp(1);
+        if (l.HasValue && r.HasValue)
         {
-            if (Math.Abs(PreampDb - preamp.Value) > 0.1f)
+            if (Math.Abs(InputPreampLDb - l.Value) > 0.1f)
+                _dispatcher.TryEnqueue(() => InputPreampLDb = l.Value);
+            if (Math.Abs(InputPreampRDb - r.Value) > 0.1f)
+                _dispatcher.TryEnqueue(() => InputPreampRDb = r.Value);
+            return true;
+        }
+        // Fallback to legacy uniform preamp for pre-V6 firmware
+        var legacy = _device.GetPreamp();
+        if (legacy.HasValue)
+        {
+            _dispatcher.TryEnqueue(() =>
             {
-                _dispatcher.TryEnqueue(() => PreampDb = preamp.Value);
-            }
+                InputPreampLDb = legacy.Value;
+                InputPreampRDb = legacy.Value;
+            });
             return true;
         }
         _dispatcher.TryEnqueue(() => IsDeviceConnected = false);
         return false;
+    }
+
+    private void FetchMasterVolume()
+    {
+        var mv = _device.GetMasterVolume();
+        if (mv.HasValue && Math.Abs(MasterVolumeDb - mv.Value) > 0.1f)
+            _dispatcher.TryEnqueue(() => MasterVolumeDb = mv.Value);
     }
 
     partial void OnBypassChanged(bool value)

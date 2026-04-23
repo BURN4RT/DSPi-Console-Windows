@@ -93,6 +93,12 @@ public static class VendorCommands
     public const byte SetMckMultiplier = 0xC8;
     public const byte GetMckMultiplier = 0xC9;
 
+    // Per-input-channel preamp and master volume (V6+)
+    public const byte SetPreampCh      = 0xD0;
+    public const byte GetPreampCh      = 0xD1;
+    public const byte SetMasterVolume  = 0xD2;
+    public const byte GetMasterVolume  = 0xD3;
+
     // Volume leveller
     public const byte SetLevellerEnabled   = 0xB4;
     public const byte GetLevellerEnabled   = 0xB5;
@@ -761,7 +767,8 @@ public partial class DspDevice : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Set master preamp gain in dB.
+    /// Legacy set preamp (opcode 0x44). Firmware applies the value to all
+    /// input channels uniformly. Prefer SetInputPreamp for V6+ firmware.
     /// </summary>
     public bool SetPreamp(float db)
     {
@@ -770,7 +777,8 @@ public partial class DspDevice : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Get current master preamp gain in dB.
+    /// Legacy get preamp (opcode 0x45). Reads channel 0's value. Prefer
+    /// GetInputPreamp for V6+ firmware.
     /// </summary>
     public float? GetPreamp()
     {
@@ -779,6 +787,45 @@ public partial class DspDevice : ObservableObject, IDisposable
         if (response == null || response.Length < 4)
             return null;
 
+        return BitConverter.ToSingle(response, 0);
+    }
+
+    /// <summary>
+    /// Set per-input-channel preamp in dB. Channel 0 = left, 1 = right.
+    /// </summary>
+    public bool SetInputPreamp(int channel, float db)
+    {
+        var data = BitConverter.GetBytes(db);
+        return ControlTransferOut(VendorCommands.SetPreampCh, (ushort)channel, data);
+    }
+
+    /// <summary>
+    /// Get per-input-channel preamp in dB. Channel 0 = left, 1 = right.
+    /// </summary>
+    public float? GetInputPreamp(int channel)
+    {
+        var response = ControlTransferIn(VendorCommands.GetPreampCh, (ushort)channel, 4);
+        if (response == null || response.Length < 4) return null;
+        return BitConverter.ToSingle(response, 0);
+    }
+
+    /// <summary>
+    /// Set global master volume in dB. Valid adjustment range is
+    /// [-127, 0]; -128 is a mute sentinel.
+    /// </summary>
+    public bool SetMasterVolume(float db)
+    {
+        var data = BitConverter.GetBytes(db);
+        return ControlTransferOut(VendorCommands.SetMasterVolume, 0, data);
+    }
+
+    /// <summary>
+    /// Get global master volume in dB.
+    /// </summary>
+    public float? GetMasterVolume()
+    {
+        var response = ControlTransferIn(VendorCommands.GetMasterVolume, 0, 4);
+        if (response == null || response.Length < 4) return null;
         return BitConverter.ToSingle(response, 0);
     }
 

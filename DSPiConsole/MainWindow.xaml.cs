@@ -35,6 +35,8 @@ public sealed partial class MainWindow : Window
     public IReadOnlyList<Channel> OutputChannels => Channel.Outputs;
 
     private Channel? _selectedChannel;
+    private Slider? _inputPreampSlider;
+    private TextBlock? _inputPreampValueText;
     private bool _isScrollAdjusting;
     private DateTime _lastFilterScrollTime = DateTime.MinValue;
     private bool _isUpdatingDelay;
@@ -186,7 +188,11 @@ public sealed partial class MainWindow : Window
 
 
         // Right-click preamp slider to reset to 0 dB
-        PreampSlider.RightTapped += (s, e) => { e.Handled = true; ViewModel.PreampDb = 0; };
+        MasterVolumeSlider.RightTapped += (s, e) =>
+        {
+            e.Handled = true;
+            ViewModel.MasterVolumeDb = ViewModel.SavedSnapshot?.MasterVolumeDb ?? 0f;
+        };
 
         // Multi-device: register unsaved changes dialog
         ViewModel.ShowUnsavedChangesDialog = ShowUnsavedChangesDialogAsync;
@@ -223,7 +229,7 @@ public sealed partial class MainWindow : Window
 
         // Initial UI state
         UpdateConnectionStatus();
-        UpdatePreampDisplay();
+        UpdateMasterVolumeDisplay();
         UpdateBypassButton();
 
         // Initialize AutoEQ (load database in background)
@@ -989,9 +995,13 @@ public sealed partial class MainWindow : Window
         ChannelEditorPanel.Visibility = Visibility.Visible;
 
         ChannelEditorPanel.Children.Clear();
+        _inputPreampSlider = null;
+        _inputPreampValueText = null;
 
         if (channel.Id == ChannelId.MasterLeft || channel.Id == ChannelId.MasterRight)
         {
+            bool isLeft = channel.Id == ChannelId.MasterLeft;
+
             var headerRow = new Grid();
             headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1005,13 +1015,24 @@ public sealed partial class MainWindow : Window
                     Spacing = 6,
                     Children =
                     {
-                        new FontIcon { Glyph = "\uE71B", FontSize = 14 },
-                        new TextBlock { Text = "Link L/R", FontSize = 12 }
+                        new FontIcon { Glyph = "\uE71B", FontSize = 14, Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] },
+                        new TextBlock { Text = "Link L/R", FontSize = 12, Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] }
                     }
                 },
                 IsChecked = ViewModel.MasterPeqLinked,
-                Padding = new Thickness(10, 6, 10, 6)
+                Height = 32,
+                VerticalAlignment = VerticalAlignment.Center
             };
+            // Replace the default (blinding) accent fill on the checked state
+            // with the tertiary accent brush, which is derived from the system
+            // accent color but with lower intensity so it updates automatically
+            // when the user changes their system accent.
+            linkBtn.Resources["ToggleButtonBackgroundChecked"] = (Brush)Application.Current.Resources["AccentFillColorTertiaryBrush"];
+            linkBtn.Resources["ToggleButtonBackgroundCheckedPointerOver"] = (Brush)Application.Current.Resources["AccentFillColorSecondaryBrush"];
+            linkBtn.Resources["ToggleButtonBackgroundCheckedPressed"] = (Brush)Application.Current.Resources["AccentFillColorTertiaryBrush"];
+            linkBtn.Resources["ToggleButtonForegroundChecked"] = (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
+            linkBtn.Resources["ToggleButtonForegroundCheckedPointerOver"] = (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
+            linkBtn.Resources["ToggleButtonForegroundCheckedPressed"] = (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
             linkBtn.Click += async (s, e) =>
             {
                 ViewModel.MasterPeqLinked = linkBtn.IsChecked == true;
@@ -1026,7 +1047,105 @@ public sealed partial class MainWindow : Window
             Grid.SetColumn(linkBtn, 0);
             headerRow.Children.Add(linkBtn);
 
-            var clearBtn = new Button { Content = "Clear All Master PEQ" };
+            // Per-input preamp strip (label · slider · value) occupies the middle column
+            var preampStrip = new Grid
+            {
+                VerticalAlignment = VerticalAlignment.Stretch
+            };
+            preampStrip.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            preampStrip.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            preampStrip.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var preampLabel = new TextBlock
+            {
+                Text = "Preamp",
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0),
+                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+            };
+            Grid.SetColumn(preampLabel, 0);
+            preampStrip.Children.Add(preampLabel);
+
+            var preampSlider = new Slider
+            {
+                Minimum = -60,
+                Maximum = 10,
+                StepFrequency = 0.5,
+                SmallChange = 0.5,
+                LargeChange = 3,
+                Value = isLeft ? ViewModel.InputPreampLDb : ViewModel.InputPreampRDb,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0),
+                Padding = new Thickness(0)
+            };
+            preampSlider.ValueChanged += (_, e) =>
+            {
+                float v = (float)e.NewValue;
+                if (isLeft)
+                {
+                    if (Math.Abs(ViewModel.InputPreampLDb - v) > 0.1f)
+                        ViewModel.InputPreampLDb = v;
+                }
+                else
+                {
+                    if (Math.Abs(ViewModel.InputPreampRDb - v) > 0.1f)
+                        ViewModel.InputPreampRDb = v;
+                }
+            };
+            preampSlider.RightTapped += (_, e) =>
+            {
+                e.Handled = true;
+                float saved = 0f;
+                var snap = ViewModel.SavedSnapshot;
+                if (snap != null)
+                    saved = isLeft ? snap.InputPreampLDb : snap.InputPreampRDb;
+                if (isLeft) ViewModel.InputPreampLDb = saved;
+                else ViewModel.InputPreampRDb = saved;
+            };
+            Grid.SetColumn(preampSlider, 1);
+            preampStrip.Children.Add(preampSlider);
+
+            var preampValue = new TextBlock
+            {
+                FontSize = 12,
+                FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Code, Consolas"),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(8, 0, 0, 0),
+                MinWidth = 56,
+                TextAlignment = TextAlignment.Right,
+                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+            };
+            Grid.SetColumn(preampValue, 2);
+            preampStrip.Children.Add(preampValue);
+
+            // Wrap strip in a Border with the same background and rounded corners
+            // as the adjacent buttons so it reads as a unified control.
+            var preampBox = new Border
+            {
+                Background = (Brush)Application.Current.Resources["ButtonBackground"],
+                BorderBrush = (Brush)Application.Current.Resources["ButtonBorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(10, 0, 10, 0),
+                Margin = new Thickness(8, 0, 8, 0),
+                Height = 32,
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = preampStrip
+            };
+            Grid.SetColumn(preampBox, 1);
+            headerRow.Children.Add(preampBox);
+
+            _inputPreampSlider = preampSlider;
+            _inputPreampValueText = preampValue;
+            UpdateInputPreampEditor();
+
+            var clearBtn = new Button
+            {
+                Content = new TextBlock { Text = "Clear Master PEQ", Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] },
+                Height = 32,
+                VerticalAlignment = VerticalAlignment.Center
+            };
             clearBtn.Click += (s, e) => ViewModel.ClearAllMasterCommand.Execute(null);
             Grid.SetColumn(clearBtn, 2);
             headerRow.Children.Add(clearBtn);
@@ -1705,8 +1824,12 @@ public sealed partial class MainWindow : Window
                 case nameof(MainViewModel.SelectedDeviceItem):
                     UpdateConnectionStatus();
                     break;
-                case nameof(MainViewModel.PreampDb):
-                    UpdatePreampDisplay();
+                case nameof(MainViewModel.MasterVolumeDb):
+                    UpdateMasterVolumeDisplay();
+                    break;
+                case nameof(MainViewModel.InputPreampLDb):
+                case nameof(MainViewModel.InputPreampRDb):
+                    UpdateInputPreampEditor();
                     break;
                 case nameof(MainViewModel.Bypass):
                     UpdateBypassButton();
@@ -1882,13 +2005,69 @@ public sealed partial class MainWindow : Window
         sb.Begin();
     }
 
-    private void UpdatePreampDisplay()
+    private void UpdateInputPreampEditor()
     {
-        if (!_isUpdatingDelay)
+        if (_inputPreampSlider == null || _inputPreampValueText == null) return;
+        if (_selectedChannel == null) return;
+        bool isLeft = _selectedChannel.Id == ChannelId.MasterLeft;
+        bool isRight = _selectedChannel.Id == ChannelId.MasterRight;
+        if (!isLeft && !isRight) return;
+        float v = isLeft ? ViewModel.InputPreampLDb : ViewModel.InputPreampRDb;
+        if (Math.Abs(_inputPreampSlider.Value - v) > 0.05)
+            _inputPreampSlider.Value = v;
+        _inputPreampValueText.Text = $"{v:F1} dB";
+    }
+
+    // Discrete master-volume taper:
+    //   0 to -30 dB in 0.5 dB steps (loudest region, fine resolution)
+    //   -30 to -60 dB in 1 dB steps
+    //   -60 to -128 dB in 5 dB steps, with -128 reserved as mute sentinel
+    // Position 0 = -128 (mute), position Max = 0 dB.
+    private static readonly float[] MasterVolumeSteps = BuildMasterVolumeSteps();
+    private static float[] BuildMasterVolumeSteps()
+    {
+        var list = new List<float> { -128f };
+        for (float db = -125f; db <= -65f + 0.001f; db += 5f) list.Add(db);
+        for (float db = -60f; db <= -31f + 0.001f; db += 1f) list.Add(db);
+        for (float db = -30f; db <= 0f + 0.001f; db += 0.5f) list.Add(MathF.Round(db, 1));
+        return list.ToArray();
+    }
+
+    private static int MasterVolumeDbToSliderPos(double db)
+    {
+        int best = 0;
+        double bestDelta = double.MaxValue;
+        for (int i = 0; i < MasterVolumeSteps.Length; i++)
         {
-            PreampSlider.Value = ViewModel.PreampDb;
+            double d = Math.Abs(MasterVolumeSteps[i] - db);
+            if (d < bestDelta) { bestDelta = d; best = i; }
         }
-        PreampValueText.Text = $"{ViewModel.PreampDb:F1} dB";
+        return best;
+    }
+
+    private static double MasterVolumeSliderPosToDb(double pos)
+    {
+        int idx = Math.Clamp((int)Math.Round(pos), 0, MasterVolumeSteps.Length - 1);
+        return MasterVolumeSteps[idx];
+    }
+
+    private bool _updatingMasterVolumeSlider;
+
+    private void UpdateMasterVolumeDisplay()
+    {
+        var v = ViewModel.MasterVolumeDb;
+        _updatingMasterVolumeSlider = true;
+        try
+        {
+            var pos = MasterVolumeDbToSliderPos(v);
+            if (Math.Abs(MasterVolumeSlider.Value - pos) > 0.5)
+                MasterVolumeSlider.Value = pos;
+        }
+        finally
+        {
+            _updatingMasterVolumeSlider = false;
+        }
+        MasterVolumeValueText.Text = v <= -127.5f ? "-inf dB" : $"{v:F1} dB";
     }
 
     private void UpdateBypassButton()
@@ -2022,12 +2201,13 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void OnPreampSliderChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    private void OnMasterVolumeSliderChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        if (Math.Abs(ViewModel.PreampDb - (float)e.NewValue) > 0.1f)
-        {
-            ViewModel.PreampDb = (float)e.NewValue;
-        }
+        if (_updatingMasterVolumeSlider) return;
+        float db = (float)MasterVolumeSliderPosToDb(e.NewValue);
+        if (Math.Abs(ViewModel.MasterVolumeDb - db) > 0.05f)
+            ViewModel.MasterVolumeDb = db;
+        MasterVolumeValueText.Text = db <= -127.5f ? "-inf dB" : $"{db:F1} dB";
     }
 
     private void OnReconnectClick(object sender, RoutedEventArgs e)
@@ -3513,7 +3693,10 @@ public sealed partial class MainWindow : Window
         if (dialog.SelectedChannelIds.Count == 0) return true;
 
         // Set preamp only after user confirms
-        ViewModel.PreampDb = (float)profile.Preamp;
+        // Apply profile preamp to both input channels (AutoEQ preamp is a
+        // global headroom compensation, applied pre-EQ).
+        ViewModel.InputPreampLDb = (float)profile.Preamp;
+        ViewModel.InputPreampRDb = (float)profile.Preamp;
 
         // Apply filters to each selected channel
         foreach (var channelId in dialog.SelectedChannelIds)

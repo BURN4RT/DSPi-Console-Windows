@@ -9,7 +9,9 @@ namespace DSPiConsole.ViewModels;
 /// </summary>
 public class PresetSnapshot
 {
-    public float PreampDb;
+    public float InputPreampLDb;
+    public float InputPreampRDb;
+    public float MasterVolumeDb;
     public bool Bypass;
 
     public bool LoudnessEnabled;
@@ -49,7 +51,9 @@ public class PresetSnapshot
     {
         var snap = new PresetSnapshot
         {
-            PreampDb = vm.PreampDb,
+            InputPreampLDb = vm.InputPreampLDb,
+            InputPreampRDb = vm.InputPreampRDb,
+            MasterVolumeDb = vm.MasterVolumeDb,
             Bypass = vm.Bypass,
             LoudnessEnabled = vm.LoudnessEnabled,
             LoudnessRefSpl = vm.LoudnessRefSPL,
@@ -142,8 +146,15 @@ public static class PresetDiff
         var changes = new List<string>();
 
         // Global
-        if (Math.Abs(old.PreampDb - cur.PreampDb) > 0.05f)
-            changes.Add($"Preamp: {FormatDb(old.PreampDb)} \u2192 {FormatDb(cur.PreampDb)}");
+        if (Math.Abs(old.InputPreampLDb - cur.InputPreampLDb) > 0.05f)
+            changes.Add($"Input L preamp: {FormatDb(old.InputPreampLDb)} → {FormatDb(cur.InputPreampLDb)}");
+        if (Math.Abs(old.InputPreampRDb - cur.InputPreampRDb) > 0.05f)
+            changes.Add($"Input R preamp: {FormatDb(old.InputPreampRDb)} → {FormatDb(cur.InputPreampRDb)}");
+        if (Math.Abs(old.MasterVolumeDb - cur.MasterVolumeDb) > 0.05f)
+        {
+            string FormatMv(float v) => v <= -127.5f ? "mute" : FormatDb(v);
+            changes.Add($"Master volume: {FormatMv(old.MasterVolumeDb)} → {FormatMv(cur.MasterVolumeDb)}");
+        }
         if (old.Bypass != cur.Bypass)
             changes.Add($"Master EQ bypass: {(old.Bypass ? "on" : "off")} \u2192 {(cur.Bypass ? "on" : "off")}");
 
