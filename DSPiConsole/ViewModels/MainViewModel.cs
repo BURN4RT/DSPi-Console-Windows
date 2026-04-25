@@ -69,6 +69,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private byte _presetStartupMode;
     private byte _presetDefaultSlot;
     private bool _presetIncludePins;
+    // Master volume persistence mode:
+    //   0 = MASTER_VOLUME_MODE_INDEPENDENT — volume is independent of presets
+    //       and is explicitly persisted via SaveMasterVolume (0xD6).
+    //   1 = MASTER_VOLUME_MODE_WITH_PRESET — volume travels with each preset.
+    private byte _masterVolumeMode;
     private PresetSnapshot? _savedSnapshot;
 
     // Suppress dirty detection while bulk-fetching state from the device.
@@ -186,6 +191,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public byte PresetStartupMode => _presetStartupMode;
     public byte PresetDefaultSlot => _presetDefaultSlot;
     public bool PresetIncludePins => _presetIncludePins;
+    public byte MasterVolumeMode => _masterVolumeMode;
 
     // Multi-device support
     [ObservableProperty]
@@ -1641,6 +1647,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 _presetDefaultSlot = dir.Value.DefaultSlot;
                 var lastActive = dir.Value.LastActiveSlot;
                 _presetIncludePins = dir.Value.IncludePins;
+                _masterVolumeMode = dir.Value.MasterVolumeMode;
 
                 // Use firmware's active slot if valid and occupied, otherwise default to slot 0
                 _activePresetSlot = (lastActive < PresetSlotCount && (_presetOccupiedMask & (1 << lastActive)) != 0)
@@ -1873,6 +1880,42 @@ public partial class MainViewModel : ObservableObject, IDisposable
             if (ok) _presetIncludePins = include;
             return ok;
         });
+    }
+
+    /// <summary>
+    /// Set master volume persistence mode. 0 = independent, 1 = with preset.
+    /// </summary>
+    public async Task<bool> SetMasterVolumeMode(byte mode)
+    {
+        if (!IsDeviceConnected) return false;
+        return await Task.Run(() =>
+        {
+            var ok = _device.SetMasterVolumeMode(mode);
+            if (ok)
+            {
+                _masterVolumeMode = mode;
+                // Mode flips which diff applies. Re-check dirty and notify
+                // listeners so the "Save Master Volume" item can update its
+                // enabled state.
+                _dispatcher.TryEnqueue(() =>
+                {
+                    OnPropertyChanged(nameof(MasterVolumeMode));
+                    CheckDirty();
+                });
+            }
+            return ok;
+        });
+    }
+
+    /// <summary>
+    /// Persist the current live master volume to the directory sector. Returns
+    /// the firmware status byte (PRESET_OK == 0 on acceptance). Accepted in
+    /// both modes; dormant in mode 1 until the user switches to mode 0.
+    /// </summary>
+    public async Task<byte> SaveMasterVolume()
+    {
+        if (!IsDeviceConnected) return 0xFF;
+        return await Task.Run(() => _device.SaveMasterVolume());
     }
 
     /// <summary>

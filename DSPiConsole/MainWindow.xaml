@@ -24,7 +24,7 @@
                     Padding="6" Background="Transparent" BorderThickness="0">
                 <FontIcon Glyph="&#xE700;" FontSize="14"/>
                 <Button.Flyout>
-                    <MenuFlyout Placement="BottomEdgeAlignedLeft">
+                    <MenuFlyout Placement="BottomEdgeAlignedLeft" Opening="OnMainMenuOpening">
                         <MenuFlyoutItem Text="Import Filters..." Click="OnImportFiltersClick">
                             <MenuFlyoutItem.KeyboardAccelerators>
                                 <KeyboardAccelerator Modifiers="Control" Key="I"/>
@@ -74,6 +74,8 @@
                                 <KeyboardAccelerator Modifiers="Control" Key="S"/>
                             </MenuFlyoutItem.KeyboardAccelerators>
                         </MenuFlyoutItem>
+                        <MenuFlyoutItem x:Name="SaveMasterVolumeMenuItem" Text="Save Master Volume"
+                                        Click="OnSaveMasterVolumeClick"/>
                         <MenuFlyoutItem Text="Revert Preset..." Click="OnRevertPresetClick"/>
                         <MenuFlyoutItem Text="Factory Reset..." Click="OnFactoryResetClick"/>
                         <MenuFlyoutSeparator/>

@@ -94,10 +94,14 @@ public static class VendorCommands
     public const byte GetMckMultiplier = 0xC9;
 
     // Per-input-channel preamp and master volume (V6+)
-    public const byte SetPreampCh      = 0xD0;
-    public const byte GetPreampCh      = 0xD1;
-    public const byte SetMasterVolume  = 0xD2;
-    public const byte GetMasterVolume  = 0xD3;
+    public const byte SetPreampCh            = 0xD0;
+    public const byte GetPreampCh            = 0xD1;
+    public const byte SetMasterVolume        = 0xD2;
+    public const byte GetMasterVolume        = 0xD3;
+    public const byte SetMasterVolumeMode    = 0xD4;
+    public const byte GetMasterVolumeMode    = 0xD5;
+    public const byte SaveMasterVolume       = 0xD6;
+    public const byte GetSavedMasterVolume   = 0xD7;
 
     // Volume leveller
     public const byte SetLevellerEnabled   = 0xB4;
@@ -171,6 +175,7 @@ public struct PresetDirectoryInfo
     public byte DefaultSlot;
     public byte LastActiveSlot;   // 0xFF if none
     public bool IncludePins;
+    public byte MasterVolumeMode; // 0=independent/global, 1=with preset (V12+)
 }
 
 /// <summary>
@@ -825,6 +830,48 @@ public partial class DspDevice : ObservableObject, IDisposable
     public float? GetMasterVolume()
     {
         var response = ControlTransferIn(VendorCommands.GetMasterVolume, 0, 4);
+        if (response == null || response.Length < 4) return null;
+        return BitConverter.ToSingle(response, 0);
+    }
+
+    /// <summary>
+    /// Set master volume persistence mode:
+    ///   0 = independent/global (volume is separate from presets, saved via SaveMasterVolume)
+    ///   1 = with preset (volume travels with each preset)
+    /// </summary>
+    public bool SetMasterVolumeMode(byte mode)
+    {
+        return ControlTransferOut(VendorCommands.SetMasterVolumeMode, 0, new[] { mode });
+    }
+
+    /// <summary>
+    /// Get master volume persistence mode (0 = independent, 1 = with preset).
+    /// </summary>
+    public byte? GetMasterVolumeMode()
+    {
+        var response = ControlTransferIn(VendorCommands.GetMasterVolumeMode, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0];
+    }
+
+    /// <summary>
+    /// Persist the current live master volume to the directory sector.
+    /// Action-style IN transfer (matches REQ_FACTORY_RESET): 1-byte status
+    /// response, PRESET_OK (0) on acceptance. Accepted in both modes; dormant
+    /// in mode 1. Returns 0xFF on USB transfer failure.
+    /// </summary>
+    public byte SaveMasterVolume()
+    {
+        var response = ControlTransferIn(VendorCommands.SaveMasterVolume, 0, 1);
+        return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
+    }
+
+    /// <summary>
+    /// Read the directory's saved master volume (independent mode's baseline).
+    /// </summary>
+    public float? GetSavedMasterVolume()
+    {
+        var response = ControlTransferIn(VendorCommands.GetSavedMasterVolume, 0, 4);
         if (response == null || response.Length < 4) return null;
         return BitConverter.ToSingle(response, 0);
     }
@@ -1580,7 +1627,8 @@ public partial class DspDevice : ObservableObject, IDisposable
             StartupMode = response[2],
             DefaultSlot = response[3],
             LastActiveSlot = response[4],
-            IncludePins = response[5] != 0
+            IncludePins = response[5] != 0,
+            MasterVolumeMode = response.Length >= 7 ? response[6] : (byte)0
         };
     }
 

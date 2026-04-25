@@ -78,8 +78,26 @@ public sealed partial class SettingsDialog : ContentDialog
 
         PrimaryButtonClick += OnSave;
 
+        InitializeGeneralTab();
         InitializePresetsTab();
         BuildPinAssignmentTable();
+    }
+
+    private bool _suppressGeneralEvents;
+
+    private void InitializeGeneralTab()
+    {
+        _suppressGeneralEvents = true;
+        MasterVolumeModeCombo.SelectedIndex = _vm.MasterVolumeMode == 1 ? 1 : 0;
+        _suppressGeneralEvents = false;
+    }
+
+    private async void OnMasterVolumeModeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressGeneralEvents) return;
+        if (MasterVolumeModeCombo.SelectedItem is not ComboBoxItem item) return;
+        if (!byte.TryParse(item.Tag?.ToString() ?? "0", out var mode)) return;
+        await _vm.SetMasterVolumeMode(mode);
     }
 
     private bool _suppressPresetEvents;

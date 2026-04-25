@@ -3015,6 +3015,26 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void OnMainMenuOpening(object? sender, object e)
+    {
+        // "Save Master Volume" only applies when master volume is not stored
+        // per-preset. In with-preset mode, regular Save Preset already does it.
+        SaveMasterVolumeMenuItem.IsEnabled =
+            ViewModel.IsDeviceConnected && ViewModel.MasterVolumeMode == 0;
+    }
+
+    private async void OnSaveMasterVolumeClick(object sender, RoutedEventArgs e)
+    {
+        if (!ViewModel.IsDeviceConnected)
+        {
+            await ShowErrorDialog("Not connected to device");
+            return;
+        }
+        var status = await ViewModel.SaveMasterVolume();
+        if (status != 0)
+            await ShowErrorDialog($"Failed to save master volume (status 0x{status:X2})");
+    }
+
     private async void OnSavePresetClick(object sender, RoutedEventArgs e)
     {
         if (!ViewModel.IsDeviceConnected)

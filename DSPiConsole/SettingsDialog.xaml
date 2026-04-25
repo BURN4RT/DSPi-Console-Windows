@@ -15,10 +15,22 @@
         <TabView.TabItems>
             <TabViewItem Header="General" IsClosable="False">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Spacing="16" Padding="12,16,12,0">
-                        <TextBlock Text="No settings yet." FontSize="12"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   HorizontalAlignment="Center" Margin="0,40,0,0"/>
+                    <StackPanel x:Name="GeneralPanel" Spacing="16" Padding="12,16,12,0">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Master Volume Mode" FontSize="12"/>
+                            <ComboBox x:Name="MasterVolumeModeCombo" HorizontalAlignment="Stretch"
+                                      SelectionChanged="OnMasterVolumeModeChanged">
+                                <ComboBoxItem Content="Global" Tag="0"/>
+                                <ComboBoxItem Content="Per Preset" Tag="1"/>
+                            </ComboBox>
+                            <TextBlock FontSize="11"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap">
+                                <Run Text="Global: Stored separately and persists across preset changes. Save it explicitly from the hamburger menu."/>
+                                <LineBreak/>
+                                <Run Text="Per Preset: Saved and restored with each preset."/>
+                            </TextBlock>
+                        </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
             </TabViewItem>

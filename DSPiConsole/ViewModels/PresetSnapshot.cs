@@ -150,7 +150,11 @@ public static class PresetDiff
             changes.Add($"Input L preamp: {FormatDb(old.InputPreampLDb)} → {FormatDb(cur.InputPreampLDb)}");
         if (Math.Abs(old.InputPreampRDb - cur.InputPreampRDb) > 0.05f)
             changes.Add($"Input R preamp: {FormatDb(old.InputPreampRDb)} → {FormatDb(cur.InputPreampRDb)}");
-        if (Math.Abs(old.MasterVolumeDb - cur.MasterVolumeDb) > 0.05f)
+        // Master volume only participates in preset dirty state when the firmware
+        // is configured to store it with each preset. In independent mode it is
+        // managed separately via "Save Master Volume".
+        if (vm.MasterVolumeMode == 1 &&
+            Math.Abs(old.MasterVolumeDb - cur.MasterVolumeDb) > 0.05f)
         {
             string FormatMv(float v) => v <= -127.5f ? "mute" : FormatDb(v);
             changes.Add($"Master volume: {FormatMv(old.MasterVolumeDb)} → {FormatMv(cur.MasterVolumeDb)}");
