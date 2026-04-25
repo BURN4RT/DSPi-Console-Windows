@@ -199,29 +199,62 @@ public static class FilterFileService
 
         // Extract frequency (Fc XXX Hz)
         float freq = 1000f;
-        var fcMatch = Regex.Match(line, @"Fc\s+([\d.]+)", RegexOptions.IgnoreCase);
-        if (fcMatch.Success && float.TryParse(fcMatch.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var freqVal))
+        var fcMatch = Regex.Match(line, @"Fc\s+([\d.,]+)", RegexOptions.IgnoreCase);
+        if (fcMatch.Success && TryParseDecimal(fcMatch.Groups[1].Value, out var freqVal))
         {
             freq = freqVal;
         }
 
         // Extract gain (Gain XXX dB)
         float gain = 0f;
-        var gainMatch = Regex.Match(line, @"Gain\s+([+-]?[\d.]+)", RegexOptions.IgnoreCase);
-        if (gainMatch.Success && float.TryParse(gainMatch.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var gainVal))
+        var gainMatch = Regex.Match(line, @"Gain\s+([+-]?[\d.,]+)", RegexOptions.IgnoreCase);
+        if (gainMatch.Success && TryParseDecimal(gainMatch.Groups[1].Value, out var gainVal))
         {
             gain = gainVal;
         }
 
         // Extract Q
         float q = 0.707f;
-        var qMatch = Regex.Match(line, @"\sQ\s+([\d.]+)", RegexOptions.IgnoreCase);
-        if (qMatch.Success && float.TryParse(qMatch.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var qVal))
+        var qMatch = Regex.Match(line, @"\sQ\s+([\d.,]+)", RegexOptions.IgnoreCase);
+        if (qMatch.Success && TryParseDecimal(qMatch.Groups[1].Value, out var qVal))
         {
             q = qVal;
         }
 
         return new FilterParams(filterType, freq, q, gain);
+    }
+
+    /// <summary>
+    /// Parses a numeric token that may use either '.' or ',' as the decimal
+    /// separator (REW exports from non-US locales sometimes use commas).
+    /// Treats the last separator as the decimal point and strips any thousands
+    /// separators before it.
+    /// </summary>
+    private static bool TryParseDecimal(string token, out float value)
+    {
+        if (string.IsNullOrEmpty(token))
+        {
+            value = 0f;
+            return false;
+        }
+
+        int lastDot = token.LastIndexOf('.');
+        int lastComma = token.LastIndexOf(',');
+        string normalized;
+        if (lastDot < 0 && lastComma < 0)
+        {
+            normalized = token;
+        }
+        else
+        {
+            int sepIndex = Math.Max(lastDot, lastComma);
+            char sep = token[sepIndex];
+            // Strip the other separator (thousands grouping) and replace the
+            // decimal separator with '.' for InvariantCulture parsing.
+            normalized = token.Replace(sep == '.' ? "," : ".", string.Empty);
+            normalized = normalized.Replace(',', '.');
+        }
+        return float.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
     }
 }
 
