@@ -41,9 +41,10 @@ public static class FilterFileService
 
     private static string FormatFilter(int index, FilterParams filter)
     {
+        var inv = CultureInfo.InvariantCulture;
         if (filter.Type == FilterType.Flat)
         {
-            return $"Filter {index,2}: OFF";
+            return string.Format(inv, "Filter {0,2}: OFF", index);
         }
 
         var typeCode = filter.Type switch
@@ -56,16 +57,17 @@ public static class FilterFileService
             _ => "PK"
         };
 
-        var line = $"Filter {index,2}: ON  {typeCode,-8}Fc {filter.Frequency,7:F1} Hz";
+        var line = string.Format(inv, "Filter {0,2}: ON  {1,-8}Fc {2,7:F1} Hz",
+            index, typeCode, filter.Frequency);
 
         if (filter.Type.HasGain())
         {
-            line += $"  Gain {filter.Gain,+5:+0.0;-0.0} dB";
+            line += string.Format(inv, "  Gain {0,+5:+0.0;-0.0} dB", filter.Gain);
         }
 
         if (filter.Type.HasQ())
         {
-            line += $"  Q {filter.Q,5:F2}";
+            line += string.Format(inv, "  Q {0,5:F2}", filter.Q);
         }
 
         return line;
