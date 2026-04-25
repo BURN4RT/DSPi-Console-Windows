@@ -2,6 +2,7 @@ using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.UI;
 
@@ -17,6 +18,8 @@ public sealed class HorizontalMeterBar : UserControl
     private readonly Border _clipIndicator;
     private readonly Grid _meterGrid;
     private readonly DispatcherTimer _smoothingTimer;
+    private readonly Storyboard _clipFadeStoryboard;
+    private readonly DoubleAnimation _clipFadeAnimation;
     private double _currentLevel;
     private double _targetLevel;
 
@@ -87,8 +90,23 @@ public sealed class HorizontalMeterBar : UserControl
             CornerRadius = new CornerRadius(1),
             Width = ClipZoneWidth,
             HorizontalAlignment = HorizontalAlignment.Right,
-            Visibility = Visibility.Collapsed
+            Opacity = 0
         };
+
+        _clipFadeAnimation = new DoubleAnimation
+        {
+            Duration = TimeSpan.FromMilliseconds(180),
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseInOut }
+        };
+        Storyboard.SetTarget(_clipFadeAnimation, _clipIndicator);
+        Storyboard.SetTargetProperty(_clipFadeAnimation, "Opacity");
+        _clipFadeStoryboard = new Storyboard();
+        _clipFadeStoryboard.Children.Add(_clipFadeAnimation);
+        // Commit the animated end value to the local Opacity property so a
+        // subsequent fade reads the correct starting value (storyboards write
+        // to the "animated value" layer; the local DP otherwise stays at 0).
+        _clipFadeStoryboard.Completed += (_, _) =>
+            _clipIndicator.Opacity = _clipFadeAnimation.To ?? 0;
 
         _meterGrid.Children.Add(_background);
         _meterGrid.Children.Add(_foreground);
@@ -127,8 +145,16 @@ public sealed class HorizontalMeterBar : UserControl
     {
         if (d is HorizontalMeterBar meter)
         {
-            meter._clipIndicator.Visibility = (bool)e.NewValue ? Visibility.Visible : Visibility.Collapsed;
+            meter.AnimateClipIndicator((bool)e.NewValue);
         }
+    }
+
+    private void AnimateClipIndicator(bool clipping)
+    {
+        _clipFadeStoryboard.Stop();
+        _clipFadeAnimation.From = _clipIndicator.Opacity;
+        _clipFadeAnimation.To = clipping ? 1.0 : 0.0;
+        _clipFadeStoryboard.Begin();
     }
 
     private static void OnIsMutedChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
