@@ -763,7 +763,7 @@ public sealed partial class MainWindow : Window
     {
         var card = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(153, 45, 45, 48)),
+            Background = new SolidColorBrush(Color.FromArgb(178, 36, 36, 36)),
             CornerRadius = new CornerRadius(8),
             BorderBrush = CreateChannelGradientBrush(left.Color, right.Color),
             BorderThickness = new Thickness(1)
@@ -810,7 +810,7 @@ public sealed partial class MainWindow : Window
     {
         var header = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(102, 30, 30, 33)),
+            Background = new SolidColorBrush(Color.FromArgb(102, 38, 38, 38)),
             Padding = new Thickness(8)
         };
         Grid.SetColumn(header, column);
@@ -865,7 +865,7 @@ public sealed partial class MainWindow : Window
         for (int i = 0; i < filters.Count; i++)
         {
             var row = CreateDashboardFilterRow(i + 1, filters[i], channel.Color);
-            row.Background = new SolidColorBrush(i % 2 == 0 ? Color.FromArgb(8, 255, 255, 255) : Colors.Transparent);
+            row.Background = new SolidColorBrush(i % 2 == 0 ? Color.FromArgb(40, 0, 0, 0) : Colors.Transparent);
             stack.Children.Add(row);
         }
 
@@ -900,7 +900,9 @@ public sealed partial class MainWindow : Window
             Text = p.Type.GetShortName(),
             FontSize = 10,
             FontWeight = Microsoft.UI.Text.FontWeights.Bold,
-            Foreground = new SolidColorBrush(isActive ? color : Color.FromArgb(102, 128, 128, 128)),
+            Foreground = new SolidColorBrush(isActive
+                ? Color.FromArgb(255, (byte)(color.R * 0.7), (byte)(color.G * 0.7), (byte)(color.B * 0.7))
+                : Color.FromArgb(102, 128, 128, 128)),
             VerticalAlignment = VerticalAlignment.Center
         };
         Grid.SetColumn(typeText, 1);
@@ -995,7 +997,7 @@ public sealed partial class MainWindow : Window
     {
         var card = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(153, 45, 45, 48)),
+            Background = new SolidColorBrush(Color.FromArgb(178, 36, 36, 36)),
             CornerRadius = new CornerRadius(8),
             BorderBrush = CreateChannelGradientBrush(channel.Color, channel.Color),
             BorderThickness = new Thickness(1)
