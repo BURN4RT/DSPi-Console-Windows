@@ -183,6 +183,9 @@ public sealed partial class MainWindow : Window
         ViewModel.PresetsChanged += (_, _) =>
             DispatcherQueue.TryEnqueue(RefreshPresetComboBox);
 
+        ViewModel.InputSourceChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(RefreshSourceComboBox);
+
         // Right-click context menu on preset combo
         PresetComboBox.RightTapped += OnPresetComboRightTapped;
 
@@ -1867,8 +1870,9 @@ public sealed partial class MainWindow : Window
             FadeCurves(0);
             FadeElement(LegendPanel, 0);
 
-            // Hide preset section
+            // Hide preset and source sections
             PresetSection.Visibility = Visibility.Collapsed;
+            SourceSection.Visibility = Visibility.Collapsed;
 
             // Return to empty dashboard view
             _selectedChannel = null;
@@ -2606,6 +2610,55 @@ public sealed partial class MainWindow : Window
     {
         PresetComboBox.BorderBrush = new SolidColorBrush(Colors.Transparent);
         PresetComboBox.Background = new SolidColorBrush(Colors.Transparent);
+    }
+
+    // ── Input Source selector (V7+ firmware) ──
+
+    private bool _isUpdatingSourceCombo;
+
+    private void RefreshSourceComboBox()
+    {
+        _isUpdatingSourceCombo = true;
+        try
+        {
+            bool show = ViewModel.IsDeviceConnected && ViewModel.InputSourceSupported;
+            SourceSection.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            if (!show) return;
+
+            int target = (int)(byte)ViewModel.ActiveInputSource;
+            if (SourceComboBox.SelectedIndex != target)
+                SourceComboBox.SelectedIndex = target;
+        }
+        finally
+        {
+            _isUpdatingSourceCombo = false;
+        }
+    }
+
+    private async void OnSourceSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isUpdatingSourceCombo) return;
+        if (!ViewModel.IsDeviceConnected || !ViewModel.InputSourceSupported) return;
+        if (SourceComboBox.SelectedItem is not ComboBoxItem item) return;
+
+        // Tag is "0" or "1" from XAML — parse to InputSource.
+        if (!byte.TryParse(item.Tag?.ToString(), out var raw)) return;
+        var target = (DSPiConsole.Usb.InputSource)raw;
+        if (target == ViewModel.ActiveInputSource) return;
+
+        await ViewModel.SetInputSourceAsync(target);
+    }
+
+    private void OnSourceComboPointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        SourceComboBox.BorderBrush = (Brush)Application.Current.Resources["ComboBoxBorderBrush"];
+        SourceComboBox.Background = (Brush)Application.Current.Resources["ComboBoxBackground"];
+    }
+
+    private void OnSourceComboPointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        SourceComboBox.BorderBrush = new SolidColorBrush(Colors.Transparent);
+        SourceComboBox.Background = new SolidColorBrush(Colors.Transparent);
     }
 
     private bool _presetSwitchInProgress;

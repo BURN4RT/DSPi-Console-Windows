@@ -167,6 +167,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private string _platform = "";
 
+    // Input source (V7+ firmware). InputSourceSupported stays false until
+    // GetInputSource succeeds at least once — older firmware STALLs on 0xE1.
+    [ObservableProperty]
+    private bool _inputSourceSupported;
+
+    [ObservableProperty]
+    private InputSource _activeInputSource = InputSource.Usb;
+
+    public event EventHandler? InputSourceChanged;
+
     public IReadOnlyList<Channel> ActiveOutputs => Platform switch
     {
         "RP2040" => Channel.Rp2040Outputs,
@@ -364,6 +374,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                             System.Threading.Thread.Sleep(100);
                             FetchAll();
                             FetchPresetInfo();
+                            FetchInputSource();
                             _dispatcher.TryEnqueue(() =>
                             {
                                 UpdateSavedSnapshot();
@@ -405,6 +416,37 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 AvailableDevices.Clear();
                 foreach (var d in _device.AvailableDevicesList)
                     AvailableDevices.Add(d);
+            });
+        };
+
+        // V7+ notification endpoint: device pushes channel-name changes (and
+        // other parameter changes) over bulk IN. Apply them to local state and
+        // raise the UI event. Suppress echoes from our own host SETs since we
+        // already updated the UI when the user typed.
+        _device.ChannelNameNotified += (_, n) =>
+        {
+            if (n.Source == ParamSource.HostSet) return;
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (n.ChannelIndex < 0) return;
+                _channelNames[n.ChannelIndex] = n.Name;
+                ChannelNameChanged?.Invoke(n.ChannelIndex);
+            });
+        };
+
+        // BULK_INVALIDATED is the firmware's "I changed many things at once,
+        // re-read the full state" signal (preset load, factory reset, etc.).
+        _device.BulkInvalidated += (_, src) =>
+        {
+            if (!IsDeviceConnected) return;
+            Task.Run(() =>
+            {
+                FetchAll();
+                _dispatcher.TryEnqueue(() =>
+                {
+                    UpdateSavedSnapshot();
+                    PresetsDirty = false;
+                });
             });
         };
 
@@ -1671,6 +1713,62 @@ public partial class MainViewModel : ObservableObject, IDisposable
             });
         }
         catch { }
+    }
+
+    /// <summary>
+    /// Probe the firmware for input-switching support (V7+) and pick up the
+    /// current source. STALL on 0xE1 (older firmware) leaves the feature off
+    /// and the UI hides the dropdown.
+    /// </summary>
+    public void FetchInputSource()
+    {
+        try
+        {
+            var src = _device.GetInputSource();
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (src.HasValue)
+                {
+                    InputSourceSupported = true;
+                    ActiveInputSource = src.Value;
+                }
+                else
+                {
+                    InputSourceSupported = false;
+                }
+                InputSourceChanged?.Invoke(this, EventArgs.Empty);
+            });
+        }
+        catch
+        {
+            _dispatcher.TryEnqueue(() =>
+            {
+                InputSourceSupported = false;
+                InputSourceChanged?.Invoke(this, EventArgs.Empty);
+            });
+        }
+    }
+
+    /// <summary>
+    /// Switch the active input source. Non-blocking on the firmware side —
+    /// the host transfer returns immediately; the actual hardware switch is
+    /// deferred and audible mute period is ~5–80 ms (USB→S/PDIF can be longer
+    /// while the receiver is acquiring lock).
+    /// </summary>
+    public Task SetInputSourceAsync(InputSource source)
+    {
+        if (!IsDeviceConnected || !InputSourceSupported) return Task.CompletedTask;
+        return Task.Run(() =>
+        {
+            _device.SetInputSource(source);
+            // Read back to confirm. On a same-source SET this is a no-op.
+            var actual = _device.GetInputSource();
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (actual.HasValue) ActiveInputSource = actual.Value;
+                InputSourceChanged?.Invoke(this, EventArgs.Empty);
+            });
+        });
     }
 
     /// <summary>

@@ -303,6 +303,24 @@
                                 ToolTipService.ToolTip="Save preset" />
                     </Grid>
 
+                    <Grid x:Name="SourceSection" Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Source" FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <ComboBox x:Name="SourceComboBox" Grid.Column="1" Margin="8,0,0,0"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                  SelectionChanged="OnSourceSelectionChanged"
+                                  Background="Transparent" BorderBrush="Transparent"
+                                  PointerEntered="OnSourceComboPointerEntered"
+                                  PointerExited="OnSourceComboPointerExited">
+                            <ComboBoxItem Content="USB" Tag="0" />
+                            <ComboBoxItem Content="S/PDIF" Tag="1" />
+                        </ComboBox>
+                    </Grid>
+
                     <StackPanel Spacing="4">
                         <Grid>
                             <TextBlock Text="Master Volume" FontSize="12"

@@ -150,6 +150,34 @@ public enum SpdifInputState : byte
 }
 
 /// <summary>
+/// Origin tag attached to every PARAM_CHANGED / BULK_INVALIDATED notification
+/// the device pushes via the bulk IN endpoint. Lets the host suppress its own
+/// echoes (e.g., ignore a host-set master volume notification because the UI
+/// already moved the slider).
+/// </summary>
+public enum ParamSource : byte
+{
+    Unknown  = 0,
+    HostSet  = 1,  // host EP0 SET
+    BulkSet  = 2,  // REQ_SET_ALL_PARAMS
+    Preset   = 3,  // preset load
+    Factory  = 4,  // factory reset
+    Gpio     = 5,  // hardware control (knobs, encoders)
+    Internal = 6   // firmware-initiated (clamp, recalc)
+}
+
+/// <summary>
+/// A device-pushed channel name change. Decoded from a v2 PARAM_CHANGED packet
+/// targeting WireBulkParams.channel_names.names[ChannelIndex].
+/// </summary>
+public readonly struct ChannelNameNotification
+{
+    public int ChannelIndex { get; init; }
+    public string Name { get; init; }
+    public ParamSource Source { get; init; }
+}
+
+/// <summary>
 /// Parsed REQ_GET_SPDIF_RX_STATUS (0xE2) response — 16 bytes.
 /// </summary>
 public struct SpdifRxStatus
@@ -349,6 +377,26 @@ public partial class DspDevice : ObservableObject, IDisposable
     public event EventHandler? DeviceDisconnected;
     public event EventHandler<SystemStatus>? StatusUpdated;
     public event EventHandler? AvailableDevicesChanged;
+
+    /// <summary>Fired when the device pushes a channel-name update via the
+    /// bulk IN notification endpoint. Channel index is in [0, 10].</summary>
+    public event EventHandler<ChannelNameNotification>? ChannelNameNotified;
+
+    /// <summary>Fired when the device tells the host to re-read full state
+    /// (preset load, factory reset, bulk SET).</summary>
+    public event EventHandler<ParamSource>? BulkInvalidated;
+
+    /// <summary>Fired when a preset slot was loaded on the device. Always
+    /// followed shortly by <see cref="BulkInvalidated"/>.</summary>
+    public event EventHandler<byte>? PresetLoadedNotified;
+
+    // Notification endpoint state (bulk IN EP 0x83, V7+ firmware).
+    private UsbEndpointReader? _notifyReader;
+    private Thread? _notifyThread;
+    private volatile bool _notifyStop;
+    private const int NotifyPacketSize = 64;
+    private const int ChannelNamesWireOffset = 2480; // offsetof(WireBulkParams, channel_names)
+    private const int WireChannelNameLen = 32;
 
     public DspDevice()
     {
@@ -633,6 +681,7 @@ public partial class DspDevice : ObservableObject, IDisposable
                 ErrorMessage = null;
 
                 _statusPollTimer.Start();
+                StartNotifyListener(opened);
                 DeviceConnected?.Invoke(this, EventArgs.Empty);
             }
             catch (Exception ex)
@@ -720,6 +769,7 @@ public partial class DspDevice : ObservableObject, IDisposable
     private void HandleDisconnect()
     {
         _statusPollTimer.Stop();
+        StopNotifyListener();
 
         var wasConnected = IsConnected;
 
@@ -1632,6 +1682,142 @@ public partial class DspDevice : ObservableObject, IDisposable
     {
         ControlTransferIn(VendorCommands.EnterBootloader, 0, 1);
     }
+
+    #region Notification Endpoint (Bulk IN, V7+ firmware)
+
+    /// <summary>
+    /// Open EP 0x83 (bulk IN, 64-byte packets) and start a background reader
+    /// that decodes v2 PARAM_CHANGED / BULK_INVALIDATED / PRESET_LOADED events.
+    /// The firmware always keeps this endpoint armed with a 1-byte IDLE
+    /// keep-alive when nothing is pending, so reads return promptly.
+    /// </summary>
+    private void StartNotifyListener(IUsbDevice dev)
+    {
+        try
+        {
+            _notifyReader = dev.OpenEndpointReader(ReadEndpointID.Ep03, NotifyPacketSize, EndpointType.Bulk);
+        }
+        catch
+        {
+            _notifyReader = null;
+            return;
+        }
+
+        _notifyStop = false;
+        _notifyThread = new Thread(NotifyReadLoop)
+        {
+            IsBackground = true,
+            Name = "DSPi notify"
+        };
+        _notifyThread.Start();
+    }
+
+    private void StopNotifyListener()
+    {
+        _notifyStop = true;
+        // Closing the device handle (in HandleDisconnect, right after this call)
+        // will cause any pending Read() to error out and the loop to exit. We
+        // join with a short timeout so a stuck thread doesn't block disconnect.
+        var thread = _notifyThread;
+        _notifyThread = null;
+        _notifyReader = null;
+        if (thread != null && thread.IsAlive)
+        {
+            try { thread.Join(500); } catch { }
+        }
+    }
+
+    private void NotifyReadLoop()
+    {
+        var buf = new byte[NotifyPacketSize];
+        while (!_notifyStop)
+        {
+            UsbEndpointReader? reader = _notifyReader;
+            if (reader == null) break;
+
+            int len;
+            LibUsbDotNet.Error err;
+            try
+            {
+                err = reader.Read(buf, 1000, out len);
+            }
+            catch
+            {
+                // Device closed underneath us; exit cleanly.
+                break;
+            }
+
+            if (_notifyStop) break;
+
+            if (err == LibUsbDotNet.Error.Timeout || err == LibUsbDotNet.Error.Interrupted)
+                continue;
+            if (err == LibUsbDotNet.Error.NoDevice || err == LibUsbDotNet.Error.NotFound)
+                break;
+            if (err != LibUsbDotNet.Error.Success || len <= 0)
+                continue;
+
+            try { ProcessNotifyPacket(buf, len); }
+            catch { /* a malformed packet is not fatal */ }
+        }
+    }
+
+    private void ProcessNotifyPacket(byte[] buf, int len)
+    {
+        // 1-byte IDLE keep-alive: discard. Older v1 hosts also see this.
+        if (len < 4) return;
+
+        byte version = buf[0];
+        byte eventId = buf[1];
+        // buf[2] = flags (must be 0 in v2)
+        // buf[3] = monotonic seq (gap = loss; could surface metric later)
+
+        // v1 master-volume packet [0x01, 0, 0, 0, float_db_LE]: ignored — the
+        // firmware also emits the v2 equivalent.
+        if (version == 0x01 || eventId == 0x00) return;
+        if (version != 0x02) return;
+
+        switch (eventId)
+        {
+            case 0x02: // PARAM_CHANGED
+                if (len < 12) return;
+                ushort offset = BitConverter.ToUInt16(buf, 4);
+                ushort size   = BitConverter.ToUInt16(buf, 6);
+                var source    = (ParamSource)buf[8];
+                if (12 + size > len) return;
+
+                // Channel name change: offset is in WireBulkParams.channel_names range,
+                // size is exactly WIRE_NAME_LEN (32).
+                if (size == WireChannelNameLen
+                    && offset >= ChannelNamesWireOffset
+                    && offset <  ChannelNamesWireOffset + 11 * WireChannelNameLen
+                    && (offset - ChannelNamesWireOffset) % WireChannelNameLen == 0)
+                {
+                    int ch = (offset - ChannelNamesWireOffset) / WireChannelNameLen;
+                    var name = System.Text.Encoding.UTF8.GetString(buf, 12, size).TrimEnd('\0');
+                    ChannelNameNotified?.Invoke(this, new ChannelNameNotification
+                    {
+                        ChannelIndex = ch,
+                        Name = name,
+                        Source = source
+                    });
+                }
+                // Other PARAM_CHANGED offsets are ignored for now — the host
+                // already polls status / refetches on BULK_INVALIDATED.
+                break;
+
+            case 0x03: // BULK_INVALIDATED
+                if (len < 5) return;
+                BulkInvalidated?.Invoke(this, (ParamSource)buf[4]);
+                break;
+
+            case 0x04: // PRESET_LOADED (followed by BULK_INVALIDATED)
+                if (len < 5) return;
+                PresetLoadedNotified?.Invoke(this, buf[4]);
+                break;
+        }
+    }
+
+    #endregion
 
     /// <summary>
     /// Fetch all DSP parameters in a single bulk transfer (firmware v2+).
