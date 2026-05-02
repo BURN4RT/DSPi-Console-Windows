@@ -1,5 +1,4 @@
 using System.Linq;
-using System.Runtime.InteropServices;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DSPiConsole.Core.Models;
 using LibUsbDotNet.LibUsb;
@@ -254,59 +253,6 @@ public struct PresetDirectoryInfo
 public record DSPiDeviceInfo(string Serial, string DevicePath)
 {
     public string DisplayName => Serial.Length >= 8 ? $"DSPi ({Serial[^8..]})" : "DSPi";
-}
-
-/// <summary>
-/// EQ parameter packet structure matching firmware EqParamPacket.
-/// Used for control transfer data payload (13 bytes).
-/// Channel and band are specified in wValue/wIndex of the setup packet.
-/// </summary>
-[StructLayout(LayoutKind.Sequential, Pack = 1)]
-public struct EqParamPacket
-{
-    public byte Type;
-    public float Frequency;
-    public float Q;
-    public float GainDb;
-
-    public const int Size = 13; // 1 + 4 + 4 + 4
-
-    public static EqParamPacket FromFilterParams(FilterParams p) => new()
-    {
-        Type = (byte)p.Type,
-        Frequency = p.Frequency,
-        Q = p.Q,
-        GainDb = p.Gain
-    };
-
-    public byte[] ToBytes()
-    {
-        var bytes = new byte[Size];
-        bytes[0] = Type;
-        BitConverter.GetBytes(Frequency).CopyTo(bytes, 1);
-        BitConverter.GetBytes(Q).CopyTo(bytes, 5);
-        BitConverter.GetBytes(GainDb).CopyTo(bytes, 9);
-        return bytes;
-    }
-
-    public static EqParamPacket FromBytes(byte[] data, int offset = 0)
-    {
-        return new EqParamPacket
-        {
-            Type = data[offset + 0],
-            Frequency = BitConverter.ToSingle(data, offset + 1),
-            Q = BitConverter.ToSingle(data, offset + 5),
-            GainDb = BitConverter.ToSingle(data, offset + 9)
-        };
-    }
-
-    public FilterParams ToFilterParams() => new()
-    {
-        Type = (FilterType)Type,
-        Frequency = Frequency,
-        Q = Q,
-        Gain = GainDb
-    };
 }
 
 /// <summary>
@@ -1339,27 +1285,27 @@ public partial class DspDevice : ObservableObject, IDisposable
 
     /// <summary>
     /// Set a matrix route: enabled, invert, and gain for a given input/output pair.
-    /// 9-byte packet: input(1), output(1), enabled(1), invert(1), gain(4), pad(1).
+    /// 8-byte packet matching firmware MatrixRoutePacket: input(1), output(1),
+    /// enabled(1), invert(1), gain(4).
     /// </summary>
     public bool SetMatrixRoute(int input, int output, bool enabled, bool invert, float gain)
     {
-        var data = new byte[9];
+        var data = new byte[8];
         data[0] = (byte)input;
         data[1] = (byte)output;
         data[2] = (byte)(enabled ? 1 : 0);
         data[3] = (byte)(invert ? 1 : 0);
         BitConverter.GetBytes(gain).CopyTo(data, 4);
-        data[8] = 0; // pad
         return ControlTransferOut(VendorCommands.SetMatrixRoute, 0, data);
     }
 
     /// <summary>
-    /// Get a matrix route. wValue = (input &lt;&lt; 8) | output. Returns 9-byte response.
+    /// Get a matrix route. wValue = (input &lt;&lt; 8) | output. Returns 8-byte response.
     /// </summary>
     public (bool enabled, bool invert, float gain)? GetMatrixRoute(int input, int output)
     {
         ushort wValue = (ushort)((input << 8) | output);
-        var response = ControlTransferIn(VendorCommands.GetMatrixRoute, wValue, 9);
+        var response = ControlTransferIn(VendorCommands.GetMatrixRoute, wValue, 8);
         if (response == null || response.Length < 8) return null;
         bool enabled = response[2] != 0;
         bool invert = response[3] != 0;
