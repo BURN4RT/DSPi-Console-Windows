@@ -22,7 +22,8 @@
       "Bash(find \"C:/Users/Weeb Labs/Projects/DSPi-Console-Mac/\" -type f -name \"*.swift\" | xargs grep -l \"frequency\\\\|bode\\\\|response\\\\|magnitude\\\\|dB\\\\|graph\" -i 2>/dev/null)",
       "Bash(xargs grep:*)",
       "Bash(gh pr:*)",
-      "Bash(git -C \"C:/Users/Weeb Labs/Projects/DSPiConsole-Windows\" show 0c94479 -- DSPiConsole/ViewModels/MainViewModel.cs)"
+      "Bash(git -C \"C:/Users/Weeb Labs/Projects/DSPiConsole-Windows\" show 0c94479 -- DSPiConsole/ViewModels/MainViewModel.cs)",
+      "PowerShell(Resolve-Path *)"
     ]
   }
 }

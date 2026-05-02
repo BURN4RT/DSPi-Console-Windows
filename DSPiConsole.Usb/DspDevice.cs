@@ -2,7 +2,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DSPiConsole.Core.Models;
-using LibUsbDotNet;
+using LibUsbDotNet.LibUsb;
 using LibUsbDotNet.Main;
 
 namespace DSPiConsole.Usb;
@@ -117,8 +117,50 @@ public static class VendorCommands
     public const byte SetLevellerGate      = 0xBE;
     public const byte GetLevellerGate      = 0xBF;
 
+    // Input source switching (V7+)
+    public const byte SetInputSource       = 0xE0;
+    public const byte GetInputSource       = 0xE1;
+    public const byte GetSpdifRxStatus     = 0xE2;
+    public const byte GetSpdifRxChStatus   = 0xE3;
+    public const byte SetSpdifRxPin        = 0xE4;
+    public const byte GetSpdifRxPin        = 0xE5;
+
     // Bootloader
     public const byte EnterBootloader = 0xF0;
+}
+
+/// <summary>
+/// Input source enum (V7+ firmware).
+/// </summary>
+public enum InputSource : byte
+{
+    Usb = 0,
+    Spdif = 1
+}
+
+/// <summary>
+/// S/PDIF receiver state machine (V7+).
+/// </summary>
+public enum SpdifInputState : byte
+{
+    Inactive = 0,
+    Acquiring = 1,
+    Locked = 2,
+    Relocking = 3
+}
+
+/// <summary>
+/// Parsed REQ_GET_SPDIF_RX_STATUS (0xE2) response — 16 bytes.
+/// </summary>
+public struct SpdifRxStatus
+{
+    public SpdifInputState State;
+    public InputSource ActiveSource;
+    public byte LockCount;
+    public byte LossCount;
+    public uint SampleRate;
+    public uint ParityErrors;
+    public ushort FifoFillPct;
 }
 
 /// <summary>
@@ -246,7 +288,7 @@ public struct EqParamPacket
 public partial class DspDevice : ObservableObject, IDisposable
 {
     // Device identification
-    private const int VendorId = 0x2E8A;
+    private const int VendorId = 0x2E8B;
     private const int ProductId = 0xFEAA;
 
     // Interface 2 is the vendor-specific control interface
@@ -258,7 +300,11 @@ public partial class DspDevice : ObservableObject, IDisposable
     private const byte RequestTypeOut = 0x41;
     private const byte RequestTypeIn = 0xC1;
 
-    private UsbDevice? _device;
+    private readonly UsbContext _context = new();
+    private IUsbDevice? _device;
+    private bool _interfaceClaimed;
+    private byte _openBusNumber;
+    private byte _openAddress;
     private readonly object _lock = new();
     private readonly System.Timers.Timer _pollTimer;
     private readonly System.Timers.Timer _statusPollTimer;
@@ -329,15 +375,48 @@ public partial class DspDevice : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Read the serial number from a temporarily opened USB device.
+    /// Read the serial number from a temporarily opened USB device using the
+    /// vendor GET_SERIAL control request. The device must already be open and
+    /// have its interface claimed.
     /// </summary>
-    private static string? ReadSerialFromDevice(UsbDevice tempDevice)
+    private static string? ReadSerialFromDevice(IUsbDevice tempDevice)
     {
         var setupPacket = new UsbSetupPacket(RequestTypeIn, VendorCommands.GetSerial, 0, VendorInterfaceNumber, 16);
         var buffer = new byte[16];
-        if (tempDevice.ControlTransfer(ref setupPacket, buffer, 16, out int transferred) && transferred > 0)
+        int transferred = tempDevice.ControlTransfer(setupPacket, buffer, 0, buffer.Length);
+        if (transferred > 0)
             return System.Text.Encoding.ASCII.GetString(buffer, 0, transferred).TrimEnd('\0');
         return null;
+    }
+
+    /// <summary>
+    /// Configure (idempotent on Windows/WinUSB) and claim the vendor interface
+    /// on a freshly opened device. Returns true on success.
+    /// </summary>
+    private static bool ConfigureAndClaim(IUsbDevice dev)
+    {
+        try { dev.SetConfiguration(1); }
+        catch { /* already configured by Windows; libusb winusb backend tolerates this */ }
+        return dev.ClaimInterface(VendorInterfaceNumber);
+    }
+
+    /// <summary>
+    /// Cached serials keyed by (bus, address). Avoids opening matching devices
+    /// repeatedly on every scan tick — a duplicate open of the currently-active
+    /// device disturbs the in-flight control transfer queue on the original
+    /// handle (WinUSB lets the second open through, then SetConfiguration /
+    /// ClaimInterface on the duplicate handle stomps the original's state and
+    /// every subsequent control GET silently returns 0 bytes).
+    /// </summary>
+    private readonly Dictionary<(byte bus, byte addr), string> _serialCache = new();
+
+    private static (byte bus, byte addr) GetBusAddr(IUsbDevice dev)
+    {
+        // BusNumber/Address live on the concrete UsbDevice — IUsbDevice doesn't
+        // expose them. Fall back to (0,0) if the cast fails (won't happen with
+        // the libusb-1.0 backend, which always returns UsbDevice instances).
+        if (dev is UsbDevice ud) return (ud.BusNumber, ud.Address);
+        return (0, 0);
     }
 
     /// <summary>
@@ -350,115 +429,98 @@ public partial class DspDevice : ObservableObject, IDisposable
 
         try
         {
-            // Phase 1: Collect all matching USB registry entries
-            var allRegs = UsbDevice.AllDevices
-                .Cast<UsbRegistry>()
-                .Where(r => r.Vid == VendorId && r.Pid == ProductId)
+            using var allDevicesList = _context.List();
+            var matching = allDevicesList
+                .Where(d => d.VendorId == VendorId && d.ProductId == ProductId)
                 .ToList();
 
-            // Phase 2: Build current device list with serials
-            var currentDevices = new List<DSPiDeviceInfo>();
-            bool addedOpenDevice = false;
-            foreach (var reg in allRegs)
-            {
-                var devicePath = reg.SymbolicName ?? reg.DevicePath ?? "";
+            // Drop cache entries for devices that have unplugged.
+            var liveKeys = matching.Select(GetBusAddr).ToHashSet();
+            foreach (var stale in _serialCache.Keys.Where(k => !liveKeys.Contains(k)).ToList())
+                _serialCache.Remove(stale);
 
-                // Try briefly opening to read serial
+            // Build the current device list. For the device we already have open,
+            // skip the open/claim/read cycle entirely — we know its serial.
+            var currentDevices = new List<DSPiDeviceInfo>();
+            (byte bus, byte addr) openKey = (_openBusNumber, _openAddress);
+            bool weHaveOpen = _device != null && IsConnected && _selectedDeviceInfo != null;
+
+            foreach (var dev in matching)
+            {
+                var key = GetBusAddr(dev);
+
+                if (weHaveOpen && key.bus == openKey.bus && key.addr == openKey.addr)
+                {
+                    currentDevices.Add(_selectedDeviceInfo!);
+                    continue;
+                }
+
+                if (_serialCache.TryGetValue(key, out var cachedSerial))
+                {
+                    currentDevices.Add(new DSPiDeviceInfo(cachedSerial,
+                        $"vid_{VendorId:X4}&pid_{ProductId:X4}#{cachedSerial}"));
+                    continue;
+                }
+
+                // Unknown device — open briefly to read serial, then close.
                 try
                 {
-                    if (reg.Open(out var tempDevice))
+                    if (!dev.TryOpen()) continue;
+                    try
                     {
-                        try
+                        if (!ConfigureAndClaim(dev)) continue;
+                        var serial = ReadSerialFromDevice(dev);
+                        if (!string.IsNullOrEmpty(serial))
                         {
-                            if (tempDevice is IUsbDevice wholeTmp)
-                            {
-                                wholeTmp.SetConfiguration(1);
-                                wholeTmp.ClaimInterface(VendorInterfaceNumber);
-                            }
-                            var serial = ReadSerialFromDevice(tempDevice);
-                            if (!string.IsNullOrEmpty(serial))
-                            {
-                                currentDevices.Add(new DSPiDeviceInfo(serial, devicePath));
-                            }
-                        }
-                        finally
-                        {
-                            if (tempDevice is IUsbDevice wholeTmp2)
-                                wholeTmp2.ReleaseInterface(VendorInterfaceNumber);
-                            tempDevice.Close();
+                            _serialCache[key] = serial!;
+                            currentDevices.Add(new DSPiDeviceInfo(serial!,
+                                $"vid_{VendorId:X4}&pid_{ProductId:X4}#{serial}"));
                         }
                     }
-                    else if (_device != null && IsConnected && _selectedDeviceInfo != null && !addedOpenDevice)
+                    finally
                     {
-                        // Open failed — likely because this is our already-open device
-                        currentDevices.Add(_selectedDeviceInfo);
-                        addedOpenDevice = true;
+                        try { dev.ReleaseInterface(VendorInterfaceNumber); } catch { }
+                        try { dev.Close(); } catch { }
                     }
                 }
-                catch
-                {
-                    // Device busy — if we have an open device, assume it's this one
-                    if (_device != null && IsConnected && _selectedDeviceInfo != null && !addedOpenDevice)
-                    {
-                        currentDevices.Add(_selectedDeviceInfo);
-                        addedOpenDevice = true;
-                    }
-                }
+                catch { }
             }
 
-            // Phase 3: Detect changes
             var oldSerials = _availableDevices.Select(d => d.Serial).ToHashSet();
             var newSerials = currentDevices.Select(d => d.Serial).ToHashSet();
-            bool listChanged = !oldSerials.SetEquals(newSerials);
-
-            if (listChanged)
+            if (!oldSerials.SetEquals(newSerials))
             {
                 _availableDevices = currentDevices;
                 AvailableDevicesChanged?.Invoke(this, EventArgs.Empty);
             }
 
-            // Phase 4: Handle selected device removal
             if (_selectedDeviceInfo != null && !newSerials.Contains(_selectedDeviceInfo.Serial))
             {
-                lock (_lock)
-                {
-                    HandleDisconnect();
-                }
-                // Preserve serial for auto-reconnect but clear selection if no devices left
-                if (currentDevices.Count == 0)
-                {
-                    SelectedDeviceInfo = null;
-                }
+                lock (_lock) { HandleDisconnect(); }
+                if (currentDevices.Count == 0) SelectedDeviceInfo = null;
             }
 
-            // Phase 5: Verify currently connected device is still present
             if (_device != null && IsConnected)
             {
-                if (!allRegs.Any())
-                {
+                if (matching.Count == 0)
                     lock (_lock) { HandleDisconnect(); }
-                }
-                return; // Already connected to a device, no auto-select needed
+                return;
             }
 
-            // Phase 6: Auto-select / auto-reconnect
             if (_device == null && currentDevices.Count > 0)
             {
-                // Try auto-reconnect to previously selected device
                 var reconnectTarget = _lastSelectedSerial != null
                     ? currentDevices.FirstOrDefault(d => d.Serial == _lastSelectedSerial)
                     : null;
-
-                var target = reconnectTarget ?? currentDevices[0];
-                OpenDevice(target);
+                OpenDevice(reconnectTarget ?? currentDevices[0]);
             }
             else if (currentDevices.Count == 0)
             {
                 if (ErrorMessage == null || ErrorMessage == "Disconnected")
                 {
-                    var allDevices = UsbDevice.AllDevices;
-                    if (allDevices.Count == 0)
-                        ErrorMessage = "No USB devices visible to LibUsbDotNet. Install libusb-win32 filter driver.";
+                    using var anyDevicesList = _context.List();
+                    if (anyDevicesList.Count == 0)
+                        ErrorMessage = "No USB devices visible to libusb-1.0. Install the WinUSB driver for the DSPi vendor interface.";
                     else
                         ErrorMessage = "Disconnected";
                 }
@@ -466,13 +528,14 @@ public partial class DspDevice : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            // Don't let scan errors kill the timer
             System.Diagnostics.Debug.WriteLine($"ScanDevices error: {ex.Message}");
         }
     }
 
     /// <summary>
-    /// Open and connect to a specific device by its info.
+    /// Open and connect to a specific device by its info. The opened device is
+    /// retained outside the listing collection so it survives the collection's
+    /// disposal (libusb-1.0 holds an internal ref while the handle is open).
     /// </summary>
     private void OpenDevice(DSPiDeviceInfo deviceInfo)
     {
@@ -480,37 +543,74 @@ public partial class DspDevice : ObservableObject, IDisposable
         {
             try
             {
-                // Close any existing connection
                 if (_device != null)
                 {
                     HandleDisconnect();
                 }
 
-                // Find and open the device matching this serial
-                UsbDevice? opened = null;
-                foreach (UsbRegistry reg in UsbDevice.AllDevices)
+                // libusb-1.0 wrapper detail: UsbDeviceCollection.Dispose() also
+                // disposes every IUsbDevice instance it contains. Retaining one
+                // past the listing's `using` block leaves us with a disposed
+                // wrapper — every subsequent ControlTransfer raises
+                // ObjectDisposedException, which the viewmodels' broad try/catch
+                // swallows silently (so the device looks "connected" but no GETs
+                // ever return data). Clone() the candidates first so they
+                // outlive the collection.
+                List<IUsbDevice> candidates = new();
+                using (var devices = _context.List())
                 {
-                    if (reg.Vid != VendorId || reg.Pid != ProductId) continue;
+                    foreach (var d in devices.Where(d => d.VendorId == VendorId && d.ProductId == ProductId))
+                        candidates.Add(d.Clone());
+                }
 
-                    if (reg.Open(out var tempDevice))
+                IUsbDevice? opened = null;
+                bool openedClaimed = false;
+                (byte bus, byte addr) openedKey = (0, 0);
+
+                foreach (var dev in candidates)
+                {
+                    if (opened != null)
                     {
-                        if (tempDevice is IUsbDevice wholeTmp)
-                        {
-                            wholeTmp.SetConfiguration(1);
-                            wholeTmp.ClaimInterface(VendorInterfaceNumber);
-                        }
+                        // Already found our match — discard remaining clones.
+                        try { dev.Close(); } catch { }
+                        continue;
+                    }
 
-                        var serial = ReadSerialFromDevice(tempDevice);
+                    if (!dev.TryOpen())
+                    {
+                        try { dev.Close(); } catch { }
+                        continue;
+                    }
+
+                    bool claimed = false;
+                    try
+                    {
+                        if (!ConfigureAndClaim(dev))
+                        {
+                            try { dev.Close(); } catch { }
+                            continue;
+                        }
+                        claimed = true;
+
+                        var serial = ReadSerialFromDevice(dev);
                         if (serial == deviceInfo.Serial)
                         {
-                            opened = tempDevice;
-                            break;
+                            opened = dev;
+                            openedClaimed = true;
+                            openedKey = GetBusAddr(dev);
+                            // Don't release/close — keep this clone alive.
                         }
-
-                        // Not the one we want, close it
-                        if (tempDevice is IUsbDevice wholeTmp2)
-                            wholeTmp2.ReleaseInterface(VendorInterfaceNumber);
-                        tempDevice.Close();
+                        else
+                        {
+                            try { dev.ReleaseInterface(VendorInterfaceNumber); } catch { }
+                            try { dev.Close(); } catch { }
+                        }
+                    }
+                    catch
+                    {
+                        if (claimed)
+                            try { dev.ReleaseInterface(VendorInterfaceNumber); } catch { }
+                        try { dev.Close(); } catch { }
                     }
                 }
 
@@ -521,6 +621,9 @@ public partial class DspDevice : ObservableObject, IDisposable
                 }
 
                 _device = opened;
+                _interfaceClaimed = openedClaimed;
+                _openBusNumber = openedKey.bus;
+                _openAddress = openedKey.addr;
                 _openDeviceSerial = deviceInfo.Serial;
                 _selectedDeviceInfo = deviceInfo;
                 _lastSelectedSerial = deviceInfo.Serial;
@@ -535,8 +638,16 @@ public partial class DspDevice : ObservableObject, IDisposable
             catch (Exception ex)
             {
                 ErrorMessage = $"Error: {ex.Message}";
-                _device?.Close();
+                if (_device != null)
+                {
+                    if (_interfaceClaimed)
+                        try { _device.ReleaseInterface(VendorInterfaceNumber); } catch { }
+                    try { _device.Close(); } catch { }
+                }
                 _device = null;
+                _interfaceClaimed = false;
+                _openBusNumber = 0;
+                _openAddress = 0;
                 _openDeviceSerial = null;
             }
         }
@@ -612,8 +723,16 @@ public partial class DspDevice : ObservableObject, IDisposable
 
         var wasConnected = IsConnected;
 
-        _device?.Close();
+        if (_device != null)
+        {
+            if (_interfaceClaimed)
+                try { _device.ReleaseInterface(VendorInterfaceNumber); } catch { }
+            try { _device.Close(); } catch { }
+        }
         _device = null;
+        _interfaceClaimed = false;
+        _openBusNumber = 0;
+        _openAddress = 0;
         _openDeviceSerial = null;
 
         IsConnected = false;
@@ -643,7 +762,9 @@ public partial class DspDevice : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Send a vendor control OUT transfer (host to device)
+    /// Send a vendor control OUT transfer (host to device).
+    /// libusb-1.0 returns the number of bytes transferred, or a negative
+    /// LIBUSB_ERROR_* on failure.
     /// </summary>
     private bool ControlTransferOut(byte request, ushort value = 0, byte[]? data = null)
     {
@@ -651,22 +772,21 @@ public partial class DspDevice : ObservableObject, IDisposable
         {
             if (_device == null) return false;
 
+            var buffer = data ?? Array.Empty<byte>();
             var setupPacket = new UsbSetupPacket(
                 RequestTypeOut,
                 request,
-                (short)value,
+                value,
                 VendorInterfaceNumber,
-                (short)(data?.Length ?? 0));
+                buffer.Length);
 
-            int transferred;
-            var buffer = data ?? Array.Empty<byte>();
-
-            return _device.ControlTransfer(ref setupPacket, buffer, buffer.Length, out transferred);
+            int transferred = _device.ControlTransfer(setupPacket, buffer, 0, buffer.Length);
+            return transferred >= 0;
         }
     }
 
     /// <summary>
-    /// Send a vendor control IN transfer (device to host)
+    /// Send a vendor control IN transfer (device to host).
     /// </summary>
     private byte[]? ControlTransferIn(byte request, ushort value = 0, int length = 4)
     {
@@ -677,25 +797,22 @@ public partial class DspDevice : ObservableObject, IDisposable
             var setupPacket = new UsbSetupPacket(
                 RequestTypeIn,
                 request,
-                (short)value,
+                value,
                 VendorInterfaceNumber,
-                (short)length);
+                length);
 
             var buffer = new byte[length];
-            int transferred;
+            int transferred = _device.ControlTransfer(setupPacket, buffer, 0, buffer.Length);
 
-            if (_device.ControlTransfer(ref setupPacket, buffer, buffer.Length, out transferred))
+            if (transferred > 0)
             {
-                if (transferred > 0)
+                if (transferred < length)
                 {
-                    if (transferred < length)
-                    {
-                        var result = new byte[transferred];
-                        Array.Copy(buffer, result, transferred);
-                        return result;
-                    }
-                    return buffer;
+                    var result = new byte[transferred];
+                    Array.Copy(buffer, result, transferred);
+                    return result;
                 }
+                return buffer;
             }
 
             return null;
@@ -1518,12 +1635,89 @@ public partial class DspDevice : ObservableObject, IDisposable
 
     /// <summary>
     /// Fetch all DSP parameters in a single bulk transfer (firmware v2+).
-    /// Returns up to 2896-byte packet, or null if unsupported/failed.
+    /// Wire-format V7 (firmware April 2026) is 2912 bytes — older firmware
+    /// returns fewer bytes and the parser keys off the actual transfer length.
+    /// Returns the response, or null if the transfer failed.
     /// </summary>
     public byte[]? GetAllParams()
     {
-        return ControlTransferIn(VendorCommands.GetAllParams, 0, 2896);
+        return ControlTransferIn(VendorCommands.GetAllParams, 0, 2912);
     }
+
+    #region Input Source (V7+)
+
+    /// <summary>
+    /// Set the active input source (USB or S/PDIF). Non-blocking: the
+    /// firmware defers the hardware switch to its main loop and mutes
+    /// output during the transition.
+    /// </summary>
+    public bool SetInputSource(InputSource source)
+    {
+        return ControlTransferOut(VendorCommands.SetInputSource, 0, new[] { (byte)source });
+    }
+
+    /// <summary>
+    /// Get the currently active input source. Returns null if the firmware
+    /// pre-dates V7 (USB STALL on unsupported request) or the transfer failed.
+    /// </summary>
+    public InputSource? GetInputSource()
+    {
+        var response = ControlTransferIn(VendorCommands.GetInputSource, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return (InputSource)response[0];
+    }
+
+    /// <summary>
+    /// Get the 16-byte S/PDIF receiver status packet.
+    /// </summary>
+    public SpdifRxStatus? GetSpdifRxStatus()
+    {
+        var r = ControlTransferIn(VendorCommands.GetSpdifRxStatus, 0, 16);
+        if (r == null || r.Length < 16) return null;
+        return new SpdifRxStatus
+        {
+            State = (SpdifInputState)r[0],
+            ActiveSource = (InputSource)r[1],
+            LockCount = r[2],
+            LossCount = r[3],
+            SampleRate = BitConverter.ToUInt32(r, 4),
+            ParityErrors = BitConverter.ToUInt32(r, 8),
+            FifoFillPct = BitConverter.ToUInt16(r, 12)
+        };
+    }
+
+    /// <summary>
+    /// Get the 24-byte IEC 60958 channel status block from the locked S/PDIF stream.
+    /// Only meaningful when the receiver is in the LOCKED state.
+    /// </summary>
+    public byte[]? GetSpdifRxChannelStatus()
+    {
+        return ControlTransferIn(VendorCommands.GetSpdifRxChStatus, 0, 24);
+    }
+
+    /// <summary>
+    /// Get the GPIO pin currently configured for S/PDIF receive input.
+    /// </summary>
+    public byte? GetSpdifRxPin()
+    {
+        var response = ControlTransferIn(VendorCommands.GetSpdifRxPin, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0];
+    }
+
+    /// <summary>
+    /// Change the S/PDIF RX GPIO pin. The pin number is encoded in wValue and the
+    /// firmware returns a 1-byte status code (0 = success, 1 = invalid pin,
+    /// 2 = pin in use, 3 = output active — must switch to USB first).
+    /// Returns 0xFF on transfer failure.
+    /// </summary>
+    public byte SetSpdifRxPin(byte pin)
+    {
+        var response = ControlTransferIn(VendorCommands.SetSpdifRxPin, pin, 1);
+        return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
+    }
+
+    #endregion
 
     #region Buffer Statistics
 
@@ -1708,6 +1902,7 @@ public partial class DspDevice : ObservableObject, IDisposable
         _statusPollTimer.Stop();
         _statusPollTimer.Dispose();
         Disconnect();
+        _context.Dispose();
 
         GC.SuppressFinalize(this);
     }

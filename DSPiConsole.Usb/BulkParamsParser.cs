@@ -75,16 +75,24 @@ public class BulkParams
     // Master volume (offset 2880, 16 bytes) — V6+, present when packet >= 2884
     public float MasterVolumeDb;
     public bool HasMasterVolume;
+
+    // Input source config (offset 2896, 16 bytes) — V7+, present when packet >= 2898
+    public byte InputSource;        // 0 = USB, 1 = S/PDIF
+    public byte SpdifRxPin;          // GPIO pin (informational; not applied via bulk SET)
+    public bool HasInputConfig;
 }
 
 /// <summary>
 /// Parses the bulk parameter packet from firmware. V2 is 2832 bytes; V3+ grows
 /// with trailing optional sections (I2S, leveller, per-channel preamp, master
-/// volume). Accept any version >= V2 so newer firmwares aren't rejected.
+/// volume, input source). V7 is 2912 bytes. Accept any version &gt;= V2 so newer
+/// firmwares aren't rejected, and key feature presence off the actual transfer
+/// length so older firmware still works.
 /// </summary>
 public static class BulkParamsParser
 {
-    public const int PacketSize = 2832;
+    public const int PacketSize = 2832;        // V2 minimum payload
+    public const int PacketSizeV7 = 2912;      // V7 full payload (2896 + WireInputConfig)
     public const byte MinFormatVersion = 2;
 
     // Section offsets
@@ -243,6 +251,16 @@ public static class BulkParamsParser
         {
             p.HasMasterVolume = true;
             p.MasterVolumeDb = BitConverter.ToSingle(buffer, OffsetMasterVol + 0);
+        }
+
+        // ── Input source config (16 bytes, V7+) ──
+        // WireInputConfig: input_source(1), spdif_rx_pin(1), reserved[14]
+        const int OffsetInputCfg = 2896;
+        if (p.FormatVersion >= 7 && buffer.Length >= OffsetInputCfg + 2)
+        {
+            p.HasInputConfig = true;
+            p.InputSource = buffer[OffsetInputCfg + 0];
+            p.SpdifRxPin = buffer[OffsetInputCfg + 1];
         }
 
         return p;
