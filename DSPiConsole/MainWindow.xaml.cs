@@ -573,7 +573,8 @@ public sealed partial class MainWindow : Window
         {
             Text = channel.Descriptor,
             FontSize = 10,
-            FontWeight = Microsoft.UI.Text.FontWeights.Bold
+            FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
         };
 
         panel.Children.Add(indicator);
@@ -734,13 +735,37 @@ public sealed partial class MainWindow : Window
         return cards;
     }
 
+    // Horizontal gradient brush used for dashboard card outlines: leftColor on
+    // the left edge, rightColor on the right. For mono cards both args are the
+    // same color, which renders as a solid outline.
+    private static LinearGradientBrush CreateChannelGradientBrush(Color leftColor, Color rightColor)
+    {
+        const byte alpha = 102;
+        var brush = new LinearGradientBrush
+        {
+            StartPoint = new Windows.Foundation.Point(0, 0.5),
+            EndPoint = new Windows.Foundation.Point(1, 0.5)
+        };
+        brush.GradientStops.Add(new GradientStop
+        {
+            Offset = 0,
+            Color = Color.FromArgb(alpha, leftColor.R, leftColor.G, leftColor.B)
+        });
+        brush.GradientStops.Add(new GradientStop
+        {
+            Offset = 1,
+            Color = Color.FromArgb(alpha, rightColor.R, rightColor.G, rightColor.B)
+        });
+        return brush;
+    }
+
     private Border CreateStereoDashboardCard(string title, Channel left, Channel right, bool showDelay)
     {
         var card = new Border
         {
             Background = new SolidColorBrush(Color.FromArgb(153, 45, 45, 48)),
             CornerRadius = new CornerRadius(8),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(51, 128, 128, 128)),
+            BorderBrush = CreateChannelGradientBrush(left.Color, right.Color),
             BorderThickness = new Thickness(1)
         };
 
@@ -785,7 +810,7 @@ public sealed partial class MainWindow : Window
     {
         var header = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(25, channel.Color.R, channel.Color.G, channel.Color.B)),
+            Background = new SolidColorBrush(Color.FromArgb(102, 30, 30, 33)),
             Padding = new Thickness(8)
         };
         Grid.SetColumn(header, column);
@@ -804,7 +829,11 @@ public sealed partial class MainWindow : Window
             Text = channel.Name,
             FontSize = 11,
             FontWeight = Microsoft.UI.Text.FontWeights.Bold,
-            Foreground = new SolidColorBrush(channel.Color)
+            Foreground = new SolidColorBrush(Color.FromArgb(
+                255,
+                (byte)(channel.Color.R * 0.7),
+                (byte)(channel.Color.G * 0.7),
+                (byte)(channel.Color.B * 0.7)))
         });
 
         if (showDelay)
@@ -968,7 +997,7 @@ public sealed partial class MainWindow : Window
         {
             Background = new SolidColorBrush(Color.FromArgb(153, 45, 45, 48)),
             CornerRadius = new CornerRadius(8),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(76, channel.Color.R, channel.Color.G, channel.Color.B)),
+            BorderBrush = CreateChannelGradientBrush(channel.Color, channel.Color),
             BorderThickness = new Thickness(1)
         };
 
@@ -3909,7 +3938,7 @@ public sealed partial class MainWindow : Window
 
     #region Graph Resize
 
-    private RowDefinition GraphRow => ContentGrid.RowDefinitions[1];
+    private RowDefinition GraphRow => ContentGrid.RowDefinitions[0];
 
     private void OnGraphGripperPointerPressed(object sender, PointerRoutedEventArgs e)
     {
@@ -3992,7 +4021,6 @@ public sealed partial class MainWindow : Window
         }
 
         // Animate graph row collapsing
-        GraphHeader.Visibility = Visibility.Collapsed;
         GraphGripperControl.Visibility = Visibility.Collapsed;
         LegendPanel.Visibility = Visibility.Collapsed;
         AnimateGraphRow(GraphRow.Height.Value, 0, 250, () =>
@@ -4014,8 +4042,6 @@ public sealed partial class MainWindow : Window
             // Restore and animate graph row expanding
             GraphArea.Visibility = Visibility.Visible;
             GraphArea.Opacity = 0;
-            GraphHeader.Visibility = Visibility.Visible;
-            GraphHeader.Opacity = 0;
             LegendPanel.Visibility = Visibility.Visible;
             LegendPanel.Opacity = 0;
             GraphRow.Height = new GridLength(0);
@@ -4024,7 +4050,6 @@ public sealed partial class MainWindow : Window
             {
                 GraphGripperControl.Visibility = Visibility.Visible;
                 GraphArea.Opacity = 1;
-                GraphHeader.Opacity = 1;
                 LegendPanel.Opacity = 1;
             });
         };
@@ -4047,10 +4072,9 @@ public sealed partial class MainWindow : Window
             double height = from + (to - from) * eased;
             GraphRow.Height = new GridLength(Math.Max(0, height));
 
-            // Fade graph area, header and legend proportionally
+            // Fade graph area and legend proportionally
             double opacity = to > from ? eased : 1.0 - eased;
             GraphArea.Opacity = opacity;
-            GraphHeader.Opacity = opacity;
             LegendPanel.Opacity = opacity;
 
             if (t >= 1.0)
