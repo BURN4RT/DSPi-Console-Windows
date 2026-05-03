@@ -31,7 +31,6 @@ public sealed partial class SettingsDialog : ContentDialog
 
     // S/PDIF input controls
     private ComboBox? _spdifRxPinCombo;
-    private TextBlock? _spdifRxPinCaption;
 
     public SettingsDialog(MainViewModel vm)
     {
@@ -1307,8 +1306,6 @@ public sealed partial class SettingsDialog : ContentDialog
 
     private UIElement BuildSpdifRxPinRow()
     {
-        var container = new StackPanel { Spacing = 2 };
-
         var row = new Grid { Padding = new Thickness(0, 6, 0, 6) };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1330,8 +1327,9 @@ public sealed partial class SettingsDialog : ContentDialog
         labelStack.Children.Add(new TextBlock { Text = "RX Pin", FontSize = 13 });
         labelStack.Children.Add(new TextBlock
         {
-            Text = "GPIO pin used for S/PDIF input (default 11)",
+            Text = "GPIO pin used for S/PDIF input (default 11). Hot-swappable while active — output briefly mutes during re-lock.",
             FontSize = 10,
+            TextWrapping = TextWrapping.Wrap,
             Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
         });
         Grid.SetColumn(labelStack, 1);
@@ -1346,21 +1344,7 @@ public sealed partial class SettingsDialog : ContentDialog
         Grid.SetColumn(_spdifRxPinCombo, 2);
         row.Children.Add(_spdifRxPinCombo);
 
-        container.Children.Add(row);
-
-        // Caption shown when input source is currently S/PDIF (firmware rejects pin
-        // changes while RX is active, status PIN_CONFIG_OUTPUT_ACTIVE).
-        _spdifRxPinCaption = new TextBlock
-        {
-            FontSize = 10,
-            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-            Margin = new Thickness(26, 0, 0, 4),
-            Visibility = Visibility.Collapsed,
-            Text = "Switch input to USB before changing the RX pin"
-        };
-        container.Children.Add(_spdifRxPinCaption);
-
-        return container;
+        return row;
     }
 
     private void PopulateSpdifInputValues()
@@ -1371,18 +1355,6 @@ public sealed partial class SettingsDialog : ContentDialog
         var idx = Array.IndexOf(ValidPins, _vm.SpdifRxPin);
         if (idx >= 0) _spdifRxPinCombo.SelectedIndex = idx;
         _suppressSelectionChanged = false;
-
-        UpdateSpdifInputConstraints();
-    }
-
-    private void UpdateSpdifInputConstraints()
-    {
-        bool rxActive = _vm.ActiveInputSource == InputSource.Spdif;
-
-        if (_spdifRxPinCombo != null)
-            _spdifRxPinCombo.IsEnabled = !rxActive;
-        if (_spdifRxPinCaption != null)
-            _spdifRxPinCaption.Visibility = rxActive ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private async void OnSpdifRxPinChanged(object sender, SelectionChangedEventArgs e)
@@ -1409,7 +1381,6 @@ public sealed partial class SettingsDialog : ContentDialog
 
         string msg = status switch
         {
-            PinConfigResult.OutputActive => "Switch input to USB before changing the RX pin",
             PinConfigResult.PinInUse => $"GPIO {newPin} is already in use",
             _ => GetI2SErrorMessage(status, "S/PDIF RX")
         };
