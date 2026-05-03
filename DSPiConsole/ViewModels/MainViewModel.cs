@@ -57,6 +57,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private byte _mckPin = 13;        // firmware default
     private int _mckMultiplier = 128;
     private uint _sampleRateHz;
+    private byte _spdifRxPin = 11;    // firmware default (PICO_SPDIF_RX_PIN_DEFAULT)
 
     // Clip tracking
     private ushort _clipLatched;
@@ -328,6 +329,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public byte MckPin => _mckPin;
     public int MckMultiplier => _mckMultiplier;
     public uint SampleRateHz => _sampleRateHz;
+    public byte SpdifRxPin => _spdifRxPin;
     public bool AnySlotIsI2S => _outputSlotTypes.Take(NumOutputSlots).Any(t => t == OutputSlotType.I2S);
 
     public MainViewModel()
@@ -710,6 +712,23 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (mult.HasValue) _mckMultiplier = mult.Value;
     }
 
+    public void FetchSpdifRxPin()
+    {
+        var pin = _device.GetSpdifRxPin();
+        if (pin.HasValue) _spdifRxPin = pin.Value;
+    }
+
+    public byte SetSpdifRxPin(byte pin)
+    {
+        var status = _device.SetSpdifRxPin(pin);
+        if (status == PinConfigResult.Success)
+        {
+            _spdifRxPin = pin;
+            CheckDirty();
+        }
+        return status;
+    }
+
     public byte SetOutputSlotType(int slot, OutputSlotType type)
     {
         var status = _device.SetOutputType(slot, type);
@@ -896,6 +915,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
             _mckMultiplier = bp.MckMultiplierEncoded == 1 ? 256 : 128;
         }
 
+        // Input source / SPDIF RX pin (V7+ wire format)
+        if (bp.HasInputConfig)
+            _spdifRxPin = bp.SpdifRxPin;
+
         // Fetch sample rate for MCK multiplier constraint
         var sr = _device.GetStatusUInt32(15);
         if (sr.HasValue) _sampleRateHz = sr.Value;
@@ -1021,6 +1044,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         FetchMckEnable();
         FetchMckPin();
         FetchMckMultiplier();
+        FetchSpdifRxPin();
         var sr = _device.GetStatusUInt32(15);
         if (sr.HasValue) _sampleRateHz = sr.Value;
 
@@ -1767,6 +1791,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             {
                 if (actual.HasValue) ActiveInputSource = actual.Value;
                 InputSourceChanged?.Invoke(this, EventArgs.Empty);
+                CheckDirty();
             });
         });
     }

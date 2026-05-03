@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Text;
 using DSPiConsole.Core.Models;
+using DSPiConsole.Usb;
 
 namespace DSPiConsole.ViewModels;
 
@@ -43,6 +44,16 @@ public class PresetSnapshot
     public bool MckEnabled;
     public byte MckPin;
     public int MckMultiplier;
+
+    // Input source (V7+ wire format, V13+ slot data) — saved with each preset.
+    public InputSource InputSource;
+
+    // SPDIF RX pin: V13+ slots persist it alongside the output pins, and
+    // apply_slot_to_live restores it when the directory's include_pins flag
+    // is on (flash_storage.c:695). Tracked the same way as OutputPins —
+    // captured unconditionally; the include_pins flag only controls what
+    // preset_load applies.
+    public byte SpdifRxPin;
 
     /// <summary>
     /// Capture a snapshot from the current ViewModel state.
@@ -124,6 +135,12 @@ public class PresetSnapshot
         snap.MckEnabled = vm.MckEnabled;
         snap.MckPin = vm.MckPin;
         snap.MckMultiplier = vm.MckMultiplier;
+
+        // Input source (preset state on V7+/V13+ firmware; harmless USB default otherwise)
+        snap.InputSource = vm.ActiveInputSource;
+
+        // SPDIF RX pin (V13+ slot data — persists alongside output_pins)
+        snap.SpdifRxPin = vm.SpdifRxPin;
 
         return snap;
     }
@@ -286,6 +303,17 @@ public static class PresetDiff
             changes.Add($"MCK pin: {old.MckPin} → {cur.MckPin}");
         if (old.MckMultiplier != cur.MckMultiplier)
             changes.Add($"MCK multiplier: {old.MckMultiplier}x → {cur.MckMultiplier}x");
+
+        // Input source
+        if (old.InputSource != cur.InputSource)
+        {
+            string Name(InputSource s) => s == InputSource.Spdif ? "S/PDIF" : "USB";
+            changes.Add($"Input source: {Name(old.InputSource)} → {Name(cur.InputSource)}");
+        }
+
+        // SPDIF RX pin
+        if (old.SpdifRxPin != cur.SpdifRxPin)
+            changes.Add($"S/PDIF RX pin: GPIO {old.SpdifRxPin} → GPIO {cur.SpdifRxPin}");
 
         return changes;
     }
