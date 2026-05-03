@@ -1169,16 +1169,55 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private static int GetLinkedMasterChannel(int channelId) =>
         channelId == (int)ChannelId.MasterLeft ? (int)ChannelId.MasterRight : (int)ChannelId.MasterLeft;
 
-    public async Task SyncMasterFilters(int sourceChannel)
+    /// <summary>
+    /// Returns true iff the Master L and Master R filter banks have at least
+    /// one differing band. Used by the Link L/R toggle to decide whether the
+    /// user must be prompted to choose a source channel before syncing.
+    /// </summary>
+    public bool MasterFiltersDiffer()
+    {
+        if (!_channelData.TryGetValue((int)ChannelId.MasterLeft, out var left)) return false;
+        if (!_channelData.TryGetValue((int)ChannelId.MasterRight, out var right)) return false;
+        if (left.Count != right.Count) return true;
+        for (int i = 0; i < left.Count; i++)
+            if (!left[i].Equals(right[i])) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Copy every filter band from <paramref name="sourceChannel"/> to its
+    /// linked sibling and align the input preamp. Each per-band write goes
+    /// through <see cref="SetFilterWithRetryRaw"/> so transient USB hiccups
+    /// don't silently lose a band — and a persistent failure returns false
+    /// so the caller can revert the Link toggle and surface an error.
+    /// Local state for the destination channel is only updated after the
+    /// device confirms each band, keeping local and device state in lockstep
+    /// even on mid-loop failure.
+    /// </summary>
+    public async Task<bool> SyncMasterFilters(int sourceChannel)
     {
         int other = GetLinkedMasterChannel(sourceChannel);
-        if (!_channelData.TryGetValue(sourceChannel, out var srcFilters)) return;
+        if (!_channelData.TryGetValue(sourceChannel, out var srcFilters)) return false;
+        if (!_channelData.TryGetValue(other, out var dstFilters)) return false;
+
         for (int i = 0; i < srcFilters.Count; i++)
         {
+            // Skip bands that already match — avoids 12 redundant USB writes
+            // (and the resulting audio glitch from coefficient recalc) when
+            // the user enables Link with the channels already in agreement,
+            // and trims partial writes when only a subset of bands differ.
+            if (i < dstFilters.Count && srcFilters[i].Equals(dstFilters[i]))
+                continue;
+
             var p = srcFilters[i];
-            if (_channelData.TryGetValue(other, out var dstFilters) && i < dstFilters.Count)
-                dstFilters[i] = p;
-            await Task.Run(() => _device.SetFilter(other, i, p));
+            if (!await SetFilterWithRetryRaw(other, i, p))
+            {
+                // Surface whatever local state we have to listeners so the UI
+                // reflects the partial write before the caller error-handles.
+                FiltersChanged?.Invoke(this, EventArgs.Empty);
+                return false;
+            }
+            if (i < dstFilters.Count) dstFilters[i] = p;
         }
 
         // Mirror the preamp from source to other so the two input channels are
@@ -1189,6 +1228,22 @@ public partial class MainViewModel : ObservableObject, IDisposable
             InputPreampLDb = InputPreampRDb;
 
         FiltersChanged?.Invoke(this, EventArgs.Empty);
+        return true;
+    }
+
+    /// <summary>
+    /// Retry a raw device-level filter write up to 5 times. Bypasses
+    /// <see cref="SetFilter"/>'s linked-channel mirror to avoid recursive
+    /// double-writes when the caller is already iterating both channels.
+    /// </summary>
+    private async Task<bool> SetFilterWithRetryRaw(int channel, int band, FilterParams p)
+    {
+        for (int attempt = 0; attempt < 5; attempt++)
+        {
+            if (await Task.Run(() => _device.SetFilter(channel, band, p)))
+                return true;
+        }
+        return false;
     }
 
     private void FetchFilter(int channel, int band)

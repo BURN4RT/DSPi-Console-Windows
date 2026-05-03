@@ -308,6 +308,10 @@ public sealed partial class SettingsDialog : ContentDialog
                 PopulatePinValues(outputs);
                 PopulateI2SValues();
                 PopulateSpdifInputValues();
+                // Initial conflict pass — without this, BCK/MCK/RX combos
+                // would render all 25 GPIOs as available until the first
+                // pin change kicks RefreshAllConflicts.
+                UpdateI2SPinConflicts();
             });
         });
 
@@ -744,6 +748,10 @@ public sealed partial class SettingsDialog : ContentDialog
         if (_vm.MckEnabled)
             pinOwners[_vm.MckPin] = "MCK";
 
+        // SPDIF RX pin (V7+ firmware)
+        if (_vm.InputSourceSupported)
+            pinOwners[_vm.SpdifRxPin] = "SPDIF RX";
+
         return pinOwners;
     }
 
@@ -761,9 +769,15 @@ public sealed partial class SettingsDialog : ContentDialog
             {
                 byte pin = ValidPins[i];
                 if (pinOwners.TryGetValue(pin, out var ownerName))
+                {
                     item.Content = $"GPIO {pin} ({ownerName})";
+                    item.IsEnabled = false;
+                }
                 else
+                {
                     item.Content = $"GPIO {pin}";
+                    item.IsEnabled = true;
+                }
             }
         }
         _suppressSelectionChanged = false;
@@ -771,7 +785,9 @@ public sealed partial class SettingsDialog : ContentDialog
 
     private void UpdateI2SPinConflicts()
     {
-        // Build map of output data pins (for BCK/MCK combo conflict labels)
+        // Build map of pins owned by anyone other than the I2S clock block.
+        // Used as a base for BCK and MCK combos (each combo also excludes
+        // its own self-reservation below).
         var dataPinOwners = new Dictionary<byte, string>();
         foreach (var (other, _, _, _) in _outputRows)
         {
@@ -782,8 +798,10 @@ public sealed partial class SettingsDialog : ContentDialog
         dataPinOwners[(byte)(_vm.I2SBckPin + 1)] = "LRCK";
         if (_vm.MckEnabled)
             dataPinOwners[_vm.MckPin] = "MCK";
+        if (_vm.InputSourceSupported)
+            dataPinOwners[_vm.SpdifRxPin] = "SPDIF RX";
 
-        // Update BCK combo labels
+        // Update BCK combo
         if (_bckPinCombo != null)
         {
             _suppressSelectionChanged = true;
@@ -792,17 +810,29 @@ public sealed partial class SettingsDialog : ContentDialog
                 if (_bckPinCombo.Items[i] is ComboBoxItem item)
                 {
                     byte pin = ValidPins[i];
-                    // BCK reserves both pin and pin+1
+                    // BCK reserves pin and pin+1 (LRCK). Disable if pin
+                    // collides with any non-LRCK owner, or if pin+1 collides
+                    // with anything (including another BCK candidate's LRCK).
+                    bool conflict = false;
+                    string? ownerLabel = null;
                     if (dataPinOwners.TryGetValue(pin, out var owner) && owner != "LRCK")
-                        item.Content = $"GPIO {pin} ({owner})";
-                    else
-                        item.Content = $"GPIO {pin}";
+                    {
+                        conflict = true;
+                        ownerLabel = owner;
+                    }
+                    else if (dataPinOwners.TryGetValue((byte)(pin + 1), out var nextOwner) && nextOwner != "LRCK")
+                    {
+                        conflict = true;
+                        ownerLabel = $"{nextOwner}+LRCK";
+                    }
+                    item.Content = ownerLabel != null ? $"GPIO {pin} ({ownerLabel})" : $"GPIO {pin}";
+                    item.IsEnabled = !conflict;
                 }
             }
             _suppressSelectionChanged = false;
         }
 
-        // Update MCK combo labels
+        // Update MCK combo
         if (_mckPinCombo != null)
         {
             var mckOwners = new Dictionary<byte, string>(dataPinOwners);
@@ -816,9 +846,46 @@ public sealed partial class SettingsDialog : ContentDialog
                 {
                     byte pin = ValidPins[i];
                     if (mckOwners.TryGetValue(pin, out var owner) && owner != "MCK")
+                    {
                         item.Content = $"GPIO {pin} ({owner})";
+                        item.IsEnabled = false;
+                    }
                     else
+                    {
                         item.Content = $"GPIO {pin}";
+                        item.IsEnabled = true;
+                    }
+                }
+            }
+            _suppressSelectionChanged = false;
+        }
+
+        // Update SPDIF RX combo
+        if (_spdifRxPinCombo != null)
+        {
+            var rxOwners = new Dictionary<byte, string>(dataPinOwners);
+            // dataPinOwners already includes BCK+1 (LRCK) and MCK; add BCK itself.
+            rxOwners[_vm.I2SBckPin] = "BCK";
+            // Strip the SPDIF RX self-entry so the user's own current pin
+            // remains selectable.
+            rxOwners.Remove(_vm.SpdifRxPin);
+
+            _suppressSelectionChanged = true;
+            for (int i = 0; i < ValidPins.Length; i++)
+            {
+                if (_spdifRxPinCombo.Items[i] is ComboBoxItem item)
+                {
+                    byte pin = ValidPins[i];
+                    if (rxOwners.TryGetValue(pin, out var owner))
+                    {
+                        item.Content = $"GPIO {pin} ({owner})";
+                        item.IsEnabled = false;
+                    }
+                    else
+                    {
+                        item.Content = $"GPIO {pin}";
+                        item.IsEnabled = true;
+                    }
                 }
             }
             _suppressSelectionChanged = false;

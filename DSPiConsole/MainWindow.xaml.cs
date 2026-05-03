@@ -1069,11 +1069,53 @@ public sealed partial class MainWindow : Window
             linkBtn.Resources["ToggleButtonForegroundCheckedPressed"] = (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
             linkBtn.Click += async (s, e) =>
             {
-                ViewModel.MasterPeqLinked = linkBtn.IsChecked == true;
+                bool wantLink = linkBtn.IsChecked == true;
+
+                // When enabling and the two master channels' filters disagree,
+                // ask the user which channel's bank should win — silently
+                // overwriting one would lose work the user might still want.
+                int sourceChannel = (int)channel.Id;
+                if (wantLink && ViewModel.MasterFiltersDiffer())
+                {
+                    var chosen = await AskWhichMasterFiltersToKeep();
+                    if (chosen == null)
+                    {
+                        // Cancelled: revert toggle visual state, keep link off.
+                        linkBtn.IsChecked = false;
+                        return;
+                    }
+                    sourceChannel = chosen.Value;
+                }
+
+                // Commit the link state BEFORE the sync. SyncMasterFilters
+                // fires FiltersChanged, which causes MainWindow to rebuild
+                // the channel editor — and the rebuild reads
+                // ViewModel.MasterPeqLinked to set the new link button's
+                // IsChecked. If we set it after, the rebuilt button is born
+                // unchecked and only illuminates next time you re-enter the
+                // editor. On a sync failure we revert below.
+                ViewModel.MasterPeqLinked = wantLink;
                 AppSettings.Instance.MasterPeqLinked = ViewModel.MasterPeqLinked;
                 AppSettings.Instance.Save();
-                if (ViewModel.MasterPeqLinked)
-                    await ViewModel.SyncMasterFilters((int)channel.Id);
+
+                if (wantLink)
+                {
+                    var ok = await ViewModel.SyncMasterFilters(sourceChannel);
+                    if (!ok)
+                    {
+                        // Revert the link state and rebuild the editor so the
+                        // (now stale, off-screen) link button is replaced with
+                        // a fresh unchecked one.
+                        ViewModel.MasterPeqLinked = false;
+                        AppSettings.Instance.MasterPeqLinked = false;
+                        AppSettings.Instance.Save();
+                        if (_selectedChannel != null) ShowChannelEditor(_selectedChannel);
+                        BodePlot.SetMasterLinkedGradient(false);
+                        await ShowErrorDialog("Failed to sync filters to the linked channel — link not enabled.");
+                        return;
+                    }
+                }
+
                 BodePlot.SetMasterLinkedGradient(ViewModel.MasterPeqLinked);
                 ViewModel.UpdateChannelSelection(channel);
                 UpdateChannelListSelection();
@@ -1176,11 +1218,48 @@ public sealed partial class MainWindow : Window
 
             var clearBtn = new Button
             {
-                Content = new TextBlock { Text = "Clear Master PEQ", Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] },
+                Content = new TextBlock { Text = "Clear Filters", Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] },
                 Height = 32,
                 VerticalAlignment = VerticalAlignment.Center
             };
-            clearBtn.Click += (s, e) => ViewModel.ClearAllMasterCommand.Execute(null);
+            clearBtn.Click += async (s, e) =>
+            {
+                // Scope the clear to the current editor channel. When Link L/R
+                // is on, ViewModel.SetFilter mirrors each write to the linked
+                // channel automatically — so a single per-band loop covers
+                // both cases (linked = both channels, unlinked = just this one).
+                bool linked = ViewModel.MasterPeqLinked;
+                string content;
+                if (linked)
+                {
+                    var leftName = ViewModel.GetChannelName(Channel.MasterLeft);
+                    var rightName = ViewModel.GetChannelName(Channel.MasterRight);
+                    content = $"This will reset every filter band on {leftName} and {rightName}.";
+                }
+                else
+                {
+                    var name = ViewModel.GetChannelName(channel);
+                    content = $"This will reset every filter band on {name}.";
+                }
+
+                var dialog = new ContentDialog
+                {
+                    Title = "Clear filters?",
+                    Content = content,
+                    PrimaryButtonText = "Clear",
+                    CloseButtonText = "Cancel",
+                    DefaultButton = ContentDialogButton.Close,
+                    XamlRoot = Content.XamlRoot
+                };
+
+                if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+                var defaultFilter = new FilterParams(FilterType.Flat, 1000f, 0.707f, 0f);
+                int targetChannel = (int)channel.Id;
+                int bandCount = ViewModel.GetFilters(channel).Count;
+                for (int b = 0; b < bandCount; b++)
+                    await ViewModel.SetFilter(targetChannel, b, defaultFilter.Clone());
+            };
             Grid.SetColumn(clearBtn, 2);
             headerRow.Children.Add(clearBtn);
 
@@ -1973,6 +2052,35 @@ public sealed partial class MainWindow : Window
     }
 
 
+
+    /// <summary>
+    /// Prompt the user to pick which input channel's filters should win when
+    /// enabling Link L/R against differing banks. Returns the chosen channel
+    /// id, or null if the user cancelled.
+    /// </summary>
+    private async Task<int?> AskWhichMasterFiltersToKeep()
+    {
+        var leftName = ViewModel.GetChannelName(Channel.MasterLeft);
+        var rightName = ViewModel.GetChannelName(Channel.MasterRight);
+
+        var dialog = new ContentDialog
+        {
+            Title = $"{leftName} and {rightName} have different filters",
+            Content = "Linking will overwrite one channel's filters with the other's. Which would you like to keep?",
+            PrimaryButtonText = $"Keep {leftName}",
+            SecondaryButtonText = $"Keep {rightName}",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot
+        };
+
+        return await dialog.ShowAsync() switch
+        {
+            ContentDialogResult.Primary => (int)ChannelId.MasterLeft,
+            ContentDialogResult.Secondary => (int)ChannelId.MasterRight,
+            _ => (int?)null
+        };
+    }
 
     private async Task<UnsavedAction> ShowUnsavedChangesDialogAsync(string? summary)
     {

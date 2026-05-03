@@ -62,7 +62,7 @@ public static class FilterFileService
 
         if (filter.Type.HasGain())
         {
-            line += string.Format(inv, "  Gain {0,+5:+0.0;-0.0} dB", filter.Gain);
+            line += string.Format(inv, "  Gain {0,5:+0.0;-0.0} dB", filter.Gain);
         }
 
         if (filter.Type.HasQ())
