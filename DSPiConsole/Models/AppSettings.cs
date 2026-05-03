@@ -11,7 +11,7 @@ public class AppSettings
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "DSPiConsole", "settings.json");
 
-    public bool ShowGraphGlow { get; set; } = true;
+    public bool ShowGraphGlow { get; set; } = false;
     public double GraphLineWidth { get; set; } = 2.0;
     public double GraphAnimationSpeed { get; set; } = 0.2;
     public bool ShowDebugInfo { get; set; }
