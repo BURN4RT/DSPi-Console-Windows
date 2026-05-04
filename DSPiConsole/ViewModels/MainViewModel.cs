@@ -452,6 +452,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
             });
         };
 
+        // Active input source switch — fires when firmware's main loop applies
+        // a deferred source change. Catches the race where BULK_INVALIDATED is
+        // sent before the deferred apply lands, leaving the bulk fetch with
+        // stale active_input_source.
+        _device.InputSourceNotified += (_, newSource) =>
+        {
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (ActiveInputSource != newSource)
+                    ActiveInputSource = newSource;
+                InputSourceSupported = true;
+                InputSourceChanged?.Invoke(this, EventArgs.Empty);
+            });
+        };
+
         // Status polling timer (60ms interval)
         _pollTimer = new System.Timers.Timer(60);
         _pollTimer.Elapsed += (s, e) =>
@@ -918,6 +933,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
         // Input source / SPDIF RX pin (V7+ wire format)
         if (bp.HasInputConfig)
             _spdifRxPin = bp.SpdifRxPin;
+        // Capture input source for the dispatcher block below — ActiveInputSource
+        // is an ObservableProperty that fires on the UI thread. The firmware may
+        // still be a few ms away from applying a deferred input_source switch when
+        // it sends BULK_INVALIDATED (preset load); a follow-up PARAM_CHANGED at
+        // input_config.input_source closes that race in DspDevice.ProcessNotifyPacket.
+        InputSource? bulkInputSource = bp.HasInputConfig
+            ? (InputSource?)bp.InputSource
+            : null;
 
         // Fetch sample rate for MCK multiplier constraint
         var sr = _device.GetStatusUInt32(15);
@@ -979,6 +1002,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
             VisibilityChanged?.Invoke(this, EventArgs.Empty);
             FiltersChanged?.Invoke(this, EventArgs.Empty);
+
+            if (bulkInputSource is { } src && (src == InputSource.Usb || src == InputSource.Spdif))
+            {
+                if (ActiveInputSource != src)
+                    ActiveInputSource = src;
+                InputSourceSupported = true;
+                InputSourceChanged?.Invoke(this, EventArgs.Empty);
+            }
 
             if (bp.HasI2SConfig)
             {

@@ -336,6 +336,13 @@ public partial class DspDevice : ObservableObject, IDisposable
     /// followed shortly by <see cref="BulkInvalidated"/>.</summary>
     public event EventHandler<byte>? PresetLoadedNotified;
 
+    /// <summary>Fired when the device pushes an active-input-source change via
+    /// the notification endpoint. Catches the late-arriving notification after
+    /// the firmware's main loop applies a deferred input source switch (preset
+    /// load may emit BULK_INVALIDATED before the switch lands, so the bulk
+    /// fetch can return stale data; this event closes that race).</summary>
+    public event EventHandler<InputSource>? InputSourceNotified;
+
     // Notification endpoint state (bulk IN EP 0x83, V7+ firmware).
     private UsbEndpointReader? _notifyReader;
     private Thread? _notifyThread;
@@ -343,6 +350,10 @@ public partial class DspDevice : ObservableObject, IDisposable
     private const int NotifyPacketSize = 64;
     private const int ChannelNamesWireOffset = 2480; // offsetof(WireBulkParams, channel_names)
     private const int WireChannelNameLen = 32;
+
+    // V7 input config block sits at offsetof(WireBulkParams, input_config) = 2896.
+    // input_source occupies the first byte of the 16-byte WireInputConfig struct.
+    private const int InputSourceWireOffset = 2896;
 
     public DspDevice()
     {
@@ -1746,6 +1757,11 @@ public partial class DspDevice : ObservableObject, IDisposable
                         Name = name,
                         Source = source
                     });
+                }
+                // Active input source switch: offset == input_config.input_source, size 1.
+                else if (size == 1 && offset == InputSourceWireOffset)
+                {
+                    InputSourceNotified?.Invoke(this, (InputSource)buf[12]);
                 }
                 // Other PARAM_CHANGED offsets are ignored for now — the host
                 // already polls status / refetches on BULK_INVALIDATED.
