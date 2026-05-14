@@ -10,7 +10,9 @@ public enum FilterType
     LowShelf = 2,
     HighShelf = 3,
     LowPass = 4,
-    HighPass = 5
+    HighPass = 5,
+    Notch = 6,
+    AllPass = 7
 }
 
 /// <summary>
@@ -26,6 +28,8 @@ public static class FilterTypeExtensions
         FilterType.HighShelf => "High Shelf",
         FilterType.LowPass => "Low Pass",
         FilterType.HighPass => "High Pass",
+        FilterType.Notch => "Notch",
+        FilterType.AllPass => "All Pass",
         _ => "Unknown"
     };
 
@@ -37,6 +41,8 @@ public static class FilterTypeExtensions
         FilterType.HighShelf => "HS",
         FilterType.LowPass => "LP",
         FilterType.HighPass => "HP",
+        FilterType.Notch => "NO",
+        FilterType.AllPass => "AP",
         _ => "?"
     };
 
@@ -44,7 +50,9 @@ public static class FilterTypeExtensions
         type is FilterType.Peaking or FilterType.LowShelf or FilterType.HighShelf;
 
     public static bool HasQ(this FilterType type) =>
-        type is FilterType.Peaking or FilterType.LowShelf or FilterType.HighShelf or FilterType.LowPass or FilterType.HighPass;
+        type is FilterType.Peaking or FilterType.LowShelf or FilterType.HighShelf
+              or FilterType.LowPass or FilterType.HighPass
+              or FilterType.Notch or FilterType.AllPass;
 
     public static bool HasFrequency(this FilterType type) =>
         type != FilterType.Flat;

@@ -54,6 +54,8 @@ public static class FilterFileService
             FilterType.HighShelf => "HS",
             FilterType.LowPass => "LP",
             FilterType.HighPass => "HP",
+            FilterType.Notch => "NO",
+            FilterType.AllPass => "AP",
             _ => "PK"
         };
 
@@ -196,6 +198,10 @@ public static class FilterFileService
             filterType = FilterType.LowShelf;
         else if (upper.Contains(" HS ") || upper.Contains(" HSC ") || upper.Contains(" HSQ "))
             filterType = FilterType.HighShelf;
+        else if (upper.Contains(" NO ") || upper.Contains(" NOTCH "))
+            filterType = FilterType.Notch;
+        else if (upper.Contains(" AP ") || upper.Contains(" ALLPASS "))
+            filterType = FilterType.AllPass;
         else
             return null;
 

@@ -96,6 +96,24 @@ public static class DspMath
                     a2 = (A + 1) - (A - 1) * cs - 2 * sqrtA * alpha;
                 }
                 break;
+
+            case FilterType.Notch:
+                b0 = 1;
+                b1 = -2 * cs;
+                b2 = 1;
+                a0 = 1 + alpha;
+                a1 = -2 * cs;
+                a2 = 1 - alpha;
+                break;
+
+            case FilterType.AllPass:
+                b0 = 1 - alpha;
+                b1 = -2 * cs;
+                b2 = 1 + alpha;
+                a0 = 1 + alpha;
+                a1 = -2 * cs;
+                a2 = 1 - alpha;
+                break;
         }
 
         // Normalize by a0

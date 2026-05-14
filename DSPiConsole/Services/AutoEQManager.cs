@@ -189,6 +189,8 @@ public class AutoEQManager
         "highshelf" => FilterType.HighShelf,
         "lowpass" => FilterType.LowPass,
         "highpass" => FilterType.HighPass,
+        "notch" => FilterType.Notch,
+        "allpass" => FilterType.AllPass,
         _ => FilterType.Flat
     };
 }
