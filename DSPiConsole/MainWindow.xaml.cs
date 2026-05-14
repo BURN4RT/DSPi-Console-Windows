@@ -43,6 +43,7 @@ public sealed partial class MainWindow : Window
     private bool _isUpdatingGain;
     private bool _closeConfirmed;
     private StatsWindow? _statsWindow;
+    private BulkMonitorWindow? _bulkMonitorWindow;
     private GraphWindow? _graphWindow;
     private LoudnessWindow? _loudnessWindow;
     private CrossfeedWindow? _crossfeedWindow;
@@ -190,11 +191,19 @@ public sealed partial class MainWindow : Window
         PresetComboBox.RightTapped += OnPresetComboRightTapped;
 
 
-        // Right-click preamp slider to reset to 0 dB
+        // Right-click slider to reset. Master: snap back to the saved snapshot
+        // value (or 0 if no snapshot yet). User (host): scalar 1.0 (0 dB at the
+        // endpoint) — matches macOS HostVolumeSection.onRightClick. User
+        // (firmware): 0 dB, matches macOS UserVolumeSection.onRightClick.
         MasterVolumeSlider.RightTapped += (s, e) =>
         {
             e.Handled = true;
-            ViewModel.MasterVolumeDb = ViewModel.SavedSnapshot?.MasterVolumeDb ?? 0f;
+            if (_sidebarVolumeIsMaster)
+                ViewModel.MasterVolumeDb = ViewModel.SavedSnapshot?.MasterVolumeDb ?? 0f;
+            else if (UseHostVolume)
+                ViewModel.HostVolume.SetVolumeScalar(1.0f);
+            else
+                ViewModel.UserVolumeDb = 0f;
         };
 
         // Multi-device: register unsaved changes dialog
@@ -230,9 +239,22 @@ public sealed partial class MainWindow : Window
         ViewModel.AvailableDevices.CollectionChanged += (s, e) =>
             DispatcherQueue.TryEnqueue(UpdateDeviceSelector);
 
+        // External Windows-side volume changes (system tray, hardware volume
+        // keys, other apps, default-device switch) push back into our slider
+        // when in host-volume mode. The service already dispatches to the UI
+        // thread and suppresses echoes of our own writes.
+        ViewModel.HostVolume.VolumeChanged += (_, _) =>
+        {
+            if (UseHostVolume) UpdateMasterVolumeDisplay();
+        };
+
         // Initial UI state
         UpdateConnectionStatus();
-        UpdateMasterVolumeDisplay();
+        // Apply the persisted sidebar volume mode (label, menu checkmark,
+        // slider tint, current dB readout). UpdateMasterVolumeDisplay is
+        // invoked inside ApplySidebarVolumeMode, so we don't double-call.
+        var savedMode = AppSettings.Instance.SidebarVolumeMode ?? "master";
+        ApplySidebarVolumeMode(isMaster: savedMode != "user", persist: false);
         UpdateBypassButton();
 
         // Initialize AutoEQ (load database in background)
@@ -2002,6 +2024,11 @@ public sealed partial class MainWindow : Window
                     UpdateConnectionStatus();
                     break;
                 case nameof(MainViewModel.MasterVolumeDb):
+                case nameof(MainViewModel.UserVolumeDb):
+                case nameof(MainViewModel.ActiveInputSource):
+                    // ActiveInputSource flips toggle UseHostVolume, which
+                    // changes which source backs the slider — refresh the
+                    // display so the slider/readout jump to the right value.
                     UpdateMasterVolumeDisplay();
                     break;
                 case nameof(MainViewModel.InputPreampLDb):
@@ -2258,23 +2285,166 @@ public sealed partial class MainWindow : Window
         return MasterVolumeSteps[idx];
     }
 
-    private bool _updatingMasterVolumeSlider;
+    // User-volume and host-volume modes share one taper: linear in dB at 1 dB
+    // per slider step over [-60, 0]. The slider's Maximum is switched to
+    // UserVolumeSliderMax (=60) when entering either mode, so dragging snaps
+    // to integer-dB positions and the same dB sits at the same visual
+    // location regardless of whether we're driving REQ_SET_USER_VOLUME or
+    // the Windows host endpoint. No mute sentinel — the bottom reads -60 dB.
+    private const double UserVolumeMinDb = -60.0;
+    private const double UserVolumeMaxDb = 0.0;
+    private const double UserVolumeSliderMax = 60.0;
+    private const double MasterVolumeSliderMax = 104.0;
 
+    private static double UserVolumeDbToSliderPos(double db)
+    {
+        var clamped = Math.Clamp(db, UserVolumeMinDb, UserVolumeMaxDb);
+        return clamped - UserVolumeMinDb;
+    }
+
+    private static double UserVolumeSliderPosToDb(double pos)
+    {
+        var clamped = Math.Clamp(pos, 0, UserVolumeSliderMax);
+        return UserVolumeMinDb + clamped;
+    }
+
+    private bool _updatingMasterVolumeSlider;
+    private bool _sidebarVolumeIsMaster = true;
+
+    // macOS systemRed-ish; reads well against the dark acrylic sidebar.
+    private static readonly Color SidebarVolumeMasterTint = Color.FromArgb(255, 230, 70, 60);
+
+    /// <summary>
+    /// True when the sidebar slider should drive the Windows system-default render
+    /// endpoint (via <see cref="HostVolumeService"/>) instead of REQ_SET_USER_VOLUME.
+    /// Mirrors macOS's "Host Volume" mode: User Volume picked + DSPi input source
+    /// == USB + a default endpoint is bound. When DSPi is the current playback
+    /// device the same endpoint backs both our slider and the system-tray slider,
+    /// so they stay in lockstep automatically.
+    /// </summary>
+    private bool UseHostVolume =>
+        !_sidebarVolumeIsMaster
+        && ViewModel.ActiveInputSource == InputSource.Usb
+        && ViewModel.HostVolume.IsAvailable;
+
+    /// <summary>
+    /// Apply the chosen sidebar volume mode: rewrite the label, toggle the
+    /// menu checkmarks, retint the slider track/thumb (red for master), and
+    /// resync the slider position + readout from the corresponding dB value.
+    /// </summary>
+    private void ApplySidebarVolumeMode(bool isMaster, bool persist)
+    {
+        _sidebarVolumeIsMaster = isMaster;
+        SidebarVolumeModeLabel.Text = isMaster ? "Master Volume ▾" : "User Volume ▾";
+
+        UserVolumeModeMenuItem.Icon = isMaster ? null : new FontIcon { Glyph = "" };  // checkmark
+        MasterVolumeModeMenuItem.Icon = isMaster ? new FontIcon { Glyph = "" } : null;
+
+        var tint = isMaster
+            ? SidebarVolumeMasterTint
+            : (Color)Application.Current.Resources["SystemAccentColor"];
+        SetSidebarSliderTint(tint);
+
+        // Switch the slider range to match the active taper. Master keeps its
+        // piecewise 0..104 mapping; user/host modes use 0..60 (1 dB per step).
+        // Set Maximum before UpdateMasterVolumeDisplay so its position
+        // calculation lands inside the new range.
+        var newMax = isMaster ? MasterVolumeSliderMax : UserVolumeSliderMax;
+        if (Math.Abs(MasterVolumeSlider.Maximum - newMax) > 0.01)
+            MasterVolumeSlider.Maximum = newMax;
+
+        UpdateMasterVolumeDisplay();
+
+        if (persist && AppSettings.Instance.SidebarVolumeMode != (isMaster ? "master" : "user"))
+        {
+            AppSettings.Instance.SidebarVolumeMode = isMaster ? "master" : "user";
+            AppSettings.Instance.Save();
+        }
+    }
+
+    private void SetSidebarSliderTint(Color c)
+    {
+        // The six brushes were declared in MainWindow.xaml's Slider.Resources;
+        // rewriting their Color updates the slider visuals live.
+        foreach (var key in new[] {
+            "SliderTrackValueFill", "SliderTrackValueFillPointerOver",
+            "SliderTrackValueFillPressed", "SliderThumbBackground",
+            "SliderThumbBackgroundPointerOver", "SliderThumbBackgroundPressed" })
+        {
+            if (MasterVolumeSlider.Resources[key] is SolidColorBrush brush)
+                brush.Color = c;
+        }
+    }
+
+    /// <summary>
+    /// Refresh the slider position and dB readout from whichever source the
+    /// current mode tracks. Called whenever MasterVolumeDb / UserVolumeDb
+    /// change, the host endpoint reports a change, the active input source
+    /// flips, or the mode itself toggles.
+    /// </summary>
     private void UpdateMasterVolumeDisplay()
     {
-        var v = ViewModel.MasterVolumeDb;
         _updatingMasterVolumeSlider = true;
         try
         {
-            var pos = MasterVolumeDbToSliderPos(v);
-            if (Math.Abs(MasterVolumeSlider.Value - pos) > 0.5)
-                MasterVolumeSlider.Value = pos;
+            if (_sidebarVolumeIsMaster)
+            {
+                var v = ViewModel.MasterVolumeDb;
+                var pos = MasterVolumeDbToSliderPos(v);
+                if (Math.Abs(MasterVolumeSlider.Value - pos) > 0.5)
+                    MasterVolumeSlider.Value = pos;
+                MasterVolumeValueText.Text = v <= -127.5f ? "-inf dB" : $"{v:F1} dB";
+            }
+            else if (UseHostVolume)
+            {
+                // Linear-in-dB at 1 dB per slider step. Round whatever the
+                // endpoint reports to the nearest integer so the slider thumb
+                // and the readout always agree — sub-dB endpoint quantization
+                // and external fractional writes get snapped for display.
+                var db = ViewModel.HostVolume.VolumeDb;
+                if (float.IsNegativeInfinity(db))
+                {
+                    MasterVolumeSlider.Value = 0;
+                    MasterVolumeValueText.Text = "-inf dB";
+                }
+                else
+                {
+                    var rounded = Math.Round(Math.Clamp((double)db, UserVolumeMinDb, UserVolumeMaxDb));
+                    MasterVolumeSlider.Value = UserVolumeDbToSliderPos(rounded);
+                    MasterVolumeValueText.Text = $"{rounded:F0} dB";
+                }
+            }
+            else
+            {
+                // Same 1 dB-per-step taper as host mode. Round for display so
+                // a preset-loaded fractional value doesn't show a stray decimal
+                // while the slider sits at the nearest integer position.
+                var rounded = Math.Round(Math.Clamp((double)ViewModel.UserVolumeDb,
+                                                    UserVolumeMinDb, UserVolumeMaxDb));
+                MasterVolumeSlider.Value = UserVolumeDbToSliderPos(rounded);
+                MasterVolumeValueText.Text = $"{rounded:F0} dB";
+            }
         }
         finally
         {
             _updatingMasterVolumeSlider = false;
         }
-        MasterVolumeValueText.Text = v <= -127.5f ? "-inf dB" : $"{v:F1} dB";
+    }
+
+    private void OnSidebarVolumeModeLabelTapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe)
+            FlyoutBase.ShowAttachedFlyout(fe);
+    }
+
+    private void OnUserVolumeModeMenuClick(object sender, RoutedEventArgs e)
+    {
+        ApplySidebarVolumeMode(isMaster: false, persist: true);
+    }
+
+    private void OnMasterVolumeModeMenuClick(object sender, RoutedEventArgs e)
+    {
+        ApplySidebarVolumeMode(isMaster: true, persist: true);
     }
 
     private void UpdateBypassButton()
@@ -2411,10 +2581,32 @@ public sealed partial class MainWindow : Window
     private void OnMasterVolumeSliderChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
         if (_updatingMasterVolumeSlider) return;
-        float db = (float)MasterVolumeSliderPosToDb(e.NewValue);
-        if (Math.Abs(ViewModel.MasterVolumeDb - db) > 0.05f)
-            ViewModel.MasterVolumeDb = db;
-        MasterVolumeValueText.Text = db <= -127.5f ? "-inf dB" : $"{db:F1} dB";
+        if (_sidebarVolumeIsMaster)
+        {
+            float db = (float)MasterVolumeSliderPosToDb(e.NewValue);
+            if (Math.Abs(ViewModel.MasterVolumeDb - db) > 0.05f)
+                ViewModel.MasterVolumeDb = db;
+            MasterVolumeValueText.Text = db <= -127.5f ? "-inf dB" : $"{db:F1} dB";
+        }
+        else if (UseHostVolume)
+        {
+            // Drive the Windows endpoint at integer dB. The firmware's
+            // audio_state.volume gets updated automatically via the UAC1
+            // protocol mirror, so we skip the redundant REQ_SET_USER_VOLUME
+            // write. Endpoint echo lands in HostVolume.VolumeChanged; the
+            // service's echo suppression keeps a rapid drag from fighting
+            // itself.
+            float db = (float)Math.Round(UserVolumeSliderPosToDb(e.NewValue));
+            ViewModel.HostVolume.SetVolumeDb(db);
+            MasterVolumeValueText.Text = $"{db:F0} dB";
+        }
+        else
+        {
+            float db = (float)Math.Round(UserVolumeSliderPosToDb(e.NewValue));
+            if (Math.Abs(ViewModel.UserVolumeDb - db) > 0.05f)
+                ViewModel.UserVolumeDb = db;
+            MasterVolumeValueText.Text = $"{db:F0} dB";
+        }
     }
 
     private void OnReconnectClick(object sender, RoutedEventArgs e)
@@ -3575,6 +3767,20 @@ public sealed partial class MainWindow : Window
         _statsWindow.Closed += (s, e) => { _statsWindow = null; UpdateShortcutIconStates(); };
         _statsWindow.Activate();
         UpdateShortcutIconStates();
+    }
+
+    private void OnBulkMonitorClick(object sender, RoutedEventArgs e)
+    {
+        // Toggle behavior mirrors OnStatsClick: clicking again while open closes
+        // the monitor. Singleton — only one log stream per device.
+        if (_bulkMonitorWindow != null)
+        {
+            _bulkMonitorWindow.Close();
+            return;
+        }
+        _bulkMonitorWindow = new BulkMonitorWindow(ViewModel.Device);
+        _bulkMonitorWindow.Closed += (s, e) => { _bulkMonitorWindow = null; };
+        _bulkMonitorWindow.Activate();
     }
 
     private async void OnSettingsClick(object sender, RoutedEventArgs e)

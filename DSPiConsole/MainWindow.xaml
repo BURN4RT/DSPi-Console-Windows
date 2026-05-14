@@ -67,6 +67,11 @@
                                 <KeyboardAccelerator Modifiers="Control,Shift" Key="T"/>
                             </MenuFlyoutItem.KeyboardAccelerators>
                         </MenuFlyoutItem>
+                        <MenuFlyoutItem Text="Bulk Endpoint Monitor..." Click="OnBulkMonitorClick">
+                            <MenuFlyoutItem.KeyboardAccelerators>
+                                <KeyboardAccelerator Modifiers="Control,Shift" Key="B"/>
+                            </MenuFlyoutItem.KeyboardAccelerators>
+                        </MenuFlyoutItem>
                         <MenuFlyoutItem Text="Settings..." Click="OnSettingsClick"/>
                         <MenuFlyoutSeparator/>
                         <MenuFlyoutItem Text="Save Preset" Click="OnSavePresetClick">
@@ -323,8 +328,26 @@
 
                     <StackPanel Spacing="4">
                         <Grid>
-                            <TextBlock Text="Master Volume" FontSize="12"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <!-- Mode selector. Mirrors the macOS sidebar "User Volume ▾" /
+                                 "Master Volume ▾" Menu: plain secondary-foreground text with
+                                 the chevron baked in, click opens a flyout with two items
+                                 and a checkmark on the active mode. -->
+                            <TextBlock x:Name="SidebarVolumeModeLabel"
+                                       Text="Master Volume ▾"
+                                       FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       Tapped="OnSidebarVolumeModeLabelTapped">
+                                <FlyoutBase.AttachedFlyout>
+                                    <MenuFlyout Placement="Bottom">
+                                        <MenuFlyoutItem x:Name="UserVolumeModeMenuItem"
+                                                        Text="User Volume"
+                                                        Click="OnUserVolumeModeMenuClick" />
+                                        <MenuFlyoutItem x:Name="MasterVolumeModeMenuItem"
+                                                        Text="Master Volume"
+                                                        Click="OnMasterVolumeModeMenuClick" />
+                                    </MenuFlyout>
+                                </FlyoutBase.AttachedFlyout>
+                            </TextBlock>
                             <TextBlock x:Name="MasterVolumeValueText" HorizontalAlignment="Right"
                                        FontSize="12" FontFamily="Cascadia Code, Consolas"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -334,6 +357,9 @@
                                 IsThumbToolTipEnabled="False"
                                 ValueChanged="OnMasterVolumeSliderChanged">
                             <Slider.Resources>
+                                <!-- Brushes are rewritten from code-behind on mode change so
+                                     master mode tints the track/thumb red (matches macOS
+                                     MasterModeSection's `.tint(.red)`). -->
                                 <SolidColorBrush x:Key="SliderTrackValueFill" Color="{ThemeResource SystemAccentColor}" />
                                 <SolidColorBrush x:Key="SliderTrackValueFillPointerOver" Color="{ThemeResource SystemAccentColor}" />
                                 <SolidColorBrush x:Key="SliderTrackValueFillPressed" Color="{ThemeResource SystemAccentColor}" />

@@ -45,6 +45,12 @@ public class AppSettings
     // Show the quick-save button next to the preset dropdown when dirty
     public bool ShowPresetSaveButton { get; set; } = true;
 
+    // Sidebar volume control mode: "master" (hardware master volume,
+    // REQ_SET_MASTER_VOLUME 0xD2) or "user" (vendor-channel user volume,
+    // REQ_SET_USER_VOLUME 0xDA — mirrors the UAC1 host slider). Default
+    // is "master" to preserve current behavior for existing users.
+    public string SidebarVolumeMode { get; set; } = "master";
+
     public event EventHandler? SettingsChanged;
 
     public void NotifyChanged()

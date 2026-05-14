@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DSPiConsole.Core;
 using DSPiConsole.Core.Models;
+using DSPiConsole.Services;
 using DSPiConsole.Usb;
 using Microsoft.UI.Dispatching;
 
@@ -98,6 +99,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private float _masterVolumeDb;
 
+    // Vendor-channel user volume (dB), V9+ firmware. Same audio_state.volume
+    // field the UAC1 host slider writes to; sidebar can drive this directly via
+    // REQ_SET_USER_VOLUME (0xDA) when in "user" mode. Range [-60, 0] dB.
+    [ObservableProperty]
+    private float _userVolumeDb;
+
     [ObservableProperty]
     private bool _bypass;
 
@@ -178,6 +185,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // the UI hides the bypass toggle. See band_bypass_spec.md §8.
     [ObservableProperty]
     private bool _bandBypassSupported;
+
+    // Tracks the source value the firmware most recently *notified* us about
+    // (i.e. landed in its main loop). Distinct from ActiveInputSource, which
+    // is preemptively updated by SetInputSourceAsync's read-back before the
+    // deferred apply lands — that race would otherwise hide the SPDIF→USB
+    // transition from the reconciliation check below.
+    private readonly object _lastNotifiedSourceLock = new();
+    private InputSource? _lastNotifiedSource;
+
+    // When the SPDIF→USB reconciliation can't run immediately (no audio
+    // endpoint bound yet — the default render device is something other than
+    // DSPi, or DSPi was just hot-plugged and Windows hasn't bound it),
+    // we stash the value here and flush it when HostVolume next becomes
+    // available. Updated and read only on the UI dispatcher thread.
+    private float? _pendingHostVolumePush;
 
     [ObservableProperty]
     private InputSource _activeInputSource = InputSource.Usb;
@@ -338,10 +360,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public byte SpdifRxPin => _spdifRxPin;
     public bool AnySlotIsI2S => _outputSlotTypes.Take(NumOutputSlots).Any(t => t == OutputSlotType.I2S);
 
+    /// <summary>
+    /// Bidirectional bridge to the Windows system default render endpoint (the
+    /// volume the system-tray slider controls). Used by the sidebar slider when
+    /// in "User Volume" mode while the DSPi input source is USB — drags push
+    /// the host endpoint via WASAPI, and changes from anywhere else (system
+    /// tray, hardware volume keys, other apps) flow back into our slider.
+    /// </summary>
+    public HostVolumeService HostVolume { get; }
+
     public MainViewModel()
     {
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _device = new DspDevice();
+        HostVolume = new HostVolumeService(_dispatcher);
+        HostVolume.Start();
 
         // Initialize channel data
         foreach (var channel in Channel.All)
@@ -386,6 +419,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
                             FetchBandBypassCapability();
                             _dispatcher.TryEnqueue(() =>
                             {
+                                // Seed the notified-source tracker so the first
+                                // user-initiated source switch after connect can
+                                // detect the SPDIF→USB transition and reconcile
+                                // the host endpoint to firmware user_volume.
+                                lock (_lastNotifiedSourceLock)
+                                    _lastNotifiedSource = ActiveInputSource;
                                 UpdateSavedSnapshot();
                                 PresetsDirty = false;
                                 _suppressDirtyCheck = false;
@@ -485,13 +524,78 @@ public partial class MainViewModel : ObservableObject, IDisposable
         // stale active_input_source.
         _device.InputSourceNotified += (_, newSource) =>
         {
+            // Capture and update the notified-source tracker atomically so the
+            // SPDIF→USB detection isn't fooled by other writers to
+            // ActiveInputSource. Lock is uncontended in practice — the only
+            // other writer is the connect-flow init below.
+            InputSource? previousSource;
+            lock (_lastNotifiedSourceLock)
+            {
+                previousSource = _lastNotifiedSource;
+                _lastNotifiedSource = newSource;
+            }
+
+            // Fetch the firmware's user_volume on the notify thread BEFORE we
+            // dispatch any UI state changes. This single ~5 ms control transfer
+            // lets us push the host endpoint and update UserVolumeDb in the
+            // same dispatcher tick as ActiveInputSource — so the first
+            // UpdateMasterVolumeDisplay triggered by the source change reads
+            // already-correct values and the sidebar slider renders once at
+            // the right position instead of snapping through a stale one.
+            // Both transition directions get the fresh value; only SPDIF → USB
+            // additionally pushes it to the Windows endpoint.
+            var uv = _device.GetUserVolume();
+            bool reconcileToHost = uv.HasValue
+                && previousSource == InputSource.Spdif
+                && newSource == InputSource.Usb;
+
             _dispatcher.TryEnqueue(() =>
             {
+                // 1. Push to the host endpoint FIRST so HostVolume.VolumeDb is
+                //    fresh by the time step 3's PropertyChanged ripple reads it.
+                //    If the endpoint isn't bound right now (default device is
+                //    something other than DSPi, or DSPi was just hot-plugged
+                //    and Windows hasn't bound it yet), queue the value — the
+                //    HostVolume.VolumeChanged handler below flushes it the
+                //    moment IsAvailable goes true. No arbitrary timer needed.
+                if (reconcileToHost)
+                {
+                    if (HostVolume.IsAvailable)
+                        HostVolume.SetVolumeDb(uv!.Value);
+                    else
+                        _pendingHostVolumePush = uv!.Value;
+                }
+
+                // 2. Update UserVolumeDb. If we're still in the old (firmware-
+                //    user) mode the PropertyChanged-driven display rebuild
+                //    reads this directly; if we're flipping into host mode
+                //    that read happens on step 3 instead.
+                if (uv.HasValue && Math.Abs(UserVolumeDb - uv.Value) > 0.1f)
+                    UserVolumeDb = uv.Value;
+
+                // 3. Flip ActiveInputSource last. This is what changes
+                //    UseHostVolume and triggers the final UpdateMasterVolumeDisplay.
                 if (ActiveInputSource != newSource)
                     ActiveInputSource = newSource;
                 InputSourceSupported = true;
                 InputSourceChanged?.Invoke(this, EventArgs.Empty);
             });
+        };
+
+        // Flush a queued SPDIF→USB reconciliation when the host endpoint next
+        // becomes available. VolumeChanged fires from BindToCurrentDefault when
+        // the default render device is (re)bound, so this is the deterministic
+        // signal for "the endpoint we want to write to has just come up". The
+        // queue holds at most one value (last write wins); once flushed we
+        // clear it so subsequent unrelated VolumeChanged events are no-ops.
+        HostVolume.VolumeChanged += (_, _) =>
+        {
+            if (_pendingHostVolumePush.HasValue && HostVolume.IsAvailable)
+            {
+                var v = _pendingHostVolumePush.Value;
+                _pendingHostVolumePush = null;
+                HostVolume.SetVolumeDb(v);
+            }
         };
 
         // Status polling timer (60ms interval)
@@ -886,12 +990,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 if (parsed != null)
                 {
                     ApplyBulkParams(parsed);
+                    // Bulk parser doesn't yet decode the V9+ WireUserVolume
+                    // section, so pull it via the dedicated control transfer.
+                    // Older firmware STALLs and leaves UserVolumeDb at 0.
+                    FetchUserVolume();
                     return;
                 }
             }
 
             // Fallback to legacy per-command fetching
             FetchAllLegacy();
+            FetchUserVolume();
         }
         catch { }
     }
@@ -1666,6 +1775,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
         CheckDirty();
     }
 
+    partial void OnUserVolumeDbChanged(float value)
+    {
+        // User volume range is [-60, 0]; firmware clamps but rounding here
+        // keeps the dB readout stable and matches MasterVolumeDb's precision.
+        var send = MathF.Round(Math.Clamp(value, -60f, 0f), 1);
+        Task.Run(() => _device.SetUserVolume(send));
+        CheckDirty();
+    }
+
     private bool FetchInputPreamps()
     {
         var l = _device.GetInputPreamp(0);
@@ -1698,6 +1816,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var mv = _device.GetMasterVolume();
         if (mv.HasValue && Math.Abs(MasterVolumeDb - mv.Value) > 0.1f)
             _dispatcher.TryEnqueue(() => MasterVolumeDb = mv.Value);
+    }
+
+    /// <summary>
+    /// Fetch the vendor-channel user volume (V9+). STALL on older firmware
+    /// leaves <see cref="UserVolumeDb"/> at its default (0 dB), which is also
+    /// the firmware's boot value — safe to display until the user changes it.
+    /// </summary>
+    private void FetchUserVolume()
+    {
+        var uv = _device.GetUserVolume();
+        if (uv.HasValue && Math.Abs(UserVolumeDb - uv.Value) > 0.1f)
+            _dispatcher.TryEnqueue(() => UserVolumeDb = uv.Value);
     }
 
     partial void OnBypassChanged(bool value)
@@ -1944,11 +2074,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
         return Task.Run(() =>
         {
             _device.SetInputSource(source);
-            // Read back to confirm. On a same-source SET this is a no-op.
-            var actual = _device.GetInputSource();
+            // Do NOT preemptively assign ActiveInputSource here — let the
+            // firmware's InputSourceNotified callback drive that update once
+            // the apply lands. Setting it before the apply would change
+            // UseHostVolume and trigger UpdateMasterVolumeDisplay to read a
+            // stale HostVolume.VolumeDb, snapping the sidebar slider to the
+            // wrong position for ~10 ms before the SPDIF→USB reconciliation
+            // corrects it (visible as a brief jump). The source dropdown is
+            // already showing the user's choice from the click itself, so
+            // there's no UX cost to waiting.
             _dispatcher.TryEnqueue(() =>
             {
-                if (actual.HasValue) ActiveInputSource = actual.Value;
                 InputSourceChanged?.Invoke(this, EventArgs.Empty);
                 CheckDirty();
             });
@@ -2288,6 +2424,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         _pollTimer.Stop();
         _pollTimer.Dispose();
+        HostVolume.Dispose();
         _device.Dispose();
 
         GC.SuppressFinalize(this);

@@ -106,6 +106,15 @@ public static class VendorCommands
     public const byte SetBandBypass          = 0xD8;
     public const byte GetBandBypass          = 0xD9;
 
+    // Vendor-channel user volume (V9+). Same audio_state.volume field the UAC1
+    // host slider drives, exposed here as float dB. Applied regardless of input
+    // source. Mute is a separate vendor flag (0xDC/0xDD) — not used by the
+    // sidebar control today, which exposes only the dB axis like the macOS app.
+    public const byte SetUserVolume          = 0xDA;
+    public const byte GetUserVolume          = 0xDB;
+    public const byte SetUserMute            = 0xDC;
+    public const byte GetUserMute            = 0xDD;
+
     // Volume leveller
     public const byte SetLevellerEnabled   = 0xB4;
     public const byte GetLevellerEnabled   = 0xB5;
@@ -193,6 +202,18 @@ public readonly struct BandParamNotification
     public int Band { get; init; }
     public FilterParams Params { get; init; }
     public ParamSource Source { get; init; }
+}
+
+/// <summary>
+/// Raw notification-endpoint packet — emitted by <c>DspDevice.NotifyPacketReceived</c>
+/// for every read on EP3 (IDLE keep-alives, recognized events, unknown event IDs).
+/// The byte array is a defensive copy of the actual length the wire returned,
+/// safe to retain past the next notify-loop iteration.
+/// </summary>
+public readonly struct NotifyPacket
+{
+    public byte[] Data { get; init; }
+    public DateTime Timestamp { get; init; }
 }
 
 /// <summary>
@@ -367,6 +388,12 @@ public partial class DspDevice : ObservableObject, IDisposable
     /// suppress their own EP0 echoes. Will become the live-update path for GPIO
     /// knobs once the firmware ships that feature.</summary>
     public event EventHandler<BandParamNotification>? BandParamNotified;
+
+    /// <summary>Fired for every raw packet read from the notification endpoint —
+    /// IDLE keep-alives, decoded events, unknown event IDs, malformed packets.
+    /// Diagnostic hook used by the Bulk Endpoint Monitor window. Fires on the
+    /// notify background thread; subscribers must marshal to the UI thread.</summary>
+    public event EventHandler<NotifyPacket>? NotifyPacketReceived;
 
     // Notification endpoint state (bulk IN EP 0x83, V7+ firmware).
     private UsbEndpointReader? _notifyReader;
@@ -1050,6 +1077,29 @@ public partial class DspDevice : ObservableObject, IDisposable
     public float? GetSavedMasterVolume()
     {
         var response = ControlTransferIn(VendorCommands.GetSavedMasterVolume, 0, 4);
+        if (response == null || response.Length < 4) return null;
+        return BitConverter.ToSingle(response, 0);
+    }
+
+    /// <summary>
+    /// Set the vendor-channel user volume in dB. Firmware clamps to its
+    /// supported range (today: [USER_VOLUME_MIN_DB, 0], -60..0 dB). Applied
+    /// regardless of input source; mirrors the UAC1 host slider value
+    /// (audio_state.volume). Older firmware (pre-V9) STALLs this opcode.
+    /// </summary>
+    public bool SetUserVolume(float db)
+    {
+        var data = BitConverter.GetBytes(db);
+        return ControlTransferOut(VendorCommands.SetUserVolume, 0, data);
+    }
+
+    /// <summary>
+    /// Read the current vendor-channel user volume in dB. Returns null if
+    /// the device STALLs (pre-V9 firmware) or the transfer fails.
+    /// </summary>
+    public float? GetUserVolume()
+    {
+        var response = ControlTransferIn(VendorCommands.GetUserVolume, 0, 4);
         if (response == null || response.Length < 4) return null;
         return BitConverter.ToSingle(response, 0);
     }
@@ -1766,6 +1816,19 @@ public partial class DspDevice : ObservableObject, IDisposable
                 break;
             if (err != LibUsbDotNet.Error.Success || len <= 0)
                 continue;
+
+            // Fire the raw-packet event before decoding so the Bulk Endpoint
+            // Monitor sees IDLE keep-alives, unknown event IDs, and malformed
+            // packets too — not just the subset ProcessNotifyPacket understands.
+            // Copy the slice we care about; the next read overwrites buf.
+            var rawListeners = NotifyPacketReceived;
+            if (rawListeners != null)
+            {
+                var copy = new byte[len];
+                Buffer.BlockCopy(buf, 0, copy, 0, len);
+                try { rawListeners(this, new NotifyPacket { Data = copy, Timestamp = DateTime.Now }); }
+                catch { /* a misbehaving subscriber must not break the reader */ }
+            }
 
             try { ProcessNotifyPacket(buf, len); }
             catch { /* a malformed packet is not fatal */ }
