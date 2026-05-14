@@ -1,4 +1,5 @@
 using System.Globalization;
+using DSPiConsole.Core.Models;
 using DSPiConsole.Models;
 using DSPiConsole.Usb;
 using DSPiConsole.ViewModels;
@@ -84,6 +85,36 @@ public sealed partial class SettingsDialog : ContentDialog
         InitializeGeneralTab();
         InitializePresetsTab();
         BuildPinAssignmentTable();
+        InitializeGlobalTab();
+    }
+
+    /// <summary>
+    /// Wire up modules hosted in the "Global" tab. Each module is a
+    /// self-contained UserControl that receives a ViewModel reference and
+    /// then manages its own state. The host's only responsibilities are:
+    ///   1. Attach the ViewModel to each module.
+    ///   2. Feed pin-conflict maps so the module's pickers can grey-out
+    ///      pins claimed by other features.
+    ///   3. Forward the module's PinChanged event to refresh other pickers'
+    ///      conflict highlights elsewhere in the dialog.
+    /// New direct-to-flash features land here as additional Attach calls.
+    /// </summary>
+    private void InitializeGlobalTab()
+    {
+        DacHwMuteSection.Attach(_vm);
+        DacHwMuteSection.SetPinOwners(BuildPinOwnerMap());
+        DacHwMuteSection.PinChanged += OnDacHwMutePinChanged;
+    }
+
+    private void OnDacHwMutePinChanged(object? sender, EventArgs e)
+    {
+        // The DAC mute pin's owner changed — refresh every output picker
+        // (and any future pin-picking module) so the just-claimed/released
+        // pin is reflected in their conflict highlights. The Settings
+        // dialog's existing UpdateComboConflicts walks each output row.
+        foreach (var (output, _, _, _) in _outputRows)
+            UpdateComboConflicts(output);
+        DacHwMuteSection.SetPinOwners(BuildPinOwnerMap());
     }
 
     private bool _suppressGeneralEvents;
@@ -750,6 +781,14 @@ public sealed partial class SettingsDialog : ContentDialog
         // SPDIF RX pin (V7+ firmware)
         if (_vm.InputSourceSupported)
             pinOwners[_vm.SpdifRxPin] = "SPDIF RX";
+
+        // External DAC hardware mute pin (V10+ firmware). Only claim it when
+        // the feature is supported AND configured with a real pin — disabled
+        // / "no pin" state must not block output pickers from using a GPIO
+        // that the mute feature isn't actually driving.
+        if (_vm.DacHwMuteSupported
+            && _vm.DacHwMute.Pin != DacHwMuteConfig.PinNone)
+            pinOwners[_vm.DacHwMute.Pin] = "DAC Mute";
 
         return pinOwners;
     }

@@ -186,6 +186,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _bandBypassSupported;
 
+    // External DAC hardware mute (firmware V10+). One typed config object as
+    // the unit of read/write — avoids parameter-order bugs and lets future
+    // fields land via DacHwMuteConfig.With(...) without touching every caller.
+    // Probe once at connect via REQ_GET_DAC_HW_MUTE_CONFIG (0xEB); older
+    // firmware STALLs and the Settings UI shows an "unsupported" notice.
+    // See Documentation/Features/dac_hardware_mute_spec.md.
+    [ObservableProperty]
+    private DacHwMuteConfig _dacHwMute = DacHwMuteConfig.CreateDefault();
+
+    [ObservableProperty]
+    private bool _dacHwMuteSupported;
+
     // Tracks the source value the firmware most recently *notified* us about
     // (i.e. landed in its main loop). Distinct from ActiveInputSource, which
     // is preemptively updated by SetInputSourceAsync's read-back before the
@@ -417,6 +429,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                             FetchPresetInfo();
                             FetchInputSource();
                             FetchBandBypassCapability();
+                            FetchDacHwMute();
                             _dispatcher.TryEnqueue(() =>
                             {
                                 // Seed the notified-source tracker so the first
@@ -2035,6 +2048,68 @@ public partial class MainViewModel : ObservableObject, IDisposable
             _dispatcher.TryEnqueue(() => BandBypassSupported = false);
         }
     }
+
+    /// <summary>
+    /// Probe firmware support for external DAC hardware mute (V10+, opcodes
+    /// 0xEA/0xEB/0xEC) and pull the live config. Older firmware STALLs the
+    /// GET so <see cref="DspDevice.GetDacHwMute"/> returns null — we treat
+    /// that as "feature unsupported" and the Settings UI surfaces an inline
+    /// notice instead of empty controls. On success, <see cref="DacHwMute"/>
+    /// is set to the firmware-current value and <see cref="DacHwMuteSupported"/>
+    /// is true.
+    /// </summary>
+    public void FetchDacHwMute()
+    {
+        try
+        {
+            var cfg = _device.GetDacHwMute();
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (cfg != null)
+                {
+                    DacHwMuteSupported = true;
+                    if (!cfg.Equals(DacHwMute)) DacHwMute = cfg;
+                }
+                else
+                {
+                    DacHwMuteSupported = false;
+                }
+            });
+        }
+        catch
+        {
+            _dispatcher.TryEnqueue(() => DacHwMuteSupported = false);
+        }
+    }
+
+    /// <summary>
+    /// Push a new <see cref="DacHwMuteConfig"/> to the device and optimistically
+    /// update the local property. The firmware SET is fire-and-forget (see
+    /// <see cref="DspDevice.SetDacHwMute"/>'s remarks), so a validation
+    /// rejection won't immediately surface as a failure — it surfaces on the
+    /// next bulk re-fetch when our cached value diverges from firmware reality.
+    /// Returns the config we attempted to write (echoed for chaining), or null
+    /// if the USB transfer failed outright.
+    /// </summary>
+    public async Task<DacHwMuteConfig?> ApplyDacHwMuteAsync(DacHwMuteConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        // Local update first so the UI doesn't snap back during the USB
+        // round-trip. If the transfer fails the next FetchDacHwMute will reset
+        // it; if the firmware silently rejects, the next bulk refresh wins.
+        if (!config.Equals(DacHwMute)) DacHwMute = config;
+        var ok = await Task.Run(() => _device.SetDacHwMute(config));
+        CheckDirty();
+        return ok ? config : null;
+    }
+
+    /// <summary>
+    /// Fire the firmware's installer-verification test pulse (~1 s mute).
+    /// Returns the firmware status byte: 0 = queued, non-zero = rejected
+    /// (feature disabled or no pin), 0xFF = USB transfer failure.
+    /// </summary>
+    public Task<byte> TestDacHwMuteAsync() =>
+        Task.Run(() => _device.TestDacHwMute());
 
     /// <summary>
     /// Toggle the bypass flag on a single EQ band. Updates local cache, sends

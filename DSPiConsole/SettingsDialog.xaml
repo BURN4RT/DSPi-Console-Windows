@@ -2,12 +2,22 @@
     x:Class="DSPiConsole.SettingsDialog"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:DSPiConsole.Controls"
     Title="Settings"
     PrimaryButtonText="Save"
     CloseButtonText="Cancel"
     DefaultButton="Primary">
 
-    <TabView x:Name="SettingsTabs" MinWidth="460" Height="400"
+    <!--
+        Width is pinned (MinWidth == MaxWidth) so the dialog stays the same
+        size across every tab regardless of content. Without this, any tab
+        with a wide unwrapped child (e.g. a ToggleSwitch whose OnContent /
+        OffContent strings exceed the natural dialog width) would force
+        the whole dialog to grow on expand/select. Tabs with content that
+        legitimately needs more horizontal room should use a ScrollViewer
+        rather than ask the dialog to grow.
+    -->
+    <TabView x:Name="SettingsTabs" MinWidth="460" MaxWidth="460" Height="400"
              IsAddTabButtonVisible="False"
              CanDragTabs="False"
              CanReorderTabs="False"
@@ -31,6 +41,22 @@
                                 <Run Text="Per Preset: Saved and restored with each preset."/>
                             </TextBlock>
                         </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabViewItem>
+
+            <!--
+                Global tab: parameters that live in the device's flash directory
+                rather than in a preset slot — board-level configuration that
+                applies regardless of which preset is active. Each feature is
+                a self-contained UserControl; adding another direct-to-flash
+                parameter is a one-line XAML addition here plus the new
+                module's XAML/code.
+            -->
+            <TabViewItem Header="Global" IsClosable="False">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="GlobalPanel" Spacing="20" Padding="12,16,12,16">
+                        <controls:DacHwMuteControl x:Name="DacHwMuteSection"/>
                     </StackPanel>
                 </ScrollViewer>
             </TabViewItem>

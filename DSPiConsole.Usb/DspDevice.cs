@@ -137,6 +137,14 @@ public static class VendorCommands
     public const byte SetSpdifRxPin        = 0xE4;
     public const byte GetSpdifRxPin        = 0xE5;
 
+    // External DAC hardware mute (V10+). Fire-and-forget SET — validation and
+    // flash persistence happen in the firmware's main loop; the USB response
+    // returns before the apply lands. Hosts confirm by following up with GET
+    // (see dac_hardware_mute_spec.md §3.2).
+    public const byte SetDacHwMuteConfig   = 0xEA;
+    public const byte GetDacHwMuteConfig   = 0xEB;
+    public const byte TestDacHwMute        = 0xEC;
+
     // Bootloader
     public const byte EnterBootloader = 0xF0;
 }
@@ -2008,6 +2016,58 @@ public partial class DspDevice : ObservableObject, IDisposable
     public byte SetSpdifRxPin(byte pin)
     {
         var response = ControlTransferIn(VendorCommands.SetSpdifRxPin, pin, 1);
+        return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
+    }
+
+    #endregion
+
+    #region External DAC Hardware Mute (V10+)
+
+    /// <summary>
+    /// Push a new <see cref="DacHwMuteConfig"/> to the device. The control
+    /// transfer is fire-and-forget — the firmware copies the 16-byte payload
+    /// to a pending slot and defers validation, pin claim, and flash write to
+    /// its main loop (tens of milliseconds for flash erase + program). The
+    /// USB response cannot reflect success/failure of that deferred apply.
+    /// <para>
+    /// Hosts that need definitive confirmation should follow up with
+    /// <see cref="GetDacHwMute"/> after a short delay and compare against the
+    /// value they sent. The DSPi Console takes the simpler "optimistic local
+    /// update" path: a rejected SET surfaces as a discrepancy on the next
+    /// bulk re-fetch (preset load, factory reset).
+    /// </para>
+    /// <returns><c>true</c> if the control transfer itself succeeded;
+    /// <c>false</c> on USB error or older firmware that STALLs the opcode.</returns>
+    /// </summary>
+    public bool SetDacHwMute(DacHwMuteConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        return ControlTransferOut(VendorCommands.SetDacHwMuteConfig, 0, config.ToWireBytes());
+    }
+
+    /// <summary>
+    /// Read the live DAC hardware-mute configuration from the device.
+    /// Returns <c>null</c> on transfer failure or older firmware (pre-V10
+    /// STALLs the opcode). The host treats null as "feature unsupported"
+    /// and hides the Settings UI accordingly — see
+    /// <c>MainViewModel.DacHwMuteSupported</c>.
+    /// </summary>
+    public DacHwMuteConfig? GetDacHwMute()
+    {
+        var response = ControlTransferIn(VendorCommands.GetDacHwMuteConfig, 0, DacHwMuteConfig.WireSize);
+        return DacHwMuteConfig.TryParse(response);
+    }
+
+    /// <summary>
+    /// Fire a one-shot ~1-second mute pulse for installer verification: the
+    /// firmware asserts the configured mute GPIO, waits ~1 s, then releases.
+    /// Returns the firmware status byte (0 = queued, non-zero = rejected
+    /// because feature is disabled or no pin is configured). Returns
+    /// <c>0xFF</c> on USB transfer failure.
+    /// </summary>
+    public byte TestDacHwMute()
+    {
+        var response = ControlTransferIn(VendorCommands.TestDacHwMute, 0, 1);
         return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
     }
 
