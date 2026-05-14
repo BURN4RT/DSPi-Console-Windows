@@ -102,6 +102,10 @@ public static class VendorCommands
     public const byte SaveMasterVolume       = 0xD6;
     public const byte GetSavedMasterVolume   = 0xD7;
 
+    // Per-band bypass (firmware 1.1.4+). See band_bypass_spec.md.
+    public const byte SetBandBypass          = 0xD8;
+    public const byte GetBandBypass          = 0xD9;
+
     // Volume leveller
     public const byte SetLevellerEnabled   = 0xB4;
     public const byte GetLevellerEnabled   = 0xB5;
@@ -173,6 +177,21 @@ public readonly struct ChannelNameNotification
 {
     public int ChannelIndex { get; init; }
     public string Name { get; init; }
+    public ParamSource Source { get; init; }
+}
+
+/// <summary>
+/// A device-pushed EQ band parameter change. Decoded from a v2 PARAM_CHANGED
+/// packet targeting WireBulkParams.eq[Channel][Band] (16-byte WireBandParams).
+/// Fired for any origin — GPIO knob turns, preset loads, factory resets, other
+/// hosts' EP0 writes. Subscribers should suppress <see cref="ParamSource.HostSet"/>
+/// to skip echoes of their own writes.
+/// </summary>
+public readonly struct BandParamNotification
+{
+    public int Channel { get; init; }
+    public int Band { get; init; }
+    public FilterParams Params { get; init; }
     public ParamSource Source { get; init; }
 }
 
@@ -342,6 +361,12 @@ public partial class DspDevice : ObservableObject, IDisposable
     /// load may emit BULK_INVALIDATED before the switch lands, so the bulk
     /// fetch can return stale data; this event closes that race).</summary>
     public event EventHandler<InputSource>? InputSourceNotified;
+
+    /// <summary>Fired when the firmware emits a per-band PARAM_CHANGED notification
+    /// (offset inside WireBulkParams.eq[][], size 16). Origin tag lets subscribers
+    /// suppress their own EP0 echoes. Will become the live-update path for GPIO
+    /// knobs once the firmware ships that feature.</summary>
+    public event EventHandler<BandParamNotification>? BandParamNotified;
 
     // Notification endpoint state (bulk IN EP 0x83, V7+ firmware).
     private UsbEndpointReader? _notifyReader;
@@ -844,7 +869,10 @@ public partial class DspDevice : ObservableObject, IDisposable
 
     /// <summary>
     /// Set EQ filter parameters for a specific channel and band.
-    /// Sends 16-byte packet: channel(1), band(1), type(1), reserved(1), freq(4), Q(4), gain(4)
+    /// Sends 16-byte EqParamPacket: channel(1), band(1), type(1), bypass(1), freq(4), Q(4), gain(4).
+    /// The bypass byte at offset 3 is firmware 1.1.4+ (formerly `reserved`); older
+    /// firmware ignores it, so it is always safe to populate. Firmware treats
+    /// strictly the value 1 as bypassed — see band_bypass_spec.md §5.
     /// </summary>
     public bool SetFilter(int channel, int band, FilterParams p)
     {
@@ -852,7 +880,7 @@ public partial class DspDevice : ObservableObject, IDisposable
         data[0] = (byte)channel;
         data[1] = (byte)band;
         data[2] = (byte)p.Type;
-        data[3] = 0; // reserved
+        data[3] = p.Bypass ? (byte)1 : (byte)0;
         BitConverter.GetBytes(p.Frequency).CopyTo(data, 4);
         BitConverter.GetBytes(p.Q).CopyTo(data, 8);
         BitConverter.GetBytes(p.Gain).CopyTo(data, 12);
@@ -893,6 +921,32 @@ public partial class DspDevice : ObservableObject, IDisposable
             Q = q,
             Gain = gain
         };
+    }
+
+    /// <summary>
+    /// Toggle per-band bypass via the dedicated single-byte opcode 0xD8 (firmware
+    /// 1.1.4+). Cheaper than re-sending the whole 16-byte EqParamPacket and the
+    /// firmware preserves the band's current freq/Q/gain. Older firmware STALLs
+    /// the request and this returns false — gate the call on a capability probe.
+    /// </summary>
+    public bool SetBandBypass(int channel, int band, bool bypass)
+    {
+        ushort wValue = (ushort)((channel << 8) | (band & 0xFF));
+        return ControlTransferOut(VendorCommands.SetBandBypass, wValue,
+            new byte[] { bypass ? (byte)1 : (byte)0 });
+    }
+
+    /// <summary>
+    /// Read per-band bypass via opcode 0xD9 (firmware 1.1.4+). Returns null if
+    /// the device STALLs (older firmware) — call once after connect to detect
+    /// support, then use the cached capability flag for subsequent toggles.
+    /// </summary>
+    public bool? GetBandBypass(int channel, int band)
+    {
+        ushort wValue = (ushort)((channel << 8) | (band & 0xFF));
+        var data = ControlTransferIn(VendorCommands.GetBandBypass, wValue, 1);
+        if (data == null || data.Length < 1) return null;
+        return data[0] == 1;
     }
 
     /// <summary>
@@ -1742,9 +1796,38 @@ public partial class DspDevice : ObservableObject, IDisposable
                 var source    = (ParamSource)buf[8];
                 if (12 + size > len) return;
 
+                // EQ band change: offset inside WireBulkParams.eq[][], size 16.
+                // Single source of truth for layout/decoding is BulkParamsParser.
+                // GPIO knob changes will arrive here once firmware ships that feature.
+                if (size == BulkParamsParser.WireBandSize
+                    && offset >= BulkParamsParser.OffsetEq
+                    && offset <  BulkParamsParser.OffsetEq
+                                 + BulkParamsParser.WireMaxChannels
+                                 * BulkParamsParser.WireMaxBands
+                                 * BulkParamsParser.WireBandSize
+                    && (offset - BulkParamsParser.OffsetEq)
+                       % BulkParamsParser.WireBandSize == 0)
+                {
+                    int flat = (offset - BulkParamsParser.OffsetEq) / BulkParamsParser.WireBandSize;
+                    int ch = flat / BulkParamsParser.WireMaxBands;
+                    int b  = flat % BulkParamsParser.WireMaxBands;
+                    // Parser expects the band entry at the given offset within the
+                    // buffer. The notify packet places the payload at offset 12,
+                    // so shift accordingly by passing the payload region.
+                    var bandBuf = new byte[BulkParamsParser.WireBandSize];
+                    Buffer.BlockCopy(buf, 12, bandBuf, 0, BulkParamsParser.WireBandSize);
+                    var fp = BulkParamsParser.ParseBand(bandBuf, 0);
+                    BandParamNotified?.Invoke(this, new BandParamNotification
+                    {
+                        Channel = ch,
+                        Band = b,
+                        Params = fp,
+                        Source = source
+                    });
+                }
                 // Channel name change: offset is in WireBulkParams.channel_names range,
                 // size is exactly WIRE_NAME_LEN (32).
-                if (size == WireChannelNameLen
+                else if (size == WireChannelNameLen
                     && offset >= ChannelNamesWireOffset
                     && offset <  ChannelNamesWireOffset + 11 * WireChannelNameLen
                     && (offset - ChannelNamesWireOffset) % WireChannelNameLen == 0)

@@ -70,6 +70,13 @@ public class FilterParams : IEquatable<FilterParams>
     public float Gain { get; set; } = 0.0f;
     public bool IsActive { get; set; } = true; // For UI visibility toggle only
 
+    /// <summary>
+    /// User-bypass for this single band, preserving freq/Q/gain so the band can
+    /// be re-enabled to its previous response. Firmware 1.1.4+. Wire encoding is
+    /// strict: only the value 1 means bypassed — see band_bypass_spec.md §5.
+    /// </summary>
+    public bool Bypass { get; set; } = false;
+
     public FilterParams() { }
 
     public FilterParams(FilterType type, float freq, float q, float gain)
@@ -86,7 +93,8 @@ public class FilterParams : IEquatable<FilterParams>
         Frequency = Frequency,
         Q = Q,
         Gain = Gain,
-        IsActive = IsActive
+        IsActive = IsActive,
+        Bypass = Bypass
     };
 
     public bool Equals(FilterParams? other)
@@ -95,9 +103,10 @@ public class FilterParams : IEquatable<FilterParams>
         return Type == other.Type &&
                Math.Abs(Frequency - other.Frequency) < 0.01f &&
                Math.Abs(Q - other.Q) < 0.001f &&
-               Math.Abs(Gain - other.Gain) < 0.01f;
+               Math.Abs(Gain - other.Gain) < 0.01f &&
+               Bypass == other.Bypass;
     }
 
     public override bool Equals(object? obj) => Equals(obj as FilterParams);
-    public override int GetHashCode() => HashCode.Combine(Type, Frequency, Q, Gain);
+    public override int GetHashCode() => HashCode.Combine(Type, Frequency, Q, Gain, Bypass);
 }

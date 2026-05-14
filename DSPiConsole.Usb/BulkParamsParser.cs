@@ -104,7 +104,10 @@ public static class BulkParamsParser
     private const int OffsetCrosspoints = 108;
     private const int OffsetOutputs = 252;
     private const int OffsetPinConfig = 360;
-    private const int OffsetEq = 368;
+    internal const int OffsetEq = 368;           // Start of WireBandParams[11][12]; exposed for notify-endpoint dispatch.
+    internal const int WireBandSize = 16;        // sizeof(WireBandParams)
+    internal const int WireMaxChannels = 11;
+    internal const int WireMaxBands = 12;
     private const int OffsetChannelNames = 2480;
 
     public static BulkParams? Parse(byte[] buffer)
@@ -181,20 +184,16 @@ public static class BulkParamsParser
             p.Pins[i] = buffer[OffsetPinConfig + 1 + i];
 
         // ── EQ bands (2112 bytes = 11 channels × 12 bands × 16 bytes) ──
-        // Each band: type(1), reserved(3), freq(4), Q(4), gain(4)
-        p.Eq = new FilterParams[11, 12];
-        for (int ch = 0; ch < 11; ch++)
+        // Each band: type(1), bypass(1), reserved(2), freq(4), Q(4), gain(4)
+        // Bypass byte is firmware 1.1.4+; older firmware leaves byte at 0 (active).
+        // Firmware normalizes to 0 or 1 on collect, so strict == 1 is safe.
+        p.Eq = new FilterParams[WireMaxChannels, WireMaxBands];
+        for (int ch = 0; ch < WireMaxChannels; ch++)
         {
-            for (int band = 0; band < 12; band++)
+            for (int band = 0; band < WireMaxBands; band++)
             {
-                int off = OffsetEq + (ch * 12 + band) * 16;
-                p.Eq[ch, band] = new FilterParams
-                {
-                    Type = (FilterType)buffer[off + 0],
-                    Frequency = BitConverter.ToSingle(buffer, off + 4),
-                    Q = BitConverter.ToSingle(buffer, off + 8),
-                    Gain = BitConverter.ToSingle(buffer, off + 12)
-                };
+                int off = OffsetEq + (ch * WireMaxBands + band) * WireBandSize;
+                p.Eq[ch, band] = ParseBand(buffer, off);
             }
         }
 
@@ -264,5 +263,22 @@ public static class BulkParamsParser
         }
 
         return p;
+    }
+
+    /// <summary>
+    /// Parse a single 16-byte WireBandParams entry at the given buffer offset.
+    /// Shared between the bulk-params path and the notify-endpoint path so
+    /// both decode the wire layout identically (incl. the bypass byte at +1).
+    /// </summary>
+    internal static FilterParams ParseBand(byte[] buffer, int offset)
+    {
+        return new FilterParams
+        {
+            Type = (FilterType)buffer[offset + 0],
+            Bypass = buffer[offset + 1] == 1,
+            Frequency = BitConverter.ToSingle(buffer, offset + 4),
+            Q = BitConverter.ToSingle(buffer, offset + 8),
+            Gain = BitConverter.ToSingle(buffer, offset + 12)
+        };
     }
 }

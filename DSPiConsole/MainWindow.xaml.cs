@@ -266,6 +266,17 @@ public sealed partial class MainWindow : Window
             _acrylicController?.Dispose();
             _acrylicController = null;
             _configurationSource = null;
+
+            // Closing the main window quits the app. WinUI 3 doesn't do this on
+            // its own — secondary windows (Stats, Matrix, Leveller, Crossfeed,
+            // Loudness, Graph) and the ViewModel's background threads (poll
+            // timer + notify reader on EP3) would otherwise keep the process
+            // alive. Dispose the ViewModel first so the USB handle and threads
+            // are torn down before Application.Exit closes the remaining
+            // windows. Unsaved-changes confirmation already ran in
+            // OnAppWindowClosing (AppWindow.Closing fires before Window.Closed).
+            ViewModel.Dispose();
+            Application.Current.Exit();
         };
 
         // Sidebar and titlebar translucency settings
@@ -1769,6 +1780,9 @@ public sealed partial class MainWindow : Window
         };
 
         var grid = new Grid();
+        bool bypassSupported = ViewModel.BandBypassSupported;
+        if (bypassSupported)
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });    // Bypass toggle
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) }); // Freq
@@ -1776,6 +1790,47 @@ public sealed partial class MainWindow : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(54) }); // Gain
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnSpacing = 16;
+        int col = 0;
+
+        // Bypass toggle — firmware 1.1.4+ only. Filled dot = active band, hollow
+        // ring = user-bypassed or Flat. Disabled when type is Flat (no audio to
+        // bypass). See band_bypass_spec.md §6.6 for display recommendations.
+        if (bypassSupported)
+        {
+            bool bandActive = !p.Bypass && p.Type != FilterType.Flat;
+            var dot = new Ellipse
+            {
+                Width = 12,
+                Height = 12,
+                StrokeThickness = 1.2,
+                Stroke = new SolidColorBrush(bandActive
+                    ? Color.FromArgb(255, 128, 128, 128)
+                    : Color.FromArgb(140, 160, 160, 160)),
+                Fill = bandActive
+                    ? new SolidColorBrush(Color.FromArgb(255, 128, 128, 128))
+                    : new SolidColorBrush(Colors.Transparent)
+            };
+            var bypassButton = new Button
+            {
+                Content = dot,
+                Width = 22,
+                Height = 22,
+                Padding = new Thickness(0),
+                MinWidth = 22,
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                Tag = (channel, bandIndex),
+                IsEnabled = p.Type != FilterType.Flat,
+                Opacity = p.Type == FilterType.Flat ? 0.35 : 1.0,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            ToolTipService.SetToolTip(bypassButton,
+                p.Bypass ? "Re-enable this band" : "Bypass this band");
+            bypassButton.Click += OnFilterBypassToggled;
+            Grid.SetColumn(bypassButton, col);
+            grid.Children.Add(bypassButton);
+            col++;
+        }
 
         // Band label
         var bandLabel = new TextBlock
@@ -1784,10 +1839,12 @@ public sealed partial class MainWindow : Window
             FontSize = 12,
             FontFamily = new FontFamily("Cascadia Code"),
             Foreground = new SolidColorBrush(Colors.Gray),
-            VerticalAlignment = VerticalAlignment.Center
+            VerticalAlignment = VerticalAlignment.Center,
+            Opacity = p.Bypass ? 0.4 : 1.0
         };
-        Grid.SetColumn(bandLabel, 0);
+        Grid.SetColumn(bandLabel, col);
         grid.Children.Add(bandLabel);
+        col++;
 
         // Filter type selector
         var typeCombo = new ComboBox { Width = 120, Tag = (channel, bandIndex), Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] };
@@ -1797,30 +1854,37 @@ public sealed partial class MainWindow : Window
         }
         typeCombo.SelectedIndex = (int)p.Type;
         typeCombo.SelectionChanged += OnFilterTypeChanged;
-        Grid.SetColumn(typeCombo, 1);
+        typeCombo.Opacity = p.Bypass ? 0.4 : 1.0;
+        Grid.SetColumn(typeCombo, col);
         grid.Children.Add(typeCombo);
+        col++;
 
         // Frequency
         if (p.Type != FilterType.Flat)
         {
             var freqPanel = CreateValueField("Hz", p.Frequency, 58, (channel, bandIndex, "freq"));
-            Grid.SetColumn(freqPanel, 2);
+            freqPanel.Opacity = p.Bypass ? 0.4 : 1.0;
+            Grid.SetColumn(freqPanel, col);
             grid.Children.Add(freqPanel);
         }
+        col++;
 
         // Q
         if (p.Type.HasQ())
         {
             var qPanel = CreateValueField("Q", p.Q, 44, (channel, bandIndex, "q"), decimals: 3);
-            Grid.SetColumn(qPanel, 3);
+            qPanel.Opacity = p.Bypass ? 0.4 : 1.0;
+            Grid.SetColumn(qPanel, col);
             grid.Children.Add(qPanel);
         }
+        col++;
 
         // Gain (for peaking, low shelf, high shelf)
         if (p.Type.HasGain())
         {
             var gainPanel = CreateValueField("dB", p.Gain, 40, (channel, bandIndex, "gain"));
-            Grid.SetColumn(gainPanel, 4);
+            gainPanel.Opacity = p.Bypass ? 0.4 : 1.0;
+            Grid.SetColumn(gainPanel, col);
             grid.Children.Add(gainPanel);
         }
 
@@ -2575,6 +2639,25 @@ public sealed partial class MainWindow : Window
                     {
                         ShowChannelEditor(_selectedChannel);
                     }
+                }
+            }
+        }
+    }
+
+    private void OnFilterBypassToggled(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.Tag is (Channel channel, int bandIndex))
+        {
+            var filters = ViewModel.GetFilters(channel);
+            if (bandIndex < filters.Count)
+            {
+                bool newBypass = !filters[bandIndex].Bypass;
+                _ = ViewModel.SetBandBypass((int)channel.Id, bandIndex, newBypass);
+
+                // Refresh the row so the dot fills/empties and labels dim
+                if (_selectedChannel != null)
+                {
+                    ShowChannelEditor(_selectedChannel);
                 }
             }
         }

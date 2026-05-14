@@ -130,7 +130,7 @@ public static class DspMath
 
         foreach (var f in filters)
         {
-            if (f.Type == FilterType.Flat || !f.IsActive)
+            if (f.Type == FilterType.Flat || !f.IsActive || f.Bypass)
                 continue;
 
             var coeffs = CalculateCoefficients(f, sampleRate);

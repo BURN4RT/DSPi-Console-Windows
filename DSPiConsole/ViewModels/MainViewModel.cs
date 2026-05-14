@@ -173,6 +173,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _inputSourceSupported;
 
+    // Per-band bypass (firmware 1.1.4+). Mirrors the InputSource pattern: probe
+    // once at connect via REQ_GET_BAND_BYPASS (0xD9); older firmware STALLs and
+    // the UI hides the bypass toggle. See band_bypass_spec.md §8.
+    [ObservableProperty]
+    private bool _bandBypassSupported;
+
     [ObservableProperty]
     private InputSource _activeInputSource = InputSource.Usb;
 
@@ -377,6 +383,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                             FetchAll();
                             FetchPresetInfo();
                             FetchInputSource();
+                            FetchBandBypassCapability();
                             _dispatcher.TryEnqueue(() =>
                             {
                                 UpdateSavedSnapshot();
@@ -433,6 +440,26 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 if (n.ChannelIndex < 0) return;
                 _channelNames[n.ChannelIndex] = n.Name;
                 ChannelNameChanged?.Invoke(n.ChannelIndex);
+            });
+        };
+
+        // Per-band EQ change pushed from the device (GPIO knob, another host,
+        // preset load, factory reset, deferred firmware apply). HostSet is
+        // suppressed because the cache was already updated synchronously by the
+        // ViewModel's own setter — replaying could clobber an in-flight edit.
+        // Future GPIO support flows through this path with Source == Gpio.
+        _device.BandParamNotified += (_, n) =>
+        {
+            if (n.Source == ParamSource.HostSet) return;
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (_channelData.TryGetValue(n.Channel, out var filters)
+                    && n.Band < filters.Count)
+                {
+                    filters[n.Band] = n.Params;
+                    FiltersChanged?.Invoke(this, EventArgs.Empty);
+                    CheckDirty();
+                }
             });
         };
 
@@ -1857,6 +1884,52 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 InputSourceChanged?.Invoke(this, EventArgs.Empty);
             });
         }
+    }
+
+    /// <summary>
+    /// Probe firmware support for per-band bypass (0xD8/0xD9, firmware 1.1.4+).
+    /// Older firmware STALLs on GetBandBypass — we set the flag based on whether
+    /// the (ch=0, band=0) query returns a value. Bulk-params parsing always reads
+    /// the bypass byte regardless; this flag only gates the UI toggle and the
+    /// dedicated single-byte set opcode.
+    /// </summary>
+    public void FetchBandBypassCapability()
+    {
+        try
+        {
+            var supported = _device.GetBandBypass(0, 0).HasValue;
+            _dispatcher.TryEnqueue(() => BandBypassSupported = supported);
+        }
+        catch
+        {
+            _dispatcher.TryEnqueue(() => BandBypassSupported = false);
+        }
+    }
+
+    /// <summary>
+    /// Toggle the bypass flag on a single EQ band. Updates local cache, sends
+    /// the cheap REQ_SET_BAND_BYPASS opcode (0xD8) so freq/Q/gain are preserved
+    /// on the firmware side, mirrors to the linked master channel if applicable,
+    /// and fires FiltersChanged so the response curve redraws.
+    /// </summary>
+    public async Task<bool> SetBandBypass(int channel, int band, bool bypass)
+    {
+        if (_channelData.TryGetValue(channel, out var filters) && band < filters.Count)
+            filters[band].Bypass = bypass;
+
+        var success = await Task.Run(() => _device.SetBandBypass(channel, band, bypass));
+
+        if (_masterPeqLinked && IsMasterChannel(channel))
+        {
+            int other = GetLinkedMasterChannel(channel);
+            if (_channelData.TryGetValue(other, out var otherFilters) && band < otherFilters.Count)
+                otherFilters[band].Bypass = bypass;
+            await Task.Run(() => _device.SetBandBypass(other, band, bypass));
+        }
+
+        FiltersChanged?.Invoke(this, EventArgs.Empty);
+        CheckDirty();
+        return success;
     }
 
     /// <summary>
