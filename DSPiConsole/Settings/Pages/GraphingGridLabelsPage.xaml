@@ -1,0 +1,42 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.GraphingGridLabelsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <!-- Five Boolean toggles for graph grid/label visibility. -->
+    <StackPanel Spacing="4">
+
+        <controls:SettingsCard Header="Frequency grid"
+                                Description="Vertical grid lines at the frequency axis ticks.">
+                        <ToggleSwitch x:Name="FreqGridToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnFreqGridToggled"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="Frequency labels"
+                                Description="Hz/kHz labels along the frequency axis.">
+                        <ToggleSwitch x:Name="FreqLabelsToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnFreqLabelsToggled"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="dB grid"
+                                Description="Horizontal grid lines at the dB axis ticks.">
+                        <ToggleSwitch x:Name="DbGridToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnDbGridToggled"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="dB labels"
+                                Description="Numeric labels along the dB axis.">
+                        <ToggleSwitch x:Name="DbLabelsToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnDbLabelsToggled"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="dB units on axis"
+                                Description="Show the literal &quot;dB&quot; unit string next to dB labels.">
+                        <ToggleSwitch x:Name="DbUnitsToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnDbUnitsToggled"/>
+        </controls:SettingsCard>
+    </StackPanel>
+</settings:SettingsModule>

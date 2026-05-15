@@ -49,6 +49,7 @@ public sealed partial class MainWindow : Window
     private CrossfeedWindow? _crossfeedWindow;
     private VolumeLevellerWindow? _levellerWindow;
     private MatrixMixerWindow? _matrixMixerWindow;
+    private Settings.SettingsWindow? _settingsWindow;
 
     // Track output controls for live updates
     private TextBox? _currentGainTextBox;
@@ -3785,8 +3786,39 @@ public sealed partial class MainWindow : Window
 
     private async void OnSettingsClick(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsDialog(ViewModel) { XamlRoot = Content.XamlRoot };
-        await dialog.ShowAsync();
+        // Modeless settings window — single instance. Reactivating an
+        // already-open window beats spawning a duplicate; mirrors the
+        // BulkMonitor / Stats singleton pattern elsewhere in this file
+        // except we don't auto-close on a second click (the new layout
+        // is large enough that you'd rather raise focus than dismiss).
+        if (_settingsWindow != null)
+        {
+            _settingsWindow.Activate();
+            return;
+        }
+        try
+        {
+            _settingsWindow = new Settings.SettingsWindow(ViewModel);
+            _settingsWindow.Closed += (s, e) => { _settingsWindow = null; };
+            _settingsWindow.Activate();
+        }
+        catch (System.Exception ex)
+        {
+            // Window construction failed (XAML parse, interop, etc.).
+            // SettingsWindow.WriteCrashLog already logged the detail to
+            // %LOCALAPPDATA%\DSPiConsole\settings-crash.log; surface a
+            // user-visible dialog so the failure isn't silent.
+            Settings.SettingsWindow.WriteCrashLog("OnSettingsClick", ex);
+            _settingsWindow = null;
+            var dialog = new ContentDialog
+            {
+                Title = "Couldn't open Settings",
+                Content = $"{ex.GetType().Name}: {ex.Message}\n\nDetails written to %LOCALAPPDATA%\\DSPiConsole\\settings-crash.log",
+                CloseButtonText = "OK",
+                XamlRoot = Content.XamlRoot,
+            };
+            await dialog.ShowAsync();
+        }
     }
 
     // Sidebar shortcut icon tap handlers

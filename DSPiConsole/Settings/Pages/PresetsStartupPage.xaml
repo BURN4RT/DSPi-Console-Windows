@@ -1,0 +1,53 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.PresetsStartupPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <!--
+        Two flash-persistent settings (REQ_SET_PRESET_STARTUP). The
+        Default Startup Preset combo is only enabled when Startup Mode
+        is "Default Preset" (mode 0). Both are still per-change flash
+        writes in Phase 1; Phase 2 will route through the tracker.
+
+        When the firmware doesn't support presets at all, we hide the
+        controls and show a clear notice instead — same pattern the
+        original dialog used, but cleaner because the SettingsCard
+        layout is doing the heavy lifting.
+    -->
+    <StackPanel x:Name="RootStack" Spacing="4">
+
+        <Border x:Name="UnsupportedNotice"
+                Padding="12,8"
+                Background="{ThemeResource SubtleFillColorTertiaryBrush}"
+                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="4"
+                Visibility="Collapsed">
+            <TextBlock Text="Presets are not supported by this firmware version."
+                       FontSize="12"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       TextWrapping="Wrap"/>
+        </Border>
+
+        <controls:SettingsCard x:Name="StartupModeCard"
+                                Header="Startup mode"
+                                Description="Which preset loads when the device powers on.">
+                        <ComboBox x:Name="StartupModeCombo" MinWidth="160"
+                      SelectionChanged="OnStartupModeChanged">
+                <ComboBoxItem Content="Default preset" Tag="0"/>
+                <ComboBoxItem Content="Last used"      Tag="1"/>
+            </ComboBox>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="DefaultPresetCard"
+                                Header="Default startup preset"
+                                Description="Used when Startup mode is &quot;Default preset&quot;.">
+                        <ComboBox x:Name="DefaultPresetCombo" MinWidth="200"
+                      IsEnabled="False"
+                      SelectionChanged="OnDefaultPresetChanged"/>
+        </controls:SettingsCard>
+    </StackPanel>
+</settings:SettingsModule>

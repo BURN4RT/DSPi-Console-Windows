@@ -1,0 +1,56 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.HardwareI2SPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <!--
+        Four I²S clock-config cards. Their interrelation:
+          • BCK pin: only changeable when NO output slot is I²S (firmware
+            refuses to re-route the clock while it's actively driving).
+          • MCK pin: only changeable when MCK is OFF (same reason).
+          • MCK multiplier: 256× is unavailable at sample rates ≥ 96 kHz
+            (the firmware's PLL constraint).
+
+        Enable state of each control reflects these in real time; the
+        Description slot carries the explanation when something is locked.
+    -->
+    <StackPanel Spacing="4">
+
+        <controls:SettingsCard x:Name="MckEnableCard"
+                                Header="Master Clock (MCK)"
+                                Description="Clock reference for external DACs.">
+                        <ToggleSwitch x:Name="MckToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnMckToggled"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="MckPinCard"
+                                Header="MCK pin"
+                                Description="Turn MCK off to change its pin.">
+                        <ComboBox x:Name="MckPinCombo" MinWidth="140"
+                      SelectionChanged="OnMckPinChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="MckMultiplierCard"
+                                Header="MCK multiplier">
+                        <ComboBox x:Name="MckMultiplierCombo" MinWidth="100"
+                      SelectionChanged="OnMckMultiplierChanged">
+                <ComboBoxItem Content="128×" Tag="128"/>
+                <ComboBoxItem Content="256×" Tag="256"/>
+            </ComboBox>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="BckPinCard"
+                                Header="BCK pin">
+                        <ComboBox x:Name="BckPinCombo" MinWidth="140"
+                      SelectionChanged="OnBckPinChanged"/>
+        </controls:SettingsCard>
+
+        <TextBlock x:Name="StatusText"
+                   FontSize="11"
+                   TextWrapping="Wrap"
+                   Visibility="Collapsed"/>
+    </StackPanel>
+</settings:SettingsModule>

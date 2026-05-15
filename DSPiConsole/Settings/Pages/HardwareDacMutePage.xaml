@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.HardwareDacMutePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <!--
+        External DAC Hardware Mute page. All controls render as plain
+        SettingsCards for consistency with the rest of the Hardware
+        category — no Expander, no nested visual structure. Six rows:
+          1. Enable toggle.
+          2. Polarity (Active Low / Active High).
+          3. GPIO pin selector.
+          4. Hold (ms) slider — debounced staging.
+          5. Release (ms) slider — debounced staging.
+          6. Test-pulse button (live action, not staged).
+
+        The first five fields all ride a single firmware command
+        (REQ_SET_DAC_HW_MUTE_CONFIG) so they're combined under one
+        tracker key ("hardware.dac-mute.config"). Each edit re-stages
+        with the latest UI snapshot, and the tracker de-dupes.
+    -->
+    <StackPanel Spacing="4">
+
+        <controls:SettingsCard Header="Enable"
+                                Description="Drive a GPIO pin to mute external DACs around sample-rate changes.">
+            <ToggleSwitch x:Name="EnableToggle"
+                          OnContent="On" OffContent="Off"
+                          Toggled="OnConfigChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="Polarity"
+                                Description="Active Low for PCM5102A / WM8741; Active High for AK4493 default.">
+            <ComboBox x:Name="PolarityCombo" MinWidth="140"
+                      SelectionChanged="OnConfigChanged">
+                <ComboBoxItem Content="Active Low"/>
+                <ComboBoxItem Content="Active High"/>
+            </ComboBox>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="GPIO pin"
+                                Description="Pin connected to the DAC's mute input (PCM5102A XSMT, WM8741 MUTEB, AK4493 SMUTE).">
+            <ComboBox x:Name="PinCombo" MinWidth="180"
+                      SelectionChanged="OnConfigChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="HoldCard"
+                                Header="Hold (ms)"
+                                Description="How long the mute pin is held asserted before clocks stop.">
+            <Slider x:Name="HoldSlider"
+                    Minimum="0" Maximum="500" StepFrequency="1"
+                    SmallChange="1" LargeChange="10"
+                    IsThumbToolTipEnabled="False"
+                    Width="220"
+                    ValueChanged="OnSliderChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="ReleaseCard"
+                                Header="Release (ms)"
+                                Description="How long to dwell after un-muting before resuming audio.">
+            <Slider x:Name="ReleaseSlider"
+                    Minimum="0" Maximum="500" StepFrequency="1"
+                    SmallChange="1" LargeChange="10"
+                    IsThumbToolTipEnabled="False"
+                    Width="220"
+                    ValueChanged="OnSliderChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="Test pulse"
+                                Description="Fires a ~1 second mute pulse for installer verification. Runs live; not staged.">
+            <Button x:Name="TestButton"
+                    Content="Test"
+                    Click="OnTestClick"/>
+        </controls:SettingsCard>
+
+        <TextBlock x:Name="TestFeedback"
+                   FontSize="11"
+                   TextWrapping="Wrap"
+                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                   Margin="0,4,0,0"
+                   Visibility="Collapsed"/>
+    </StackPanel>
+</settings:SettingsModule>

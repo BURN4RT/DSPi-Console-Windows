@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.HardwareOutputAssignmentPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings">
+
+    <!--
+        Output Assignment page. Per-output rows are built dynamically in
+        code-behind (RP2040 vs RP2350 differ), so the XAML defines only
+        the section frame + the Reset action.
+
+        Status text appears below the rows when a change fails (e.g.
+        pin already claimed by another feature). It also confirms
+        success on a successful change — same UX as the legacy dialog,
+        just moved into a per-page footer.
+    -->
+    <StackPanel Spacing="12">
+
+        <!-- Title row with Reset action. The page header (rendered by
+             SettingsShell above this content) carries the page name;
+             this row is the section's own toolbar. -->
+        <Grid Margin="0,4,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0"
+                       Text="One pin per output. Pins claimed by another feature appear greyed out."
+                       FontSize="12"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       TextWrapping="Wrap"
+                       VerticalAlignment="Center"/>
+            <HyperlinkButton x:Name="ResetButton" Grid.Column="1"
+                             Content="Reset to defaults"
+                             FontSize="12"
+                             Click="OnResetClick"/>
+        </Grid>
+
+        <!-- Container for dynamically-built output rows. Each child is a
+             Grid produced by BuildPinRow in code-behind. -->
+        <StackPanel x:Name="OutputRowsHost" Spacing="0"/>
+
+        <!-- Inline status text. Visible only while a status is current. -->
+        <TextBlock x:Name="StatusText"
+                   FontSize="11"
+                   TextWrapping="Wrap"
+                   Visibility="Collapsed"/>
+    </StackPanel>
+</settings:SettingsModule>

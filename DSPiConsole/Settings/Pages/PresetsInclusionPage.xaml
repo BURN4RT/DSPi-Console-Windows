@@ -1,0 +1,36 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.PresetsInclusionPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <!--
+        Single flash-persistent toggle (REQ_SET_PRESET_INCLUDE_PINS).
+        Controls whether GPIO pin assignments travel with the preset or
+        stay device-global.
+    -->
+    <StackPanel Spacing="4">
+
+        <Border x:Name="UnsupportedNotice"
+                Padding="12,8"
+                Background="{ThemeResource SubtleFillColorTertiaryBrush}"
+                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="4"
+                Visibility="Collapsed">
+            <TextBlock Text="Presets are not supported by this firmware version."
+                       FontSize="12"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       TextWrapping="Wrap"/>
+        </Border>
+
+        <controls:SettingsCard x:Name="IncludePinsCard"
+                                Header="Include pin assignments in presets"
+                                Description="When on, each preset stores its own GPIO pin map (output type, BCK/MCK/RX). When off, pins are device-global and unchanged by preset loads.">
+                        <ToggleSwitch x:Name="IncludePinsToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnIncludePinsToggled"/>
+        </controls:SettingsCard>
+    </StackPanel>
+</settings:SettingsModule>

@@ -1,0 +1,39 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.GeneralVolumePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <StackPanel Spacing="4">
+        <!--
+            Master Volume Mode — flash-persistent (REQ_SET_MASTER_VOLUME_MODE).
+            Phase 1: writes flash on each change, matching the legacy dialog.
+            Phase 2 will route this through the pending-change tracker.
+        -->
+        <controls:SettingsCard Header="Master volume mode"
+                                Description="How the master volume value is persisted across preset changes.">
+                        <ComboBox x:Name="MasterVolumeModeCombo"
+                      MinWidth="160"
+                      SelectionChanged="OnMasterVolumeModeChanged">
+                <ComboBoxItem Content="Global"     Tag="0"/>
+                <ComboBoxItem Content="Per preset" Tag="1"/>
+            </ComboBox>
+        </controls:SettingsCard>
+
+        <!--
+            Sidebar volume control mode — AppSettings only (JSON file).
+            Live-applied: the change takes effect on the next NotifyChanged.
+        -->
+        <controls:SettingsCard Header="Sidebar volume slider"
+                                Description="Choose which volume the main-window slider drives. User volume mirrors the Windows audio host; Master volume drives the firmware's hardware attenuator.">
+                        <ComboBox x:Name="SidebarVolumeModeCombo"
+                      MinWidth="160"
+                      SelectionChanged="OnSidebarVolumeModeChanged">
+                <ComboBoxItem Content="Master volume" Tag="master"/>
+                <ComboBoxItem Content="User volume"   Tag="user"/>
+            </ComboBox>
+        </controls:SettingsCard>
+    </StackPanel>
+</settings:SettingsModule>

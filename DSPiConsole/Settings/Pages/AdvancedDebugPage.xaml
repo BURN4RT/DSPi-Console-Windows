@@ -1,0 +1,21 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.AdvancedDebugPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <StackPanel Spacing="4">
+        <!--
+            One-card page. Phase 1 keeps a single Debug toggle to demonstrate
+            the minimal SettingsCard rhythm. The Description slot replaces
+            today's lack of inline help text.
+        -->
+        <controls:SettingsCard Header="Show debug info"
+                                Description="Overlays per-channel debug data on the main view. Useful for troubleshooting firmware behaviour.">
+                        <ToggleSwitch x:Name="DebugToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnDebugToggled"/>
+        </controls:SettingsCard>
+    </StackPanel>
+</settings:SettingsModule>

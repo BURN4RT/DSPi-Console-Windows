@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="DSPiConsole.Settings.SettingsWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Settings">
+
+    <!--
+        Modeless top-level Window. Title-bar pattern matches MainWindow:
+        ExtendsContentIntoTitleBar + a transparent drag-region Grid at
+        the top + the same DesktopAcrylicController backdrop. The Window's
+        Title text and the OS caption buttons (min/max/close) are
+        rendered by Windows on top of the dark acrylic content, which
+        gives a consistent dark title bar across the whole app.
+
+        Two-row outer grid:
+          Row 0 — AppTitleBar drag region (32px tall, transparent).
+          Row 1 — ContentHost where SettingsShell is mounted in code.
+    -->
+    <Grid x:Name="RootGrid" Background="Transparent">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Drag-region for the title bar. No content — caption buttons
+             and the window title are overlaid by Windows. -->
+        <Grid x:Name="AppTitleBar"
+              Grid.Row="0"
+              Height="32"
+              Background="Transparent"/>
+
+        <!-- Content area. SettingsShell is added to ContentHost.Children
+             in the code-behind so the Window XAML stays minimal.
+
+             ContentHost stays transparent so the acrylic backdrop
+             shows through anywhere the shell itself doesn't paint a
+             solid background. The shell selectively applies an opaque
+             surface only to the right pane (page content) — the
+             left pane (sidebar) stays translucent acrylic. -->
+        <Grid x:Name="ContentHost" Grid.Row="1"/>
+    </Grid>
+</Window>

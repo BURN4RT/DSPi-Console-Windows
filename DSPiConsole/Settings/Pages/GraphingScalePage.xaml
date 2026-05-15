@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.GraphingScalePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <!--
+        Vertical / horizontal axis configuration. The Description field is
+        used live in code-behind to show a human-readable current range
+        ("±25 dB" / "-30 to +5 dB") as the user moves the slider.
+
+        SettingsCard HeaderIcon elements omitted — the prior build had
+        empty Glyph="" values (Write-tool stripped the Segoe Fluent
+        private-use-area chars) and the empty-icon HeaderIcon block
+        caused a XAML parse cascade that crashed Slider.Minimum
+        assignment. Re-add icons only with explicit XML entity
+        (e.g. Glyph="&amp;#xE9D9;") if we need them back later.
+    -->
+    <StackPanel Spacing="4">
+
+        <controls:SettingsCard x:Name="DbRangeCard" Header="Vertical range">
+            <Slider x:Name="DbRangeSlider" Minimum="10" Maximum="100" StepFrequency="5"
+                    Width="220" ValueChanged="OnDbRangeChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="DbCenterCard" Header="Center offset">
+            <Slider x:Name="DbCenterSlider" Minimum="-40" Maximum="20" StepFrequency="1"
+                    Width="220" ValueChanged="OnDbCenterChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="Minimum frequency"
+                                Description="Left-edge frequency of the graph (Hz).">
+            <ComboBox x:Name="MinFreqCombo" MinWidth="120"
+                      SelectionChanged="OnMinFreqChanged">
+                <ComboBoxItem Content="10 Hz"  Tag="10"/>
+                <ComboBoxItem Content="15 Hz"  Tag="15"/>
+                <ComboBoxItem Content="20 Hz"  Tag="20"/>
+                <ComboBoxItem Content="50 Hz"  Tag="50"/>
+                <ComboBoxItem Content="100 Hz" Tag="100"/>
+            </ComboBox>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="Maximum frequency"
+                                Description="Right-edge frequency of the graph.">
+            <ComboBox x:Name="MaxFreqCombo" MinWidth="120"
+                      SelectionChanged="OnMaxFreqChanged">
+                <ComboBoxItem Content="5 kHz"  Tag="5000"/>
+                <ComboBoxItem Content="10 kHz" Tag="10000"/>
+                <ComboBoxItem Content="20 kHz" Tag="20000"/>
+            </ComboBox>
+        </controls:SettingsCard>
+    </StackPanel>
+</settings:SettingsModule>

@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.PresetsUIPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <!-- UI-only toggle stored in AppSettings JSON. Live-applied. -->
+    <StackPanel Spacing="4">
+        <controls:SettingsCard Header="Show save button when changes pending"
+                                Description="Reveals a one-click save button next to the preset dropdown whenever the current state diverges from the loaded preset.">
+                        <ToggleSwitch x:Name="ShowSaveButtonToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnShowSaveButtonToggled"/>
+        </controls:SettingsCard>
+    </StackPanel>
+</settings:SettingsModule>

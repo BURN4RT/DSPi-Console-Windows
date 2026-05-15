@@ -92,92 +92,100 @@
             <!-- Configurable sub-options. Hidden only when the device
                  doesn't support the feature; otherwise visible whenever
                  the Expander is open (the Expander itself handles the
-                 collapse animation when the toggle/chevron is flipped). -->
-            <StackPanel x:Name="CollapsibleContent" Spacing="14">
+                 collapse animation when the toggle/chevron is flipped).
+                 Compact one-line-per-setting layout: fixed-width label
+                 column for visual alignment, hover tooltips for context
+                 instead of verbose inline help text. -->
+            <StackPanel x:Name="CollapsibleContent" Spacing="8">
 
-                <TextBlock FontSize="12"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap"
-                           Text="Asserts a GPIO before the I²S clocks stop during pipeline reset, eliminating the audible thump that some external DACs produce. Configure once; persists in device flash."/>
-
-                <StackPanel Spacing="4">
-                    <!-- Short OnContent/OffContent on purpose: ToggleSwitch's
-                         content presenters don't wrap, so long strings here
-                         force the whole control's measured width up, which
-                         in turn grows the host dialog when this section
-                         expands. The fuller explanation lives in the
-                         caption below where it can wrap. -->
-                    <ToggleSwitch x:Name="PolarityToggle"
-                                  Header="Mute Polarity"
-                                  OnContent="Active Low"
-                                  OffContent="Active High"/>
-                    <TextBlock FontSize="11"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               TextWrapping="Wrap"
-                               Text="Active Low: drive the GPIO LOW to mute (PCM5102A, WM8741). Active High: drive HIGH to mute (AK4493 default)."/>
-                </StackPanel>
-
-                <StackPanel Spacing="4">
-                    <TextBlock Text="Mute GPIO Pin" FontSize="12"/>
-                    <ComboBox x:Name="PinCombo" HorizontalAlignment="Stretch"/>
-                    <TextBlock FontSize="11"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               TextWrapping="Wrap"
-                               Text="Connect this pin to the DAC's mute input (e.g. PCM5102A XSMT, WM8741 MUTEB, AK4493 SMUTE)."/>
-                </StackPanel>
-
-                <StackPanel Spacing="4">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="Mute Hold" FontSize="12" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="HoldMsText" Grid.Column="1"
-                                   FontFamily="Cascadia Code, Consolas" FontSize="12"
-                                   VerticalAlignment="Center"/>
-                    </Grid>
-                    <Slider x:Name="HoldMsSlider"
-                            Minimum="0" Maximum="500" StepFrequency="1"
-                            SmallChange="1" LargeChange="10"
-                            IsThumbToolTipEnabled="False"/>
-                    <TextBlock FontSize="11"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               TextWrapping="Wrap"
-                               Text="Milliseconds to hold the mute pin asserted before stopping I²S clocks. Recommended: 5 ms (PCM5102A), 100 ms (WM8741, AK4493)."/>
-                </StackPanel>
-
-                <StackPanel Spacing="4">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="Post-release Hold" FontSize="12" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="ReleaseMsText" Grid.Column="1"
-                                   FontFamily="Cascadia Code, Consolas" FontSize="12"
-                                   VerticalAlignment="Center"/>
-                    </Grid>
-                    <Slider x:Name="ReleaseMsSlider"
-                            Minimum="0" Maximum="500" StepFrequency="1"
-                            SmallChange="1" LargeChange="10"
-                            IsThumbToolTipEnabled="False"/>
-                    <TextBlock FontSize="11"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               TextWrapping="Wrap"
-                               Text="Milliseconds to dwell after releasing the mute pin before resuming audio. Usually 0; raise only if the DAC needs settle time post-unmute."/>
-                </StackPanel>
-
-                <Grid ColumnSpacing="12">
+                <Grid ColumnSpacing="12"
+                      ToolTipService.ToolTip="Drive the mute GPIO LOW (PCM5102A, WM8741) or HIGH (AK4493 default) to mute the DAC.">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="110"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <Button x:Name="TestButton" Content="Test Mute Pulse"/>
+                    <TextBlock Text="Polarity" FontSize="12" VerticalAlignment="Center"/>
+                    <!-- Two-item dropdown; SelectedIndex maps directly to
+                         DacHwMuteConfig.ActiveLow (0 = true, 1 = false).
+                         ComboBox matches the GPIO Pin row's visual idiom and
+                         keeps the section's controls uniform. MaxWidth pins
+                         the closed-state size and, by extension, the popup
+                         width — without it the popup can be wider than the
+                         ComboBox itself, which triggers a layout pass that
+                         ContentDialog reacts to when the dropdown opens. -->
+                    <ComboBox x:Name="PolarityCombo" Grid.Column="1"
+                              HorizontalAlignment="Stretch" MaxWidth="240">
+                        <ComboBoxItem Content="Active Low"/>
+                        <ComboBoxItem Content="Active High"/>
+                    </ComboBox>
+                </Grid>
+
+                <Grid ColumnSpacing="12"
+                      ToolTipService.ToolTip="GPIO pin connected to the DAC's mute input (PCM5102A XSMT, WM8741 MUTEB, AK4493 SMUTE).">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="GPIO Pin" FontSize="12" VerticalAlignment="Center"/>
+                    <!-- See PolarityCombo's note on MaxWidth — same rationale.
+                         240 fits the longest expected item ("GPIO XX (OWNER)"
+                         where OWNER is up to ~10 chars). Wider items get
+                         truncated by the ComboBox's own ellipsis behavior. -->
+                    <ComboBox x:Name="PinCombo" Grid.Column="1"
+                              HorizontalAlignment="Stretch" MaxWidth="240"/>
+                </Grid>
+
+                <Grid ColumnSpacing="12"
+                      ToolTipService.ToolTip="Milliseconds the mute pin is held asserted before clocks stop. Recommended: 5 (PCM5102A), 100 (WM8741, AK4493).">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Hold (ms)" FontSize="12" VerticalAlignment="Center"/>
+                    <Slider x:Name="HoldMsSlider" Grid.Column="1"
+                            Minimum="0" Maximum="500" StepFrequency="1"
+                            SmallChange="1" LargeChange="10"
+                            IsThumbToolTipEnabled="False"
+                            VerticalAlignment="Center"/>
+                    <TextBlock x:Name="HoldMsText" Grid.Column="2"
+                               FontFamily="Cascadia Code, Consolas" FontSize="12"
+                               TextAlignment="Right" MinWidth="36"
+                               VerticalAlignment="Center"/>
+                </Grid>
+
+                <Grid ColumnSpacing="12"
+                      ToolTipService.ToolTip="Milliseconds to dwell after releasing the mute pin before resuming audio. Usually 0.">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Release (ms)" FontSize="12" VerticalAlignment="Center"/>
+                    <Slider x:Name="ReleaseMsSlider" Grid.Column="1"
+                            Minimum="0" Maximum="500" StepFrequency="1"
+                            SmallChange="1" LargeChange="10"
+                            IsThumbToolTipEnabled="False"
+                            VerticalAlignment="Center"/>
+                    <TextBlock x:Name="ReleaseMsText" Grid.Column="2"
+                               FontFamily="Cascadia Code, Consolas" FontSize="12"
+                               TextAlignment="Right" MinWidth="36"
+                               VerticalAlignment="Center"/>
+                </Grid>
+
+                <Grid ColumnSpacing="12" Margin="0,4,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="TestButton" Content="Test Pulse"
+                            HorizontalAlignment="Stretch"
+                            ToolTipService.ToolTip="Fire a ~1 second mute pulse for installer verification."/>
                     <TextBlock x:Name="TestFeedback" Grid.Column="1"
                                FontSize="11"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               VerticalAlignment="Center"/>
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"/>
                 </Grid>
 
             </StackPanel>

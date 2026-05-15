@@ -1,0 +1,47 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.GraphingStylePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <!--
+        All controls on this page persist to AppSettings JSON. Apply
+        cadence is Live: each control change saves the file and fires
+        NotifyChanged so the running graph picks up the new style.
+        Slider value labels live in the SettingsCard's Description slot
+        (updated in code-behind) so we don't fight the SettingsCard
+        layout with a sidecar TextBlock.
+    -->
+    <StackPanel Spacing="4">
+
+        <controls:SettingsCard Header="Glow effect"
+                                Description="Soft outer glow on graph lines.">
+                        <ToggleSwitch x:Name="GlowToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnGlowToggled"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="LineWidthCard" Header="Line width">
+                        <Slider x:Name="LineWidthSlider" Minimum="1" Maximum="4" StepFrequency="0.5"
+                    Width="220" ValueChanged="OnLineWidthChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="AnimSpeedCard" Header="Animation speed">
+                        <Slider x:Name="AnimSpeedSlider" Minimum="0.05" Maximum="0.5" StepFrequency="0.05"
+                    Width="220" ValueChanged="OnAnimSpeedChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="Dotted inactive channels"
+                                Description="Render non-selected channels with a dotted stroke for visual clarity.">
+                        <ToggleSwitch x:Name="DottedInactiveToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnDottedInactiveToggled"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="Pop-out follows selected channel"
+                                Description="When the pop-out graph is open, change which channel it shows as you switch channel editor pages.">
+                        <ToggleSwitch x:Name="PopoutFollowsToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnPopoutFollowsToggled"/>
+        </controls:SettingsCard>
+    </StackPanel>
+</settings:SettingsModule>

@@ -1,0 +1,27 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.HardwareSpdifInputPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <!--
+        Single-pin page. The RX pin is hot-swappable while active —
+        output briefly mutes during re-lock. Page only registered when
+        firmware V7+ exposes SPDIF input capability (see IsAvailable).
+    -->
+    <StackPanel Spacing="4">
+
+        <controls:SettingsCard Header="RX pin"
+                                Description="GPIO pin for the S/PDIF input receiver (default 11). Hot-swappable while active — output briefly mutes during re-lock.">
+                        <ComboBox x:Name="SpdifRxPinCombo" MinWidth="140"
+                      SelectionChanged="OnSpdifRxPinChanged"/>
+        </controls:SettingsCard>
+
+        <TextBlock x:Name="StatusText"
+                   FontSize="11"
+                   TextWrapping="Wrap"
+                   Visibility="Collapsed"/>
+    </StackPanel>
+</settings:SettingsModule>

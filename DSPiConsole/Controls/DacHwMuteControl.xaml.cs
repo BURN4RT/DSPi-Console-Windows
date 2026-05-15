@@ -117,7 +117,7 @@ public sealed partial class DacHwMuteControl : UserControl
         // The enable toggle never moves the chevron; the chevron never
         // moves the toggle. Clean decoupling, no re-entry guards needed.
         EnableToggle.Toggled += OnEnabledToggled;
-        PolarityToggle.Toggled += OnPolarityToggled;
+        PolarityCombo.SelectionChanged += OnPolaritySelectionChanged;
         PinCombo.SelectionChanged += OnPinSelectionChanged;
         HoldMsSlider.ValueChanged += OnHoldChanged;
         ReleaseMsSlider.ValueChanged += OnReleaseChanged;
@@ -162,7 +162,8 @@ public sealed partial class DacHwMuteControl : UserControl
             {
                 var cfg = _vm.DacHwMute;
                 EnableToggle.IsOn = cfg.Enabled;
-                PolarityToggle.IsOn = cfg.ActiveLow;
+                // SelectedIndex 0 = Active Low (ActiveLow=true); 1 = Active High.
+                PolarityCombo.SelectedIndex = cfg.ActiveLow ? 0 : 1;
                 SelectPinInCombo(cfg.Pin);
                 HoldMsSlider.Value = cfg.HoldMs;
                 ReleaseMsSlider.Value = cfg.ReleaseMs;
@@ -272,10 +273,14 @@ public sealed partial class DacHwMuteControl : UserControl
         _ = _vm.ApplyDacHwMuteAsync(_vm.DacHwMute.With(enabled: EnableToggle.IsOn));
     }
 
-    private void OnPolarityToggled(object sender, RoutedEventArgs e)
+    private void OnPolaritySelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressApply || _vm == null) return;
-        _ = _vm.ApplyDacHwMuteAsync(_vm.DacHwMute.With(activeLow: PolarityToggle.IsOn));
+        // Index 0 = Active Low, 1 = Active High. Any other value (shouldn't
+        // happen — combo only has two items) falls back to Active Low to
+        // match the firmware's safe-default polarity.
+        var activeLow = PolarityCombo.SelectedIndex != 1;
+        _ = _vm.ApplyDacHwMuteAsync(_vm.DacHwMute.With(activeLow: activeLow));
     }
 
     private void OnPinSelectionChanged(object sender, SelectionChangedEventArgs e)

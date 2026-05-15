@@ -1,0 +1,45 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.AboutPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <!--
+        Read-only info page. Phase 1 ships the basics: app version (from
+        the assembly), platform string, and the firmware version reported
+        by MainViewModel. Phase 3 adds repo/feedback links per Microsoft's
+        suggested About-section content.
+
+        Using SettingsCard for consistency with every other page; the
+        action slot is empty (or a single Copy button on the version row).
+    -->
+    <StackPanel Spacing="4">
+
+        <controls:SettingsCard Header="DSPi Console"
+                                Description="WinUI 3 / .NET 8 application for the DSPi audio platform.">
+                    </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="AppVersionCard" Header="App version">
+                        <TextBlock x:Name="AppVersionText"
+                       FontFamily="Cascadia Code, Consolas"
+                       VerticalAlignment="Center"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="PlatformCard" Header="Platform">
+                        <TextBlock x:Name="PlatformText"
+                       FontFamily="Cascadia Code, Consolas"
+                       VerticalAlignment="Center"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="FirmwareCard" Header="Connected device">
+                        <TextBlock x:Name="FirmwareText"
+                       FontFamily="Cascadia Code, Consolas"
+                       VerticalAlignment="Center"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+        </controls:SettingsCard>
+    </StackPanel>
+</settings:SettingsModule>

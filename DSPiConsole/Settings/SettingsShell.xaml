@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="DSPiConsole.Settings.SettingsShell"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!--
+        Settings layout: NavigationView in Left mode with collapsible
+        groups, content area on the right.
+
+        The content area has three rows:
+          0 — Pending-changes InfoBar (Visibility-bound; shows when the
+              tracker has staged changes). Apply + Discard live here.
+          1 — Header band (page icon + title).
+          2 — Scrolling page content.
+
+        NavigationView is in the default XAML namespace for WinUI 3 —
+        no muxc: prefix needed. Empty MenuItems / FooterMenuItems
+        property element bodies are omitted so the WinUI parser
+        doesn't choke on them; items are added in code-behind.
+    -->
+    <!--
+        Override NavigationView's pane-background theme resources so the
+        sidebar lets the window's acrylic backdrop bleed through — same
+        translucent dark look as the title-bar strip above. The
+        right-pane Grid below sets its own solid background so the page
+        content stays opaque and readable. PaneBackground / Background
+        as direct attributes aren't reliably available across WinUI
+        versions; the theme-resource override is the documented way.
+    -->
+    <UserControl.Resources>
+        <!-- Pane backgrounds: transparent so the window's acrylic
+             backdrop shows through the sidebar. -->
+        <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="Transparent"/>
+        <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="Transparent"/>
+        <SolidColorBrush x:Key="NavigationViewTopPaneBackground" Color="Transparent"/>
+        <SolidColorBrush x:Key="NavigationViewContentBackground" Color="Transparent"/>
+
+        <!-- Item text brightness: match the main window's sidebar,
+             which renders with TextFillColorSecondaryBrush (#CCCCCC)
+             rather than the default TextFillColorPrimaryBrush
+             (#E0E0E0). Hover / selected / pressed states bump up to
+             primary brightness so interaction feedback still reads.
+             These override the WinUI NavigationView item templates'
+             ThemeResource lookups; setting Foreground on the inline
+             TextBlocks would miss the chevrons and the focus visuals. -->
+        <StaticResource x:Key="NavigationViewItemForeground"               ResourceKey="TextFillColorSecondaryBrush"/>
+        <StaticResource x:Key="NavigationViewItemForegroundPointerOver"    ResourceKey="TextFillColorPrimaryBrush"/>
+        <StaticResource x:Key="NavigationViewItemForegroundPressed"        ResourceKey="TextFillColorPrimaryBrush"/>
+        <StaticResource x:Key="NavigationViewItemForegroundSelected"       ResourceKey="TextFillColorPrimaryBrush"/>
+        <StaticResource x:Key="NavigationViewItemForegroundSelectedPointerOver" ResourceKey="TextFillColorPrimaryBrush"/>
+        <StaticResource x:Key="NavigationViewItemForegroundSelectedPressed"     ResourceKey="TextFillColorPrimaryBrush"/>
+        <StaticResource x:Key="NavigationViewItemForegroundChecked"        ResourceKey="TextFillColorPrimaryBrush"/>
+        <StaticResource x:Key="NavigationViewItemForegroundCheckedPointerOver" ResourceKey="TextFillColorPrimaryBrush"/>
+        <StaticResource x:Key="NavigationViewItemForegroundCheckedPressed"     ResourceKey="TextFillColorPrimaryBrush"/>
+        <StaticResource x:Key="NavigationViewItemForegroundDisabled"       ResourceKey="TextFillColorDisabledBrush"/>
+    </UserControl.Resources>
+
+    <NavigationView x:Name="Nav"
+                    PaneDisplayMode="Left"
+                    IsSettingsVisible="False"
+                    IsBackEnabled="False"
+                    IsBackButtonVisible="Collapsed"
+                    OpenPaneLength="240"
+                    CompactPaneLength="48"
+                    ExpandedModeThresholdWidth="640"
+                    CompactModeThresholdWidth="480">
+        <Grid Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- Pending-changes InfoBar. Visibility + Title text are
+                 set in code-behind on every tracker.Changed. We use
+                 IsClosable="False" because the InfoBar is the only
+                 surface that owns the Apply/Discard action; closing
+                 it would orphan the pending state. -->
+            <!-- InfoBar.ActionButton is typed as a single Button, so the
+                 Discard / Apply pair lives in the Content slot instead.
+                 The result visually reads the same: title on the left,
+                 message below, action buttons on the right of the body. -->
+            <InfoBar x:Name="PendingBar"
+                     Grid.Row="0"
+                     Margin="24,16,24,0"
+                     Severity="Warning"
+                     IsOpen="False"
+                     IsClosable="False"
+                     Title="Pending device changes"
+                     Message="0 pending changes">
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,4">
+                    <Button x:Name="DiscardButton"
+                            Content="Discard"
+                            Click="OnDiscardClick"/>
+                    <Button x:Name="ApplyButton"
+                            Content="Apply"
+                            Style="{ThemeResource AccentButtonStyle}"
+                            Click="OnApplyClick"/>
+                </StackPanel>
+            </InfoBar>
+
+            <!-- Header band: page icon + page title.
+                 TitleTextBlockStyle's default Foreground resolves to a
+                 near-white brush that ignores App.xaml's softer
+                 TextFillColorPrimary (#E0E0E0) override. Setting
+                 Foreground explicitly to TextFillColorPrimaryBrush
+                 pulls in our palette and keeps the title from
+                 looking glaring. Icon mirrors the same brush. -->
+            <Border Grid.Row="1" Padding="24,16,24,8">
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <FontIcon x:Name="HeaderIcon"
+                              FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                              Glyph=""
+                              FontSize="20"
+                              Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                              VerticalAlignment="Center"/>
+                    <TextBlock x:Name="HeaderTitle"
+                               Text="Settings"
+                               Style="{ThemeResource TitleTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Scrollable page content. Max width caps wide-window line
+                 length to the Microsoft-recommended ~960 px settings layout. -->
+            <ScrollViewer Grid.Row="2"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Padding="24,0,24,24">
+                <ContentControl x:Name="PageHost"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Stretch"
+                                MaxWidth="960"/>
+            </ScrollViewer>
+        </Grid>
+    </NavigationView>
+</UserControl>
