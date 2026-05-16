@@ -27,8 +27,6 @@ namespace DSPiConsole.Settings.Pages;
 public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
 {
     private bool _suppress;
-    private DispatcherTimer? _sliderDebounce;
-    private const int SliderDebounceMs = 200;
 
     private const string ConfigKey = "hardware.dac-mute.config";
 
@@ -66,7 +64,6 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
     {
         HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
         if (Vm != null) Vm.PropertyChanged -= OnVmPropertyChanged;
-        _sliderDebounce?.Stop();
     }
 
     private void OnExternalPinChange() =>
@@ -136,6 +133,36 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
         PinCombo.SelectedItem is ComboBoxItem item && item.Tag is byte b
             ? b : DacHwMuteConfig.PinNone;
 
+    /// <summary>Find the combo entry whose string Tag matches <paramref name="ms"/>
+    /// and select it. If no entry matches (e.g. a legacy preset with a value
+    /// outside the 5/10/25/50/100 set), leave the combo's selection cleared so
+    /// the user sees a blank rather than a silently-snapped value.</summary>
+    private static void SelectMsInCombo(ComboBox combo, ushort ms)
+    {
+        for (int i = 0; i < combo.Items.Count; i++)
+        {
+            if (combo.Items[i] is ComboBoxItem item
+                && ushort.TryParse(item.Tag?.ToString(), out var v)
+                && v == ms)
+            {
+                combo.SelectedIndex = i;
+                return;
+            }
+        }
+        combo.SelectedIndex = -1;
+    }
+
+    /// <summary>Read a ms value from a Hold / Release combo. XAML Tags
+    /// are strings; parse defensively and fall back to the current
+    /// device value if nothing is selected (legacy out-of-range value).</summary>
+    private ushort SelectedMs(ComboBox combo, ushort fallback)
+    {
+        if (combo.SelectedItem is ComboBoxItem item
+            && ushort.TryParse(item.Tag?.ToString(), out var v))
+            return v;
+        return fallback;
+    }
+
     private void RefreshPinConflicts()
     {
         if (Vm == null) return;
@@ -163,12 +190,6 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
         }
         _suppress = false;
     }
-
-    private void UpdateHoldDescription(double ms) =>
-        HoldCard.Description = $"How long the mute pin is held asserted before clocks stop. Current: {(int)ms} ms";
-
-    private void UpdateReleaseDescription(double ms) =>
-        ReleaseCard.Description = $"How long to dwell after un-muting before resuming audio. Current: {(int)ms} ms";
 
     private void UpdateTestButtonEnablement()
     {
@@ -200,41 +221,6 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
         StageConfigSnapshot();
     }
 
-    private void OnSliderChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-    {
-        if (_suppress) return;
-
-        // Update the live description right away so the user sees the
-        // numeric value tracking the thumb, but coalesce the actual
-        // Stage call via a short timer. Steady drag → one staged
-        // change at the user's pause, instead of one per ValueChanged.
-        // ReferenceEquals avoids the CS0252 "possible unintended
-        // reference comparison" warning we'd get from `sender ==` —
-        // sender is object, the right side is a Slider field.
-        if (ReferenceEquals(sender, HoldSlider))
-            UpdateHoldDescription(e.NewValue);
-        else if (ReferenceEquals(sender, ReleaseSlider))
-            UpdateReleaseDescription(e.NewValue);
-
-        if (Vm == null || Tracker == null) return;
-        ScheduleSliderStage();
-    }
-
-    private void ScheduleSliderStage()
-    {
-        if (_sliderDebounce == null)
-        {
-            _sliderDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(SliderDebounceMs) };
-            _sliderDebounce.Tick += (_, _) =>
-            {
-                _sliderDebounce!.Stop();
-                StageConfigSnapshot();
-            };
-        }
-        _sliderDebounce.Stop();
-        _sliderDebounce.Start();
-    }
-
     /// <summary>
     /// Capture the current UI state into a <see cref="DacHwMuteConfig"/>
     /// and stage it. All five fields share one key so the InfoBar
@@ -251,8 +237,8 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
             enabled: EnableToggle.IsOn,
             activeLow: PolarityCombo.SelectedIndex != 1,
             pin: SelectedPin(),
-            holdMs: (ushort)HoldSlider.Value,
-            releaseMs: (ushort)ReleaseSlider.Value);
+            holdMs: SelectedMs(HoldCombo, current.HoldMs),
+            releaseMs: SelectedMs(ReleaseCombo, current.ReleaseMs));
 
         var vm = Vm;
         Tracker.Stage(new PendingChange(
