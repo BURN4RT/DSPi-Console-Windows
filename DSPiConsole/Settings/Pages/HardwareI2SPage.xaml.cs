@@ -29,12 +29,11 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
     {
         InitializeComponent();
 
-        // BCK can use any audio-capable GPIO; populate it from the
-        // full list at construction time.  MCK's combo is populated
-        // in Attach() once we know the platform — see McKCapablePins
-        // in HardwarePins.cs for why only a subset is valid.
-        foreach (var pin in HardwarePins.ValidPins)
-            BckPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
+        // BCK and MCK combo items are added by RefreshConflicts —
+        // both filter on populate (only show pins this picker can
+        // actually use; pins claimed elsewhere are omitted, not
+        // greyed out). Initial empty state is fine because Refresh()
+        // calls RefreshConflicts before the user sees anything.
 
         // Subscriptions go in Loaded/Unloaded so they survive sidebar
         // navigation cycles — see HardwareOutputAssignmentPage for the
@@ -45,16 +44,13 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
 
     public override void Attach(MainViewModel vm, IPendingChangeTracker tracker)
     {
-        // Populate MCK pin combo for the current platform. Re-runs on
-        // Platform PropertyChanged below to handle board swaps and the
-        // "settings opened before first connect" case.
-        PopulateMckPinCombo(vm.Platform);
-
         base.Attach(vm, tracker);
 
         // Kick off background fetches to populate the page with the
         // device's current values. The PropertyChanged handler is what
-        // pushes them into the UI once they arrive.
+        // pushes them into the UI once they arrive — combos are
+        // rebuilt by RefreshConflicts on every Refresh, so the MCK
+        // pin combo doesn't need a separate platform-aware populate.
         var fetchVm = vm;
         _ = Task.Run(() =>
         {
@@ -89,38 +85,15 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
     private void OnExternalPinChange() =>
         DispatcherQueue.TryEnqueue(RefreshConflicts);
 
-    /// <summary>
-    /// Populate the MCK pin combo with the platform's GPOUT-capable
-    /// GPIOs. Picking a non-GPOUT pin is the firmware's only meaningful
-    /// PIN_CONFIG_INVALID_PIN trigger for MCK and produces a confusing
-    /// "Failed to set MCK pin (0x01)" error if exposed in the UI.
-    /// Runs from Attach AND from OnVmPropertyChanged on Platform change.
-    /// </summary>
-    private void PopulateMckPinCombo(string platform)
-    {
-        _suppress = true;
-        try
-        {
-            MckPinCombo.Items.Clear();
-            foreach (var pin in HardwarePins.McKCapablePins(platform))
-                MckPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
-        }
-        finally { _suppress = false; }
-    }
-
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         // Platform changes (first connect after Settings opens, or a
         // board swap from RP2040 to RP2350 / vice versa) change the
-        // set of MCK-capable pins. Repopulate the combo, then fall
-        // through to Refresh which selects the device's current pin.
+        // set of MCK-capable pins. Refresh rebuilds the combo from
+        // McKCapablePins(Vm.Platform) so this just falls through.
         if (e.PropertyName == nameof(MainViewModel.Platform))
         {
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                if (Vm != null) PopulateMckPinCombo(Vm.Platform);
-                Refresh();
-            });
+            DispatcherQueue.TryEnqueue(Refresh);
             return;
         }
 
@@ -149,18 +122,14 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         _suppress = true;
         try
         {
-            // BCK pin
-            var bckIdx = System.Array.IndexOf(HardwarePins.ValidPins, Vm.I2SBckPin);
-            if (bckIdx >= 0) BckPinCombo.SelectedIndex = bckIdx;
+            // BCK + MCK pin pickers are rebuilt by RefreshConflicts at
+            // the end of this method — both filter on populate (only
+            // usable pins shown). The Card descriptions and combo
+            // enablement still belong here.
             BckPinCard.Description = $"LRCK auto-assigned to GPIO {Vm.I2SBckPin + 1} (BCK + 1).";
             BckPinCombo.IsEnabled = !Vm.AnySlotIsI2S;
 
-            // MCK toggle
             MckToggle.IsOn = Vm.MckEnabled;
-
-            // MCK pin — combo is platform-restricted; locate by Tag,
-            // not by ValidPins index.
-            SelectMckPinInCombo(Vm.MckPin);
             MckPinCombo.IsEnabled = !Vm.MckEnabled;
             MckPinCard.Description = Vm.MckEnabled
                 ? "Turn MCK off to change its pin."
@@ -179,62 +148,67 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         RefreshConflicts();
     }
 
+    /// <summary>Rebuild both pin pickers so each one shows only the
+    /// pins it can actually use. Replaces the old grey-out approach:
+    /// blocked pins are omitted from the dropdown entirely, with the
+    /// current device pin always included so the user can see and
+    /// re-confirm their selection.</summary>
     private void RefreshConflicts()
     {
         if (Vm == null) return;
 
-        // BCK: reserves pin and pin+1 (LRCK). Disable any candidate
-        // whose pin collides with another non-LRCK owner, or whose
-        // pin+1 collides with anything (including someone else's LRCK).
         _suppress = true;
         try
         {
-            // Get owners excluding LRCK so we can tell BCK candidates from
-            // their would-be LRCK collisions properly.
+            // ── BCK ──────────────────────────────────────────────────
+            // BCK reserves pin AND pin+1 (LRCK). Include a pin only if
+            //   • it's the current BCK (always selectable so the user
+            //     can re-confirm), OR
+            //   • the pin isn't claimed by a non-clock feature, AND
+            //     pin+1 is audio-capable, AND
+            //     pin+1 isn't claimed by a non-clock feature.
+            // The current BCK/LRCK pair is exempted as an "owner"
+            // because both pins move atomically with the reassignment.
             var owners = HardwarePins.BuildOwnerMap(Vm);
+            byte currentBck = Vm.I2SBckPin;
 
-            for (int i = 0; i < HardwarePins.ValidPins.Length; i++)
+            BckPinCombo.Items.Clear();
+            foreach (var pin in HardwarePins.ValidPins)
             {
-                if (BckPinCombo.Items[i] is not ComboBoxItem item) continue;
-                byte pin = HardwarePins.ValidPins[i];
+                if (pin == currentBck)
+                {
+                    BckPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
+                    continue;
+                }
+                byte lrck = (byte)(pin + 1);
 
-                bool conflict = false;
-                string? ownerLabel = null;
-                if (owners.TryGetValue(pin, out var owner) && owner != "LRCK" && owner != "BCK")
-                {
-                    conflict = true;
-                    ownerLabel = owner;
-                }
-                else if (owners.TryGetValue((byte)(pin + 1), out var nextOwner)
-                         && nextOwner != "LRCK")
-                {
-                    conflict = true;
-                    ownerLabel = $"{nextOwner}+LRCK";
-                }
-                item.Content = ownerLabel != null ? $"GPIO {pin} ({ownerLabel})" : $"GPIO {pin}";
-                item.IsEnabled = !conflict;
+                if (owners.TryGetValue(pin, out var owner)
+                    && owner != "BCK" && owner != "LRCK")
+                    continue;
+                if (!HardwarePins.IsAudioCapable(lrck))
+                    continue;
+                if (owners.TryGetValue(lrck, out var nextOwner)
+                    && nextOwner != "BCK" && nextOwner != "LRCK")
+                    continue;
+
+                BckPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
             }
+            SelectPinInCombo(BckPinCombo, currentBck);
 
-            // MCK: exclude MCK's own entry so the user can keep its
-            // current selection visible / re-selectable. The MCK combo
-            // is platform-restricted (only GPOUT-capable pins), so
-            // iterate the combo's own items rather than ValidPins.
+            // ── MCK ──────────────────────────────────────────────────
+            // MCK is restricted to GPOUT-capable pins (platform-
+            // dependent — RP2040: 21 only; RP2350: 13/15/21). Include
+            // the current MCK plus any unclaimed GPOUT pin.
             var mckOwners = HardwarePins.BuildOwnerMap(Vm, excludeMckSelf: true);
-            foreach (var raw in MckPinCombo.Items)
+            byte currentMck = Vm.MckPin;
+
+            MckPinCombo.Items.Clear();
+            foreach (var pin in HardwarePins.McKCapablePins(Vm.Platform))
             {
-                if (raw is not ComboBoxItem item) continue;
-                if (item.Tag is not byte pin) continue;
-                if (mckOwners.TryGetValue(pin, out var owner))
-                {
-                    item.Content = $"GPIO {pin} ({owner})";
-                    item.IsEnabled = false;
-                }
-                else
-                {
-                    item.Content = $"GPIO {pin}";
-                    item.IsEnabled = true;
-                }
+                if (pin == currentMck || !mckOwners.ContainsKey(pin))
+                    MckPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
             }
+            SelectPinInCombo(MckPinCombo, currentMck);
         }
         finally { _suppress = false; }
     }
@@ -261,8 +235,7 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         }
 
         _suppress = true;
-        var idx = System.Array.IndexOf(HardwarePins.ValidPins, Vm.I2SBckPin);
-        if (idx >= 0) BckPinCombo.SelectedIndex = idx;
+        SelectPinInCombo(BckPinCombo, Vm.I2SBckPin);
         _suppress = false;
 
         var msg = status switch
@@ -311,18 +284,20 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
             return;
         }
 
-        // Revert: find the device's current MCK pin in the combo's
-        // own items (not ValidPins) — MckPinCombo is restricted to
-        // GPOUT-capable pins, so the indices don't align with the
-        // shared ValidPins list.
+        // Revert by matching the device's actual MCK pin in the combo
+        // by Tag — MckPinCombo is platform-restricted and rebuilt by
+        // RefreshConflicts, so item indices don't match ValidPins.
         _suppress = true;
-        SelectMckPinInCombo(Vm.MckPin);
+        SelectPinInCombo(MckPinCombo, Vm.MckPin);
         _suppress = false;
 
         var msg = status switch
         {
             PinConfigResult.OutputActive => "Disable MCK before changing its pin",
             PinConfigResult.PinInUse     => $"GPIO {newPin} is already in use",
+            // Filter-on-populate already keeps non-GPOUT pins out of
+            // the combo, so this branch is defensive — kept for the
+            // unlikely case of a stale combo or firmware mismatch.
             PinConfigResult.InvalidPin   => $"GPIO {newPin} can't drive MCK on this platform. "
                                             + $"Use {string.Join(" / ", System.Array.ConvertAll(HardwarePins.McKCapablePins(Vm.Platform), p => $"GPIO {p}"))}.",
             _ => $"Failed to set MCK pin (0x{status:X2})"
@@ -330,17 +305,16 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         ShowStatus(msg, true);
     }
 
-    /// <summary>Select an MCK pin in the platform-restricted combo by
-    /// matching its byte Tag. No-ops if the pin isn't in the current
-    /// combo (e.g. a stale value from a different platform's slot).</summary>
-    private void SelectMckPinInCombo(byte pin)
+    /// <summary>Select the combo entry whose byte Tag matches
+    /// <paramref name="pin"/>. No-op if no match — leaves the
+    /// previous selection in place rather than blanking the combo.</summary>
+    private static void SelectPinInCombo(ComboBox combo, byte pin)
     {
-        for (int i = 0; i < MckPinCombo.Items.Count; i++)
+        for (int i = 0; i < combo.Items.Count; i++)
         {
-            if (MckPinCombo.Items[i] is ComboBoxItem item
-                && item.Tag is byte p && p == pin)
+            if (combo.Items[i] is ComboBoxItem item && item.Tag is byte p && p == pin)
             {
-                MckPinCombo.SelectedIndex = i;
+                combo.SelectedIndex = i;
                 return;
             }
         }

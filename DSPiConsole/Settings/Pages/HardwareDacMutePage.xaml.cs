@@ -33,7 +33,17 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
     public HardwareDacMutePage()
     {
         InitializeComponent();
-        PopulatePinCombo();
+
+        // The "No pin (disabled)" sentinel is permanent — it stays in
+        // the combo at index 0 across rebuilds and is how the user
+        // disables the feature without burning a GPIO. The GPIO
+        // entries past it are rebuilt by RebuildPinCombo (filter on
+        // populate: pins owned elsewhere are omitted).
+        PinCombo.Items.Add(new ComboBoxItem
+        {
+            Content = "No pin (disabled)",
+            Tag = DacHwMuteConfig.PinNone
+        });
 
         // Subscriptions in Loaded/Unloaded so they survive sidebar
         // navigation cycles (see HardwareOutputAssignmentPage for why).
@@ -67,7 +77,11 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
     }
 
     private void OnExternalPinChange() =>
-        DispatcherQueue.TryEnqueue(RefreshPinConflicts);
+        // External pin change (e.g. BCK moved on the I²S page).
+        // Preserve whatever pin the user currently has selected —
+        // that's either the device value (no pending edit) or the
+        // user's pending choice. Either way it remains pickable.
+        DispatcherQueue.TryEnqueue(() => RebuildPinCombo(SelectedPin()));
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -78,19 +92,6 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
         {
             DispatcherQueue.TryEnqueue(Refresh);
         }
-    }
-
-    private void PopulatePinCombo()
-    {
-        // "No Pin" sentinel keeps the feature disabled even when
-        // Enabled=true (matches the firmware semantics).
-        PinCombo.Items.Add(new ComboBoxItem
-        {
-            Content = "No pin (disabled)",
-            Tag = DacHwMuteConfig.PinNone
-        });
-        foreach (var pin in HardwarePins.ValidPins)
-            PinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
     }
 
     protected override void Refresh()
@@ -104,14 +105,16 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
             EnableToggle.IsOn = cfg.Enabled;
             // Index 0 = Active Low, 1 = Active High.
             PolarityCombo.SelectedIndex = cfg.ActiveLow ? 0 : 1;
-            SelectPinInCombo(cfg.Pin);
             SelectMsInCombo(HoldCombo, cfg.HoldMs);
             SelectMsInCombo(ReleaseCombo, cfg.ReleaseMs);
         }
         finally { _suppress = false; }
 
+        // Rebuild the GPIO combo with cfg.Pin as the preserved
+        // selection — guarantees the device's current pin is visible
+        // even if some other feature owns it on this map.
+        RebuildPinCombo(cfg.Pin);
         UpdateTestButtonEnablement();
-        RefreshPinConflicts();
     }
 
     private void SelectPinInCombo(byte pin)
@@ -163,32 +166,31 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
         return fallback;
     }
 
-    private void RefreshPinConflicts()
+    /// <summary>Rebuild the GPIO part of the pin combo so it lists
+    /// only pins this picker can actually use — <paramref name="preserve"/>
+    /// (always included, so the user's current / pending choice
+    /// stays visible) plus any audio-capable GPIO not claimed by
+    /// another feature. The "No pin (disabled)" sentinel at index 0
+    /// is permanent and stays across rebuilds.</summary>
+    private void RebuildPinCombo(byte preserve)
     {
         if (Vm == null) return;
-
-        // Build the cross-page pin-owner map excluding our own current
-        // pin so the user can re-confirm their existing selection.
         var owners = HardwarePins.BuildOwnerMap(Vm, excludeDacMuteSelf: true);
-        var current = SelectedPin();
 
         _suppress = true;
-        for (int i = 1; i < PinCombo.Items.Count; i++) // skip "No pin" at index 0
+        try
         {
-            if (PinCombo.Items[i] is not ComboBoxItem item || item.Tag is not byte pin) continue;
-            if (owners.TryGetValue(pin, out var owner))
+            // Strip everything past the "No pin" sentinel at index 0.
+            while (PinCombo.Items.Count > 1) PinCombo.Items.RemoveAt(1);
+
+            foreach (var pin in HardwarePins.ValidPins)
             {
-                item.Content = $"GPIO {pin} ({owner})";
-                // Leave the user's own current pin pickable.
-                item.IsEnabled = pin == current;
+                if (pin == preserve || !owners.ContainsKey(pin))
+                    PinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
             }
-            else
-            {
-                item.Content = $"GPIO {pin}";
-                item.IsEnabled = true;
-            }
+            SelectPinInCombo(preserve);
         }
-        _suppress = false;
+        finally { _suppress = false; }
     }
 
     private void UpdateTestButtonEnablement()

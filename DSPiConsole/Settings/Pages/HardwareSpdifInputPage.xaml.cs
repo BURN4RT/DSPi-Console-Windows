@@ -22,8 +22,10 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
     public HardwareSpdifInputPage()
     {
         InitializeComponent();
-        foreach (var pin in HardwarePins.ValidPins)
-            SpdifRxPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
+        // Combo items are added by RefreshConflicts — filter on
+        // populate (only show usable pins; pins claimed elsewhere
+        // are omitted, not greyed out). Initial empty state is fine
+        // because Refresh() runs before the page is shown.
 
         // Subscriptions in Loaded/Unloaded so they survive sidebar
         // navigation cycles (see HardwareOutputAssignmentPage for why).
@@ -76,42 +78,49 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
     protected override void Refresh()
     {
         if (Vm == null) return;
-        _suppress = true;
-        try
-        {
-            var idx = System.Array.IndexOf(HardwarePins.ValidPins, Vm.SpdifRxPin);
-            if (idx >= 0) SpdifRxPinCombo.SelectedIndex = idx;
-        }
-        finally { _suppress = false; }
+        // Combo contents + selection are both handled by
+        // RefreshConflicts — it rebuilds with only usable pins, then
+        // selects the device's current RX pin by Tag.
         RefreshConflicts();
     }
 
+    /// <summary>Rebuild the RX pin combo so it lists only pins this
+    /// picker can actually use — the current RX pin (always selectable
+    /// so the user can re-confirm) plus any audio-capable GPIO not
+    /// claimed by another feature.</summary>
     private void RefreshConflicts()
     {
         if (Vm == null) return;
 
-        // SPDIF RX excludes its own self-entry so the current pin remains
-        // selectable. We also need to include BCK explicitly because the
-        // owner map already has it via the I²S clock-pin entries.
         var owners = HardwarePins.BuildOwnerMap(Vm, excludeSpdifRxSelf: true);
+        byte currentPin = Vm.SpdifRxPin;
 
         _suppress = true;
-        for (int i = 0; i < HardwarePins.ValidPins.Length; i++)
+        try
         {
-            if (SpdifRxPinCombo.Items[i] is not ComboBoxItem item) continue;
-            byte pin = HardwarePins.ValidPins[i];
-            if (owners.TryGetValue(pin, out var owner))
+            SpdifRxPinCombo.Items.Clear();
+            foreach (var pin in HardwarePins.ValidPins)
             {
-                item.Content = $"GPIO {pin} ({owner})";
-                item.IsEnabled = false;
+                if (pin == currentPin || !owners.ContainsKey(pin))
+                    SpdifRxPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
             }
-            else
+            SelectPinInCombo(SpdifRxPinCombo, currentPin);
+        }
+        finally { _suppress = false; }
+    }
+
+    /// <summary>Select the item whose byte Tag matches <paramref name="pin"/>.
+    /// No-op if no match — leaves the previous selection in place.</summary>
+    private static void SelectPinInCombo(ComboBox combo, byte pin)
+    {
+        for (int i = 0; i < combo.Items.Count; i++)
+        {
+            if (combo.Items[i] is ComboBoxItem item && item.Tag is byte p && p == pin)
             {
-                item.Content = $"GPIO {pin}";
-                item.IsEnabled = true;
+                combo.SelectedIndex = i;
+                return;
             }
         }
-        _suppress = false;
     }
 
     private async void OnSpdifRxPinChanged(object sender, SelectionChangedEventArgs e)
@@ -133,10 +142,11 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
             return;
         }
 
-        // Revert combo to device's actual value on failure.
+        // Revert combo to device's actual value on failure. Combo
+        // contents are filter-on-populate so we can't index by
+        // ValidPins — match by Tag instead.
         _suppress = true;
-        var idx = System.Array.IndexOf(HardwarePins.ValidPins, Vm.SpdifRxPin);
-        if (idx >= 0) SpdifRxPinCombo.SelectedIndex = idx;
+        SelectPinInCombo(SpdifRxPinCombo, Vm.SpdifRxPin);
         _suppress = false;
 
         var msg = status switch

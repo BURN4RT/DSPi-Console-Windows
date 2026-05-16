@@ -47,6 +47,13 @@ internal static class HardwarePins
         26, 27, 28
     ];
 
+    /// <summary>Whether a GPIO is one of the audio-capable pins
+    /// exposed by this board's mux (i.e. is in <see cref="ValidPins"/>).
+    /// Used to validate constraints like "BCK pin must have an
+    /// audio-capable neighbour at pin+1 to host LRCK".</summary>
+    public static bool IsAudioCapable(byte pin) =>
+        System.Array.IndexOf(ValidPins, pin) >= 0;
+
     /// <summary>
     /// GPIO pins that can drive MCK. MCK uses the RP2040/RP2350's
     /// hardware <c>clk_gpout</c> output, which is only wired to a

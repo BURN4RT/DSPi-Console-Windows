@@ -177,6 +177,11 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
             Grid.SetColumn(card, i % 2);
             OutputRowsHost.Children.Add(card);
         }
+
+        // Populate the GPIO combos with usable pins for the initial
+        // render — without this they'd start empty (BuildPinCard no
+        // longer fills them with all pins).
+        RefreshAllConflicts();
     }
 
     private void PopulateAfterFetch()
@@ -185,12 +190,12 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
         _suppress = true;
         try
         {
-            foreach (var (output, typePicker, gpioPicker, badge) in _rows)
+            foreach (var (output, typePicker, _, badge) in _rows)
             {
-                // Pin
+                // GPIO combo selection is handled by RefreshAllConflicts
+                // below (rebuilds the combo with only usable pins and
+                // restores the current selection by Tag).
                 byte currentPin = Vm.GetOutputPinValue(output.Id);
-                var idx = System.Array.IndexOf(HardwarePins.ValidPins, currentPin);
-                if (idx >= 0) gpioPicker.SelectedIndex = idx;
                 UpdateBadgeVisibility(badge, currentPin, output.DefaultPin);
 
                 // Type (S/PDIF / I²S, or PDM-locked)
@@ -303,16 +308,16 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
         Grid.SetColumn(typePicker, 0);
         controls.Children.Add(typePicker);
 
+        // Empty combo; items are filled by RebuildGpioCombo via
+        // RefreshAllConflicts. We only show pins that are usable for
+        // this output (not owned by any other feature) — pins claimed
+        // elsewhere are simply omitted rather than greyed out.
         var gpioPicker = new ComboBox
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Center,
             Tag = output,
         };
-        foreach (var pin in HardwarePins.ValidPins)
-            gpioPicker.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
-        var defaultIdx = System.Array.IndexOf(HardwarePins.ValidPins, output.DefaultPin);
-        if (defaultIdx >= 0) gpioPicker.SelectedIndex = defaultIdx;
         gpioPicker.SelectionChanged += OnGpioChanged;
         Grid.SetColumn(gpioPicker, 1);
         controls.Children.Add(gpioPicker);
@@ -420,51 +425,64 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
         if (Vm == null) return;
         var row = _rows.FirstOrDefault(r => r.output.Id == output.Id);
         if (row == default) return;
-
-        _suppress = true;
-        byte devicePin = Vm.GetOutputPinValue(output.Id);
-        var idx = System.Array.IndexOf(HardwarePins.ValidPins, devicePin);
-        if (idx >= 0) row.gpioPicker.SelectedIndex = idx;
-        _suppress = false;
+        SelectPinInCombo(row.gpioPicker, Vm.GetOutputPinValue(output.Id));
     }
 
     private static void UpdateBadgeVisibility(Border badge, byte currentPin, byte defaultPin) =>
         badge.Visibility = currentPin == defaultPin ? Visibility.Visible : Visibility.Collapsed;
 
-    /// <summary>Refresh every GPIO picker on this page so claimed pins
-    /// (here or elsewhere) appear as in-use. Called after a successful
-    /// change here, and in response to <see cref="HardwarePins.PinAssignmentsChanged"/>
-    /// for changes elsewhere.</summary>
+    /// <summary>Repopulate every GPIO picker on this page from scratch
+    /// so each one shows only pins it can actually use — own current
+    /// pin, plus any audio-capable GPIO not claimed by another feature.
+    /// Pins owned elsewhere are omitted rather than greyed out.</summary>
     private void RefreshAllConflicts()
     {
         if (Vm == null) return;
         foreach (var (output, _, picker, _) in _rows)
-            UpdateComboConflicts(output, picker);
+            RebuildGpioCombo(output, picker);
     }
 
-    private void UpdateComboConflicts(HardwarePins.PinOutput targetOutput, ComboBox picker)
+    /// <summary>
+    /// Replace one row's GPIO combo items with the set of pins this
+    /// output can pick. Own current pin is always included (even if
+    /// somehow flagged as conflict elsewhere) so the user can see and
+    /// re-confirm their current selection. Selection is restored by
+    /// matching the Tag byte rather than by index, since the index
+    /// space changes between rebuilds.
+    /// </summary>
+    private void RebuildGpioCombo(HardwarePins.PinOutput targetOutput, ComboBox picker)
     {
         if (Vm == null) return;
-
         var owners = HardwarePins.BuildOwnerMap(Vm, excludeOutputId: targetOutput.Id);
+        byte currentPin = Vm.GetOutputPinValue(targetOutput.Id);
 
         _suppress = true;
-        for (int i = 0; i < HardwarePins.ValidPins.Length; i++)
+        try
         {
-            if (picker.Items[i] is not ComboBoxItem item) continue;
-            byte pin = HardwarePins.ValidPins[i];
-            if (owners.TryGetValue(pin, out var owner))
+            picker.Items.Clear();
+            foreach (var pin in HardwarePins.ValidPins)
             {
-                item.Content = $"GPIO {pin} ({owner})";
-                item.IsEnabled = false;
+                if (pin == currentPin || !owners.ContainsKey(pin))
+                    picker.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
             }
-            else
+            SelectPinInCombo(picker, currentPin);
+        }
+        finally { _suppress = false; }
+    }
+
+    /// <summary>Select the item whose Tag is the given pin byte. No-op
+    /// if no item matches — leaves the previous selection in place
+    /// rather than blanking the combo.</summary>
+    private static void SelectPinInCombo(ComboBox combo, byte pin)
+    {
+        for (int i = 0; i < combo.Items.Count; i++)
+        {
+            if (combo.Items[i] is ComboBoxItem item && item.Tag is byte p && p == pin)
             {
-                item.Content = $"GPIO {pin}";
-                item.IsEnabled = true;
+                combo.SelectedIndex = i;
+                return;
             }
         }
-        _suppress = false;
     }
 
     private async void OnResetClick(object sender, RoutedEventArgs e)
