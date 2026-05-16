@@ -358,9 +358,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public event EventHandler? BypassChanged;
     public event EventHandler? VisibilityChanged;
 
-    // I2S configuration events and accessors
-    public event EventHandler? I2SConfigChanged;
+    /// <summary>
+    /// Fires after a bulk-params fetch (connect, preset load, factory
+    /// reset, or BULK_INVALIDATED) finishes refreshing all VM state.
+    /// Listeners that mirror multiple fields silently updated by the
+    /// bulk path — pin assignments, slot types, leveller, etc. — read
+    /// from the VM here to repaint, without needing one PropertyChanged
+    /// per field. Always raised on the UI thread.
+    /// </summary>
+    public event EventHandler? BulkRefreshed;
 
+    // I2S configuration accessors. (PropertyChanged on the individual
+    // properties below — I2SBckPin, MckEnabled, MckPin, MckMultiplier,
+    // AnySlotIsI2S — is the one and only notification surface; an old
+    // I2SConfigChanged event existed but had zero subscribers and was
+    // removed.)
     public OutputSlotType GetOutputSlotType(int slot) =>
         slot >= 0 && slot < _outputSlotTypes.Length ? _outputSlotTypes[slot] : OutputSlotType.Spdif;
     public int NumOutputSlots => Platform == "RP2350" ? 4 : 2;
@@ -516,7 +528,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
         };
 
         // BULK_INVALIDATED is the firmware's "I changed many things at once,
-        // re-read the full state" signal (preset load, factory reset, etc.).
+        // re-read the full state" signal. It comes from several origins:
+        //   • Preset / Factory  → a NEW baseline was loaded; reset the saved
+        //                          snapshot and clear dirty.
+        //   • HostSet / BulkSet → WE just wrote a parameter; the firmware
+        //                          may have side-effected related fields, but
+        //                          the saved-snapshot baseline must NOT be
+        //                          touched — doing so would erase the dirty
+        //                          state we just established for the user's
+        //                          change. Re-CheckDirty after the refetch
+        //                          so any side effects propagate.
+        //   • Gpio / Internal   → hardware knob or firmware clamp; treat
+        //                          like a host edit (legitimate divergence
+        //                          from the saved preset, baseline stays).
+        //   • Unknown           → conservative default: keep baseline,
+        //                          re-check dirty.
         _device.BulkInvalidated += (_, src) =>
         {
             if (!IsDeviceConnected) return;
@@ -525,8 +551,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 FetchAll();
                 _dispatcher.TryEnqueue(() =>
                 {
-                    UpdateSavedSnapshot();
-                    PresetsDirty = false;
+                    if (src == ParamSource.Preset || src == ParamSource.Factory)
+                    {
+                        UpdateSavedSnapshot();
+                        PresetsDirty = false;
+                    }
+                    else
+                    {
+                        // Field values may have changed during FetchAll; re-
+                        // compute dirty against the existing baseline.
+                        CheckDirty();
+                    }
                 });
             });
         };
@@ -883,6 +918,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (status == PinConfigResult.Success)
         {
             _spdifRxPin = pin;
+            _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(SpdifRxPin)));
             CheckDirty();
         }
         return status;
@@ -895,7 +931,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             _outputSlotTypes[slot] = type;
             UpdateDynamicChannelNames();
-            _dispatcher.TryEnqueue(() => I2SConfigChanged?.Invoke(this, EventArgs.Empty));
+            // AnySlotIsI2S is a computed property that depends on the
+            // slot-type array; settings UI subscribers (Hardware pages)
+            // watch it to decide whether BCK/MCK combos are editable.
+            _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(AnySlotIsI2S)));
             CheckDirty();
         }
         return status;
@@ -907,6 +946,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (status == PinConfigResult.Success)
         {
             _i2sBckPin = pin;
+            _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(I2SBckPin)));
             CheckDirty();
         }
         return status;
@@ -918,7 +958,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (status == PinConfigResult.Success)
         {
             _mckEnabled = enabled;
-            _dispatcher.TryEnqueue(() => I2SConfigChanged?.Invoke(this, EventArgs.Empty));
+            _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(MckEnabled)));
             CheckDirty();
         }
         return status;
@@ -930,6 +970,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (status == PinConfigResult.Success)
         {
             _mckPin = pin;
+            _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(MckPin)));
             CheckDirty();
         }
         return status;
@@ -941,6 +982,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (status == PinConfigResult.Success)
         {
             _mckMultiplier = multiplier;
+            _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(MckMultiplier)));
             CheckDirty();
         }
         return status;
@@ -1161,10 +1203,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
             }
 
             if (bp.HasI2SConfig)
-            {
                 UpdateDynamicChannelNames();
-                I2SConfigChanged?.Invoke(this, EventArgs.Empty);
-            }
+
+            // Bulk parse updated I²S / SPDIF / sample-rate fields silently;
+            // notify the Settings UI in one call. Re-notifying an unchanged
+            // property is idempotent.
+            NotifyHardwareConfigPropertiesChanged();
+            BulkRefreshed?.Invoke(this, EventArgs.Empty);
 
             if (bp.HasLevellerConfig)
             {
@@ -1241,7 +1286,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             FiltersChanged?.Invoke(this, EventArgs.Empty);
             UpdateDynamicChannelNames();
-            I2SConfigChanged?.Invoke(this, EventArgs.Empty);
+            NotifyHardwareConfigPropertiesChanged();
 
             if (lvlEnabled.HasValue) LevellerEnabled = lvlEnabled.Value;
             if (lvlAmount.HasValue) LevellerAmount = lvlAmount.Value;
@@ -1249,6 +1294,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
             if (lvlMaxGain.HasValue) LevellerMaxGainDb = lvlMaxGain.Value;
             if (lvlLookahead.HasValue) LevellerLookahead = lvlLookahead.Value;
             if (lvlGate.HasValue) LevellerGateDb = lvlGate.Value;
+
+            // Signal listeners that bulk state is freshly synced.
+            BulkRefreshed?.Invoke(this, EventArgs.Empty);
         });
     }
 
@@ -2419,6 +2467,24 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public void UpdateSavedSnapshot()
     {
         _savedSnapshot = PresetSnapshot.Capture(this);
+    }
+
+    /// <summary>
+    /// Fan out PropertyChanged for every I²S/SPDIF-related property the
+    /// Settings UI subscribes to. Used after silent bulk field updates
+    /// (bulk-params parse, BulkRefresh) so pages refresh their combos.
+    /// Idempotent — re-notifying a property whose value didn't change
+    /// is cheap.
+    /// </summary>
+    private void NotifyHardwareConfigPropertiesChanged()
+    {
+        OnPropertyChanged(nameof(I2SBckPin));
+        OnPropertyChanged(nameof(MckPin));
+        OnPropertyChanged(nameof(MckEnabled));
+        OnPropertyChanged(nameof(MckMultiplier));
+        OnPropertyChanged(nameof(AnySlotIsI2S));
+        OnPropertyChanged(nameof(SpdifRxPin));
+        OnPropertyChanged(nameof(SampleRateHz));
     }
 
     /// <summary>

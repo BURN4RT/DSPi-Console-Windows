@@ -155,13 +155,67 @@ public sealed partial class BulkMonitorWindow : Window
 /// </summary>
 internal static class NotifyPacketDecoder
 {
-    // Mirrors the offsets used by DspDevice.ProcessNotifyPacket and
-    // BulkParamsParser — single source of truth on the firmware side.
+    // ── WireBulkParams section offsets ─────────────────────────────────
+    // Authoritative struct layout: firmware/DSPi/bulk_params.h.
+    // BulkParamsParser uses the same numbers; keep these in sync.
+    private const int GlobalWireOffset       = 16;     // WireGlobalParams (16B)
+    private const int CrossfeedWireOffset    = 32;     // WireCrossfeedParams (16B)
+    private const int DelaysWireOffset       = 64;     // float[11] delay_ms
+    private const int CrosspointsWireOffset  = 108;    // WireCrosspoint[2][9] (8B each)
+    private const int OutputsWireOffset      = 252;    // WireOutputChannel[9] (12B each)
+    private const int PinConfigWireOffset    = 360;    // WirePinConfig (8B)
+    // 368 = OffsetEq (still inline in DescribeOffset)
     private const int ChannelNamesWireOffset = 2480;
-    private const int WireChannelNameLen = 32;
+    private const int WireChannelNameLen     = 32;
+    private const int I2sConfigWireOffset    = 2832;   // WireI2SConfig (16B)
+    private const int LevellerWireOffset     = 2848;   // WireLevellerConfig (16B)
+    private const int PreampWireOffset       = 2864;   // WirePreampConfig (16B)
     private const int MasterVolumeWireOffset = 2880;
-    private const int InputSourceWireOffset = 2896;
-    private const int UserVolumeWireOffset = 2928;
+    private const int InputSourceWireOffset  = 2896;   // WireInputConfig (16B)
+    private const int LgSoundSyncWireOffset  = 2912;   // WireLgSoundSync (16B)
+    private const int UserVolumeWireOffset   = 2928;
+    private const int DacHwMuteWireOffset    = 2944;   // WireDacHwMute (16B, V10+)
+
+    // ── Field offsets within Global block (offset 16) ──
+    private const int PreampGainDbWireOffset       = GlobalWireOffset + 0;   // float
+    private const int BypassWireOffset             = GlobalWireOffset + 4;   // u8
+    private const int LoudnessEnabledWireOffset    = GlobalWireOffset + 5;   // u8
+    private const int LoudnessRefSplWireOffset     = GlobalWireOffset + 8;   // float
+    private const int LoudnessIntensityWireOffset  = GlobalWireOffset + 12;  // float
+
+    // ── Field offsets within Crossfeed block (offset 32) ──
+    private const int CrossfeedEnabledWireOffset   = CrossfeedWireOffset + 0;   // u8
+    private const int CrossfeedPresetWireOffset    = CrossfeedWireOffset + 1;   // u8
+    private const int CrossfeedItdWireOffset       = CrossfeedWireOffset + 2;   // u8
+    private const int CrossfeedFcWireOffset        = CrossfeedWireOffset + 4;   // float
+    private const int CrossfeedFeedDbWireOffset    = CrossfeedWireOffset + 8;   // float
+
+    // ── Field offsets within I²S block (offset 2832) ──
+    private const int OutputSlotTypesWireOffset = I2sConfigWireOffset;          // 2832 (4×u8)
+    private const int BckPinWireOffset          = I2sConfigWireOffset + 4;      // 2836
+    private const int MckPinWireOffset          = I2sConfigWireOffset + 5;      // 2837
+    private const int MckEnabledWireOffset      = I2sConfigWireOffset + 6;      // 2838
+    private const int MckMultiplierWireOffset   = I2sConfigWireOffset + 7;      // 2839
+
+    // ── Field offsets within Leveller block (offset 2848) ──
+    private const int LevellerEnabledWireOffset    = LevellerWireOffset + 0;   // u8
+    private const int LevellerSpeedWireOffset      = LevellerWireOffset + 1;   // u8 (0=Slow,1=Medium,2=Fast)
+    private const int LevellerLookaheadWireOffset  = LevellerWireOffset + 2;   // u8
+    private const int LevellerAmountWireOffset     = LevellerWireOffset + 4;   // float
+    private const int LevellerMaxGainWireOffset    = LevellerWireOffset + 8;   // float
+    private const int LevellerGateWireOffset       = LevellerWireOffset + 12;  // float
+
+    // ── Field offsets within Preamp block (offset 2864) ──
+    private const int PreampLDbWireOffset = PreampWireOffset + 0;   // float (input L)
+    private const int PreampRDbWireOffset = PreampWireOffset + 4;   // float (input R)
+
+    // ── Field offsets within Input block (offset 2896) ──
+    private const int SpdifRxPinWireOffset = InputSourceWireOffset + 1;   // 2897
+
+    // ── Wire-struct sizes (helps the dispatcher recognise whole-struct writes) ──
+    private const int WireCrosspointSize    = 8;     // WireCrosspoint
+    private const int WireOutputChannelSize = 12;    // WireOutputChannel
+    private const int WireDacHwMuteSize     = 16;    // WireDacHwMute
 
     public static string Format(NotifyPacket pkt, bool includeHex)
     {
@@ -271,10 +325,96 @@ internal static class NotifyPacketDecoder
         {
             return $"channel_names[{(offset - ChannelNamesWireOffset) / WireChannelNameLen}]";
         }
-        if (size == 1 && offset == InputSourceWireOffset) return "input_source";
+        // Global / master controls
+        if (size == 4 && offset == PreampGainDbWireOffset) return "global.preamp_gain_db";
+        if (size == 1 && offset == BypassWireOffset) return "global.bypass";
+        if (size == 1 && offset == LoudnessEnabledWireOffset) return "global.loudness_enabled";
+        if (size == 4 && offset == LoudnessRefSplWireOffset) return "global.loudness_ref_spl";
+        if (size == 4 && offset == LoudnessIntensityWireOffset) return "global.loudness_intensity_pct";
+
+        // Crossfeed
+        if (size == 1 && offset == CrossfeedEnabledWireOffset) return "crossfeed.enabled";
+        if (size == 1 && offset == CrossfeedPresetWireOffset) return "crossfeed.preset";
+        if (size == 1 && offset == CrossfeedItdWireOffset) return "crossfeed.itd_enabled";
+        if (size == 4 && offset == CrossfeedFcWireOffset) return "crossfeed.custom_fc";
+        if (size == 4 && offset == CrossfeedFeedDbWireOffset) return "crossfeed.custom_feed_db";
+
+        // Per-channel delays — float[11] at offset 64
+        if (size == 4
+            && offset >= DelaysWireOffset
+            && offset < DelaysWireOffset + 11 * 4
+            && (offset - DelaysWireOffset) % 4 == 0)
+        {
+            return $"delays[{(offset - DelaysWireOffset) / 4}]";
+        }
+
+        // Matrix crosspoints — WireCrosspoint[2][9] at offset 108
+        if (size == WireCrosspointSize
+            && offset >= CrosspointsWireOffset
+            && offset < CrosspointsWireOffset + 2 * 9 * WireCrosspointSize
+            && (offset - CrosspointsWireOffset) % WireCrosspointSize == 0)
+        {
+            int idx = (offset - CrosspointsWireOffset) / WireCrosspointSize;
+            return $"crosspoints[in={idx / 9},out={idx % 9}]";
+        }
+
+        // Per-output channel — WireOutputChannel[9] at offset 252
+        // Firmware fires individual field writes, not the whole struct.
+        if (offset >= OutputsWireOffset
+            && offset < OutputsWireOffset + 9 * WireOutputChannelSize)
+        {
+            int outIdx = (offset - OutputsWireOffset) / WireOutputChannelSize;
+            int fieldOff = (offset - OutputsWireOffset) % WireOutputChannelSize;
+            if (size == 1 && fieldOff == 0) return $"outputs[{outIdx}].enabled";
+            if (size == 1 && fieldOff == 1) return $"outputs[{outIdx}].mute";
+            if (size == 4 && fieldOff == 4) return $"outputs[{outIdx}].gain_db";
+            if (size == 4 && fieldOff == 8) return $"outputs[{outIdx}].delay_ms";
+        }
+
+        // Pin config — num_pin_outputs(1) + pins[5] at offset 360
+        if (size == 1 && offset == PinConfigWireOffset) return "pins.num_pin_outputs";
+        if (size == 1
+            && offset >= PinConfigWireOffset + 1
+            && offset < PinConfigWireOffset + 6)
+        {
+            return $"pins.pins[{offset - PinConfigWireOffset - 1}]";
+        }
+
+        // I²S configuration block
+        if (size == 1
+            && offset >= OutputSlotTypesWireOffset
+            && offset < OutputSlotTypesWireOffset + 4)
+        {
+            return $"i2s_config.output_types[{offset - OutputSlotTypesWireOffset}]";
+        }
+        if (size == 1 && offset == BckPinWireOffset) return "i2s_config.bck_pin";
+        if (size == 1 && offset == MckPinWireOffset) return "i2s_config.mck_pin";
+        if (size == 1 && offset == MckEnabledWireOffset) return "i2s_config.mck_enabled";
+        if (size == 1 && offset == MckMultiplierWireOffset) return "i2s_config.mck_multiplier";
+
+        // Leveller
+        if (size == 1 && offset == LevellerEnabledWireOffset) return "leveller.enabled";
+        if (size == 1 && offset == LevellerSpeedWireOffset) return "leveller.speed";
+        if (size == 1 && offset == LevellerLookaheadWireOffset) return "leveller.lookahead";
+        if (size == 4 && offset == LevellerAmountWireOffset) return "leveller.amount";
+        if (size == 4 && offset == LevellerMaxGainWireOffset) return "leveller.max_gain_db";
+        if (size == 4 && offset == LevellerGateWireOffset) return "leveller.gate_threshold_db";
+
+        // Per-channel preamp (V6+)
+        if (size == 4 && offset == PreampLDbWireOffset) return "preamp.preamp_db[L]";
+        if (size == 4 && offset == PreampRDbWireOffset) return "preamp.preamp_db[R]";
+
+        // Master / input / user-volume (already-known)
         if (size == 4 && offset == MasterVolumeWireOffset) return "master_volume_db";
+        if (size == 1 && offset == InputSourceWireOffset) return "input_source";
+        if (size == 1 && offset == SpdifRxPinWireOffset) return "spdif_rx_pin";
         if (size == 4 && offset == UserVolumeWireOffset) return "user_volume_db";
         if (size == 1 && offset == UserVolumeWireOffset + 4) return "user_mute";
+
+        // DAC HW Mute (V10+) — firmware fires the whole 16-byte struct
+        if (size == WireDacHwMuteSize && offset == DacHwMuteWireOffset)
+            return "dac_hw_mute (full struct)";
+
         return null;
     }
 
@@ -291,6 +431,202 @@ internal static class NotifyPacketDecoder
         {
             float db = BitConverter.ToSingle(data, payloadOff);
             sb.Append(" → ").Append(db.ToString("F1", CultureInfo.InvariantCulture)).Append(" dB");
+            return;
+        }
+        // I²S configuration block
+        if (size == 1
+            && wireOffset >= OutputSlotTypesWireOffset
+            && wireOffset < OutputSlotTypesWireOffset + 4)
+        {
+            sb.Append(" → ").Append(data[payloadOff] == 1 ? "I²S" : "S/PDIF");
+            return;
+        }
+        if (size == 1 && (wireOffset == BckPinWireOffset
+                       || wireOffset == MckPinWireOffset
+                       || wireOffset == SpdifRxPinWireOffset))
+        {
+            sb.Append(" → GPIO ").Append(data[payloadOff]);
+            return;
+        }
+        if (size == 1 && wireOffset == MckEnabledWireOffset)
+        {
+            sb.Append(" → ").Append(data[payloadOff] != 0 ? "enabled" : "disabled");
+            return;
+        }
+        if (size == 1 && wireOffset == MckMultiplierWireOffset)
+        {
+            // Firmware encodes 0 → 128×, 1 → 256×. Anything else is
+            // unexpected; show the raw byte so unknown encodings stand out.
+            byte enc = data[payloadOff];
+            string label = enc switch
+            {
+                0 => "128×",
+                1 => "256×",
+                _ => $"unknown (raw=0x{enc:X2})"
+            };
+            sb.Append(" → ").Append(label);
+            return;
+        }
+
+        // ── Global / loudness ─────────────────────────────────────────
+        if (size == 4 && wireOffset == PreampGainDbWireOffset)
+        {
+            float db = BitConverter.ToSingle(data, payloadOff);
+            sb.Append(" → ").Append(db.ToString("F1", CultureInfo.InvariantCulture)).Append(" dB");
+            return;
+        }
+        if (size == 1 && (wireOffset == BypassWireOffset || wireOffset == LoudnessEnabledWireOffset))
+        {
+            sb.Append(" → ").Append(data[payloadOff] != 0 ? "on" : "off");
+            return;
+        }
+        if (size == 4 && wireOffset == LoudnessRefSplWireOffset)
+        {
+            sb.Append(" → ").Append(BitConverter.ToSingle(data, payloadOff).ToString("F1", CultureInfo.InvariantCulture));
+            return;
+        }
+        if (size == 4 && wireOffset == LoudnessIntensityWireOffset)
+        {
+            sb.Append(" → ").Append(BitConverter.ToSingle(data, payloadOff).ToString("F1", CultureInfo.InvariantCulture)).Append('%');
+            return;
+        }
+
+        // ── Crossfeed ─────────────────────────────────────────────────
+        if (size == 1 && (wireOffset == CrossfeedEnabledWireOffset
+                       || wireOffset == CrossfeedItdWireOffset))
+        {
+            sb.Append(" → ").Append(data[payloadOff] != 0 ? "on" : "off");
+            return;
+        }
+        if (size == 1 && wireOffset == CrossfeedPresetWireOffset)
+        {
+            sb.Append(" → preset ").Append(data[payloadOff]);
+            return;
+        }
+        if (size == 4 && wireOffset == CrossfeedFcWireOffset)
+        {
+            sb.Append(" → ").Append(BitConverter.ToSingle(data, payloadOff).ToString("F1", CultureInfo.InvariantCulture)).Append(" Hz");
+            return;
+        }
+        if (size == 4 && wireOffset == CrossfeedFeedDbWireOffset)
+        {
+            sb.Append(" → ").Append(BitConverter.ToSingle(data, payloadOff).ToString("F1", CultureInfo.InvariantCulture)).Append(" dB");
+            return;
+        }
+
+        // ── Per-channel delay (float ms in delays[]) ──────────────────
+        if (size == 4
+            && wireOffset >= DelaysWireOffset
+            && wireOffset < DelaysWireOffset + 11 * 4
+            && (wireOffset - DelaysWireOffset) % 4 == 0)
+        {
+            sb.Append(" → ").Append(BitConverter.ToSingle(data, payloadOff).ToString("F2", CultureInfo.InvariantCulture)).Append(" ms");
+            return;
+        }
+
+        // ── Matrix crosspoint (8-byte struct) ─────────────────────────
+        if (size == WireCrosspointSize
+            && wireOffset >= CrosspointsWireOffset
+            && wireOffset < CrosspointsWireOffset + 2 * 9 * WireCrosspointSize)
+        {
+            bool xenabled = data[payloadOff + 0] != 0;
+            bool xinvert  = data[payloadOff + 1] != 0;
+            float xgain   = BitConverter.ToSingle(data, payloadOff + 4);
+            sb.Append(" → ").Append(xenabled ? "on" : "off")
+              .Append(xinvert ? " ϕ" : "")
+              .Append(" g=").Append(xgain.ToString("F1", CultureInfo.InvariantCulture)).Append(" dB");
+            return;
+        }
+
+        // ── Per-output channel fields ─────────────────────────────────
+        if (wireOffset >= OutputsWireOffset
+            && wireOffset < OutputsWireOffset + 9 * WireOutputChannelSize)
+        {
+            int fieldOff = (wireOffset - OutputsWireOffset) % WireOutputChannelSize;
+            if (size == 1 && (fieldOff == 0 || fieldOff == 1))
+            {
+                sb.Append(" → ").Append(data[payloadOff] != 0 ? "on" : "off");
+                return;
+            }
+            if (size == 4 && fieldOff == 4)
+            {
+                sb.Append(" → ").Append(BitConverter.ToSingle(data, payloadOff).ToString("F1", CultureInfo.InvariantCulture)).Append(" dB");
+                return;
+            }
+            if (size == 4 && fieldOff == 8)
+            {
+                sb.Append(" → ").Append(BitConverter.ToSingle(data, payloadOff).ToString("F2", CultureInfo.InvariantCulture)).Append(" ms");
+                return;
+            }
+        }
+
+        // ── PinConfig — num + pins ────────────────────────────────────
+        if (size == 1 && wireOffset == PinConfigWireOffset)
+        {
+            sb.Append(" → ").Append(data[payloadOff]);
+            return;
+        }
+        if (size == 1
+            && wireOffset >= PinConfigWireOffset + 1
+            && wireOffset < PinConfigWireOffset + 6)
+        {
+            sb.Append(" → GPIO ").Append(data[payloadOff]);
+            return;
+        }
+
+        // ── Leveller ──────────────────────────────────────────────────
+        if (size == 1 && (wireOffset == LevellerEnabledWireOffset
+                       || wireOffset == LevellerLookaheadWireOffset))
+        {
+            sb.Append(" → ").Append(data[payloadOff] != 0 ? "on" : "off");
+            return;
+        }
+        if (size == 1 && wireOffset == LevellerSpeedWireOffset)
+        {
+            string label = data[payloadOff] switch
+            {
+                0 => "Slow",
+                1 => "Medium",
+                2 => "Fast",
+                _ => $"unknown (raw={data[payloadOff]})"
+            };
+            sb.Append(" → ").Append(label);
+            return;
+        }
+        if (size == 4 && wireOffset == LevellerAmountWireOffset)
+        {
+            sb.Append(" → ").Append(BitConverter.ToSingle(data, payloadOff).ToString("F1", CultureInfo.InvariantCulture)).Append('%');
+            return;
+        }
+        if (size == 4 && (wireOffset == LevellerMaxGainWireOffset
+                       || wireOffset == LevellerGateWireOffset))
+        {
+            sb.Append(" → ").Append(BitConverter.ToSingle(data, payloadOff).ToString("F1", CultureInfo.InvariantCulture)).Append(" dB");
+            return;
+        }
+
+        // ── Per-channel preamp ────────────────────────────────────────
+        if (size == 4 && (wireOffset == PreampLDbWireOffset || wireOffset == PreampRDbWireOffset))
+        {
+            sb.Append(" → ").Append(BitConverter.ToSingle(data, payloadOff).ToString("F1", CultureInfo.InvariantCulture)).Append(" dB");
+            return;
+        }
+
+        // ── DAC HW Mute (whole 16-byte struct write) ──────────────────
+        if (size == WireDacHwMuteSize && wireOffset == DacHwMuteWireOffset)
+        {
+            // WireDacHwMute: enabled(1) active_low(1) pin(1) reserved(1) hold_ms(u16) release_ms(u16) reserved[8]
+            byte enabled    = data[payloadOff + 0];
+            byte activeLow  = data[payloadOff + 1];
+            byte pin        = data[payloadOff + 2];
+            ushort holdMs   = BitConverter.ToUInt16(data, payloadOff + 4);
+            ushort releaseMs= BitConverter.ToUInt16(data, payloadOff + 6);
+            sb.Append(" → ")
+              .Append(enabled != 0 ? "on" : "off")
+              .Append(", pin=").Append(pin == 0xFF ? "none" : $"GPIO {pin}")
+              .Append(", ").Append(activeLow != 0 ? "active-low" : "active-high")
+              .Append(", hold=").Append(holdMs).Append(" ms")
+              .Append(", release=").Append(releaseMs).Append(" ms");
             return;
         }
         if (size == 16)

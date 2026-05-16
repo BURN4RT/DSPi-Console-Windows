@@ -264,11 +264,16 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
 
     private static string DescribeConfig(DacHwMuteConfig c)
     {
-        if (!c.Enabled) return "Off";
+        // Always include every field. The tracker dedupes staged changes
+        // by OldDisplay == NewDisplay; collapsing the disabled state to
+        // a bare "Off" string caused edits made while disabled (pin,
+        // polarity, hold, release) to compare equal to the saved state
+        // and silently drop from the pending list.
         var pinLabel = c.Pin == DacHwMuteConfig.PinNone ? "no pin" : $"GPIO {c.Pin}";
         var polarity = c.ActiveLow ? "active-low" : "active-high";
+        var enabled = c.Enabled ? "on" : "off";
         return string.Create(CultureInfo.InvariantCulture,
-            $"On, {pinLabel}, {polarity}, {c.HoldMs}/{c.ReleaseMs} ms");
+            $"{enabled}, {pinLabel}, {polarity}, {c.HoldMs}/{c.ReleaseMs} ms");
     }
 
     // ── Test pulse (live action, not staged) ──────────────────────────

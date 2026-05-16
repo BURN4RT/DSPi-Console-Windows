@@ -1,4 +1,5 @@
-﻿using System.Threading.Tasks;
+﻿using System.ComponentModel;
+using System.Threading.Tasks;
 using DSPiConsole.Usb;
 using DSPiConsole.ViewModels;
 using Microsoft.UI;
@@ -24,13 +25,21 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
         foreach (var pin in HardwarePins.ValidPins)
             SpdifRxPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
 
-        Unloaded += (_, _) => HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
+        Unloaded += (_, _) =>
+        {
+            HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
+            if (Vm != null) Vm.PropertyChanged -= OnVmPropertyChanged;
+        };
     }
 
     public override void Attach(MainViewModel vm, IPendingChangeTracker tracker)
     {
         HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
         HardwarePins.PinAssignmentsChanged += OnExternalPinChange;
+
+        if (Vm != null) Vm.PropertyChanged -= OnVmPropertyChanged;
+        vm.PropertyChanged += OnVmPropertyChanged;
+
         base.Attach(vm, tracker);
 
         // Fetch from device on a background thread.
@@ -41,6 +50,15 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
 
     private void OnExternalPinChange() =>
         DispatcherQueue.TryEnqueue(RefreshConflicts);
+
+    private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        // SpdifRxPin can change externally on preset load / reconnect.
+        // Bulk-params parse raises this in MainViewModel; we refresh
+        // the combo so the UI stays in sync with the device.
+        if (e.PropertyName == nameof(MainViewModel.SpdifRxPin))
+            DispatcherQueue.TryEnqueue(Refresh);
+    }
 
     protected override void Refresh()
     {

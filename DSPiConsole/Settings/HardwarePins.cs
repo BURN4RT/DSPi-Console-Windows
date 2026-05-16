@@ -47,6 +47,23 @@ internal static class HardwarePins
         26, 27, 28
     ];
 
+    /// <summary>
+    /// GPIO pins that can drive MCK. MCK uses the RP2040/RP2350's
+    /// hardware <c>clk_gpout</c> output, which is only wired to a
+    /// small subset of GPIOs. The firmware rejects any other pin
+    /// with <c>PIN_CONFIG_INVALID_PIN</c> (see
+    /// <c>REQ_SET_MCK_PIN</c> in vendor_commands.c).
+    /// <list type="bullet">
+    /// <item><b>RP2040:</b> GPIO 21 only (23–25 exist on chip but are
+    /// board-reserved and not in <see cref="ValidPins"/>).</item>
+    /// <item><b>RP2350:</b> GPIO 13, 15, and 21.</item>
+    /// </list>
+    /// </summary>
+    public static byte[] McKCapablePins(string platform) =>
+        platform == "RP2350"
+            ? new byte[] { 13, 15, 21 }
+            : new byte[] { 21 };
+
     /// <summary>Raised when any Hardware page commits a pin change.
     /// Subscribers (other Hardware pages) call <see cref="BuildOwnerMap"/>
     /// and refresh their own pin combos.</summary>

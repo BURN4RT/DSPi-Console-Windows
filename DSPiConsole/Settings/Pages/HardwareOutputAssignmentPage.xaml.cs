@@ -41,9 +41,13 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
     public HardwareOutputAssignmentPage()
     {
         InitializeComponent();
-        // Detach on Unloaded so the static event doesn't keep the page
+        // Detach on Unloaded so static / VM events don't keep the page
         // alive after the Settings window closes.
-        Unloaded += (_, _) => HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
+        Unloaded += (_, _) =>
+        {
+            HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
+            if (Vm != null) Vm.BulkRefreshed -= OnBulkRefreshed;
+        };
     }
 
     public override void Attach(MainViewModel vm, IPendingChangeTracker tracker)
@@ -54,6 +58,14 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
         HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
         HardwarePins.PinAssignmentsChanged += OnExternalPinChange;
 
+        // Subscribe to BulkRefreshed so a preset load / factory reset /
+        // reconnect — all of which silently update _outputPins and
+        // _outputSlotTypes via FetchAll — repaints our combos to match.
+        // Without this, the page shows stale pin/type values after a
+        // preset load.
+        if (Vm != null) Vm.BulkRefreshed -= OnBulkRefreshed;
+        vm.BulkRefreshed += OnBulkRefreshed;
+
         base.Attach(vm, tracker);
     }
 
@@ -63,6 +75,16 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
         // contexts (e.g. inside a USB callback if a page does the work
         // off-thread).
         DispatcherQueue.TryEnqueue(RefreshAllConflicts);
+    }
+
+    private void OnBulkRefreshed(object? sender, EventArgs e)
+    {
+        // The bulk path is already on the UI thread (BulkRefreshed fires
+        // from the same dispatcher block), but TryEnqueue is the harmless
+        // default for any cross-thread caller. PopulateAfterFetch just
+        // mirrors the (now-fresh) VM state into the existing row combos
+        // — no row rebuild, no extra device fetches.
+        DispatcherQueue.TryEnqueue(PopulateAfterFetch);
     }
 
     protected override void Refresh()
