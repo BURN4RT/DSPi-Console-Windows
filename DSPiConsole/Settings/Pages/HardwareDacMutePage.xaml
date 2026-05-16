@@ -46,26 +46,35 @@
                       SelectionChanged="OnConfigChanged"/>
         </controls:SettingsCard>
 
-        <controls:SettingsCard x:Name="HoldCard"
-                                Header="Hold (ms)"
+        <!-- Hold / Release are constrained to a small set of values that
+             correspond to typical DAC mute timings (5 ms = PCM5102A,
+             100 ms = WM8741 / AK4493 etc.). Free-form sliders were
+             error-prone and made it too easy to land on a value no
+             actual DAC needs; the dropdown enumerates the useful
+             options explicitly. The XAML Tag is parsed as a string at
+             the handler — same gotcha as the MCK multiplier combo. -->
+        <controls:SettingsCard Header="Hold (ms)"
                                 Description="How long the mute pin is held asserted before clocks stop.">
-            <Slider x:Name="HoldSlider"
-                    Minimum="0" Maximum="500" StepFrequency="1"
-                    SmallChange="1" LargeChange="10"
-                    IsThumbToolTipEnabled="False"
-                    Width="220"
-                    ValueChanged="OnSliderChanged"/>
+            <ComboBox x:Name="HoldCombo" MinWidth="100"
+                      SelectionChanged="OnConfigChanged">
+                <ComboBoxItem Content="5 ms"   Tag="5"/>
+                <ComboBoxItem Content="10 ms"  Tag="10"/>
+                <ComboBoxItem Content="25 ms"  Tag="25"/>
+                <ComboBoxItem Content="50 ms"  Tag="50"/>
+                <ComboBoxItem Content="100 ms" Tag="100"/>
+            </ComboBox>
         </controls:SettingsCard>
 
-        <controls:SettingsCard x:Name="ReleaseCard"
-                                Header="Release (ms)"
+        <controls:SettingsCard Header="Release (ms)"
                                 Description="How long to dwell after un-muting before resuming audio.">
-            <Slider x:Name="ReleaseSlider"
-                    Minimum="0" Maximum="500" StepFrequency="1"
-                    SmallChange="1" LargeChange="10"
-                    IsThumbToolTipEnabled="False"
-                    Width="220"
-                    ValueChanged="OnSliderChanged"/>
+            <ComboBox x:Name="ReleaseCombo" MinWidth="100"
+                      SelectionChanged="OnConfigChanged">
+                <ComboBoxItem Content="5 ms"   Tag="5"/>
+                <ComboBoxItem Content="10 ms"  Tag="10"/>
+                <ComboBoxItem Content="25 ms"  Tag="25"/>
+                <ComboBoxItem Content="50 ms"  Tag="50"/>
+                <ComboBoxItem Content="100 ms" Tag="100"/>
+            </ComboBox>
         </controls:SettingsCard>
 
         <controls:SettingsCard Header="Test pulse"

@@ -37,23 +37,36 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
         InitializeComponent();
         PopulatePinCombo();
 
-        Unloaded += (_, _) =>
-        {
-            HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
-            if (Vm != null) Vm.PropertyChanged -= OnVmPropertyChanged;
-            _sliderDebounce?.Stop();
-        };
+        // Subscriptions in Loaded/Unloaded so they survive sidebar
+        // navigation cycles (see HardwareOutputAssignmentPage for why).
+        Loaded += OnPageLoaded;
+        Unloaded += OnPageUnloaded;
     }
 
     public override void Attach(MainViewModel vm, IPendingChangeTracker tracker)
     {
+        base.Attach(vm, tracker);
+    }
+
+    private void OnPageLoaded(object sender, RoutedEventArgs e)
+    {
         HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
         HardwarePins.PinAssignmentsChanged += OnExternalPinChange;
+        if (Vm != null)
+        {
+            Vm.PropertyChanged -= OnVmPropertyChanged;
+            Vm.PropertyChanged += OnVmPropertyChanged;
+            // Re-sync from VM state in case events were missed while
+            // we were unloaded.
+            Refresh();
+        }
+    }
 
+    private void OnPageUnloaded(object sender, RoutedEventArgs e)
+    {
+        HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
         if (Vm != null) Vm.PropertyChanged -= OnVmPropertyChanged;
-        vm.PropertyChanged += OnVmPropertyChanged;
-
-        base.Attach(vm, tracker);
+        _sliderDebounce?.Stop();
     }
 
     private void OnExternalPinChange() =>
@@ -95,10 +108,8 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
             // Index 0 = Active Low, 1 = Active High.
             PolarityCombo.SelectedIndex = cfg.ActiveLow ? 0 : 1;
             SelectPinInCombo(cfg.Pin);
-            HoldSlider.Value = cfg.HoldMs;
-            ReleaseSlider.Value = cfg.ReleaseMs;
-            UpdateHoldDescription(cfg.HoldMs);
-            UpdateReleaseDescription(cfg.ReleaseMs);
+            SelectMsInCombo(HoldCombo, cfg.HoldMs);
+            SelectMsInCombo(ReleaseCombo, cfg.ReleaseMs);
         }
         finally { _suppress = false; }
 

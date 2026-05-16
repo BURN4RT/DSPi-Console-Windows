@@ -25,27 +25,40 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
         foreach (var pin in HardwarePins.ValidPins)
             SpdifRxPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
 
-        Unloaded += (_, _) =>
-        {
-            HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
-            if (Vm != null) Vm.PropertyChanged -= OnVmPropertyChanged;
-        };
+        // Subscriptions in Loaded/Unloaded so they survive sidebar
+        // navigation cycles (see HardwareOutputAssignmentPage for why).
+        Loaded += OnPageLoaded;
+        Unloaded += OnPageUnloaded;
     }
 
     public override void Attach(MainViewModel vm, IPendingChangeTracker tracker)
     {
-        HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
-        HardwarePins.PinAssignmentsChanged += OnExternalPinChange;
-
-        if (Vm != null) Vm.PropertyChanged -= OnVmPropertyChanged;
-        vm.PropertyChanged += OnVmPropertyChanged;
-
         base.Attach(vm, tracker);
 
         // Fetch from device on a background thread.
         var fetchVm = vm;
         _ = Task.Run(() => fetchVm.FetchSpdifRxPin())
             .ContinueWith(_ => DispatcherQueue.TryEnqueue(Refresh));
+    }
+
+    private void OnPageLoaded(object sender, RoutedEventArgs e)
+    {
+        HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
+        HardwarePins.PinAssignmentsChanged += OnExternalPinChange;
+        if (Vm != null)
+        {
+            Vm.PropertyChanged -= OnVmPropertyChanged;
+            Vm.PropertyChanged += OnVmPropertyChanged;
+            // Re-sync from VM state in case events were missed while
+            // we were unloaded.
+            Refresh();
+        }
+    }
+
+    private void OnPageUnloaded(object sender, RoutedEventArgs e)
+    {
+        HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
+        if (Vm != null) Vm.PropertyChanged -= OnVmPropertyChanged;
     }
 
     private void OnExternalPinChange() =>

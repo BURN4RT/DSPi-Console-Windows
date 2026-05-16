@@ -36,31 +36,19 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         foreach (var pin in HardwarePins.ValidPins)
             BckPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
 
-        // Detach on Unloaded so static + VM events don't keep us alive.
-        Unloaded += (_, _) =>
-        {
-            HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
-            if (Vm != null) Vm.PropertyChanged -= OnVmPropertyChanged;
-        };
+        // Subscriptions go in Loaded/Unloaded so they survive sidebar
+        // navigation cycles — see HardwareOutputAssignmentPage for the
+        // rationale.
+        Loaded += OnPageLoaded;
+        Unloaded += OnPageUnloaded;
     }
 
     public override void Attach(MainViewModel vm, IPendingChangeTracker tracker)
     {
-        // Populate (or repopulate, on reconnect to a different
-        // platform) the MCK pin combo with ONLY GPOUT-capable pins.
-        // Picking a non-GPOUT pin is the firmware's only meaningful
-        // PIN_CONFIG_INVALID_PIN trigger for MCK and produces a
-        // confusing "Failed to set MCK pin (0x01)" error if exposed
-        // in the UI.
-        MckPinCombo.Items.Clear();
-        foreach (var pin in HardwarePins.McKCapablePins(vm.Platform))
-            MckPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
-
-        HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
-        HardwarePins.PinAssignmentsChanged += OnExternalPinChange;
-
-        if (Vm != null) Vm.PropertyChanged -= OnVmPropertyChanged;
-        vm.PropertyChanged += OnVmPropertyChanged;
+        // Populate MCK pin combo for the current platform. Re-runs on
+        // Platform PropertyChanged below to handle board swaps and the
+        // "settings opened before first connect" case.
+        PopulateMckPinCombo(vm.Platform);
 
         base.Attach(vm, tracker);
 
@@ -77,11 +65,65 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         });
     }
 
+    private void OnPageLoaded(object sender, RoutedEventArgs e)
+    {
+        HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
+        HardwarePins.PinAssignmentsChanged += OnExternalPinChange;
+        if (Vm != null)
+        {
+            Vm.PropertyChanged -= OnVmPropertyChanged;
+            Vm.PropertyChanged += OnVmPropertyChanged;
+            // Re-sync from VM state in case events were missed while
+            // we were unloaded (e.g., a preset switch happened while
+            // the user was viewing a different Settings page).
+            Refresh();
+        }
+    }
+
+    private void OnPageUnloaded(object sender, RoutedEventArgs e)
+    {
+        HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
+        if (Vm != null) Vm.PropertyChanged -= OnVmPropertyChanged;
+    }
+
     private void OnExternalPinChange() =>
         DispatcherQueue.TryEnqueue(RefreshConflicts);
 
+    /// <summary>
+    /// Populate the MCK pin combo with the platform's GPOUT-capable
+    /// GPIOs. Picking a non-GPOUT pin is the firmware's only meaningful
+    /// PIN_CONFIG_INVALID_PIN trigger for MCK and produces a confusing
+    /// "Failed to set MCK pin (0x01)" error if exposed in the UI.
+    /// Runs from Attach AND from OnVmPropertyChanged on Platform change.
+    /// </summary>
+    private void PopulateMckPinCombo(string platform)
+    {
+        _suppress = true;
+        try
+        {
+            MckPinCombo.Items.Clear();
+            foreach (var pin in HardwarePins.McKCapablePins(platform))
+                MckPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
+        }
+        finally { _suppress = false; }
+    }
+
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        // Platform changes (first connect after Settings opens, or a
+        // board swap from RP2040 to RP2350 / vice versa) change the
+        // set of MCK-capable pins. Repopulate the combo, then fall
+        // through to Refresh which selects the device's current pin.
+        if (e.PropertyName == nameof(MainViewModel.Platform))
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (Vm != null) PopulateMckPinCombo(Vm.Platform);
+                Refresh();
+            });
+            return;
+        }
+
         // Refresh on any I²S-relevant VM property change:
         //   • SampleRateHz / AnySlotIsI2S — enable-state of the
         //     multiplier and BCK pin combos depend on them.

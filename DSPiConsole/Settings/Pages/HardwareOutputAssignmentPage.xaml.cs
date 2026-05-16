@@ -41,32 +41,59 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
     public HardwareOutputAssignmentPage()
     {
         InitializeComponent();
-        // Detach on Unloaded so static / VM events don't keep the page
-        // alive after the Settings window closes.
-        Unloaded += (_, _) =>
-        {
-            HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
-            if (Vm != null) Vm.BulkRefreshed -= OnBulkRefreshed;
-        };
+        // Subscriptions live on Loaded / Unloaded rather than Attach so
+        // they survive sidebar-navigation cycles. The SettingsShell
+        // caches page instances; switching away from a page detaches
+        // it from the visual tree (Unloaded) and switching back
+        // re-adds it (Loaded). Attach only runs once — at first
+        // navigation — so if we subscribed there, the page would
+        // lose event subscriptions on the first sidebar switch and
+        // never get them back.
+        Loaded += OnPageLoaded;
+        Unloaded += OnPageUnloaded;
     }
 
     public override void Attach(MainViewModel vm, IPendingChangeTracker tracker)
     {
-        // Subscribe to cross-page pin updates. Other Hardware pages
-        // raise the event after a successful flash write; we refresh
-        // our combo conflict labels in response.
+        // Just store the VM / tracker and run the initial Refresh.
+        // Event subscriptions happen in OnPageLoaded which fires
+        // right after the shell mounts us in the visual tree.
+        base.Attach(vm, tracker);
+    }
+
+    private void OnPageLoaded(object sender, RoutedEventArgs e)
+    {
+        // Cross-page pin updates: other Hardware pages raise this after
+        // a successful flash write so we refresh our conflict labels.
         HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
         HardwarePins.PinAssignmentsChanged += OnExternalPinChange;
 
-        // Subscribe to BulkRefreshed so a preset load / factory reset /
-        // reconnect — all of which silently update _outputPins and
-        // _outputSlotTypes via FetchAll — repaints our combos to match.
-        // Without this, the page shows stale pin/type values after a
-        // preset load.
-        if (Vm != null) Vm.BulkRefreshed -= OnBulkRefreshed;
-        vm.BulkRefreshed += OnBulkRefreshed;
+        if (Vm != null)
+        {
+            // BulkRefreshed covers preset load / factory reset /
+            // reconnect — all silently update _outputPins and
+            // _outputSlotTypes via FetchAll.
+            Vm.BulkRefreshed -= OnBulkRefreshed;
+            Vm.BulkRefreshed += OnBulkRefreshed;
+            // PropertyChanged catches Platform changes (board swap).
+            Vm.PropertyChanged -= OnVmPropertyChanged;
+            Vm.PropertyChanged += OnVmPropertyChanged;
 
-        base.Attach(vm, tracker);
+            // Sync from current VM state — covers any events that
+            // fired while we were unloaded (sidebar navigated away,
+            // then back, after an external preset switch).
+            PopulateAfterFetch();
+        }
+    }
+
+    private void OnPageUnloaded(object sender, RoutedEventArgs e)
+    {
+        HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
+        if (Vm != null)
+        {
+            Vm.BulkRefreshed -= OnBulkRefreshed;
+            Vm.PropertyChanged -= OnVmPropertyChanged;
+        }
     }
 
     private void OnExternalPinChange()
@@ -85,6 +112,18 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
         // mirrors the (now-fresh) VM state into the existing row combos
         // — no row rebuild, no extra device fetches.
         DispatcherQueue.TryEnqueue(PopulateAfterFetch);
+    }
+
+    private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        // Platform changes (first connect after Settings opens, or a
+        // board swap from RP2040 to RP2350 / vice versa) change the
+        // number of output rows — 3 vs 5. The card layout is decided
+        // by HardwarePins.AllPinOutputs(Vm.Platform) inside Refresh,
+        // so just call Refresh to rebuild. The follow-up BulkRefreshed
+        // event from the same connect flow will populate values.
+        if (e.PropertyName == nameof(MainViewModel.Platform))
+            DispatcherQueue.TryEnqueue(Refresh);
     }
 
     protected override void Refresh()
@@ -305,7 +344,11 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
         {
             HardwarePins.RaisePinAssignmentsChanged();
             RefreshAllConflicts();
-            ShowStatus($"{output.Name} → {(newType == OutputSlotType.I2S ? "I²S" : "S/PDIF")}", isError: false);
+            // Slot-type changes are slot-scoped (one slot drives one
+            // S/PDIF stereo pair or one I²S link), so the status message
+            // names the slot, not the output. Pin changes below still
+            // talk about the output (which GPIO it lives on).
+            ShowStatus($"Slot {output.SlotIndex + 1} → {(newType == OutputSlotType.I2S ? "I²S" : "S/PDIF")}", isError: false);
             return;
         }
 
