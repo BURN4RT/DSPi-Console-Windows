@@ -118,12 +118,26 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
             });
         });
 
-        // Build rows immediately with default values; PopulateAfterFetch
+        // Build cards immediately with default values; PopulateAfterFetch
         // overwrites them once the device replies. This means the page
         // is interactive even before the fetch completes — the user
         // just sees default pin values briefly.
-        foreach (var o in outputs)
-            OutputRowsHost.Children.Add(BuildPinRow(o));
+        //
+        // Layout: 2-column grid, one card per output. Cards land at
+        // (i/2, i%2). Row definitions are added on demand so a 3-output
+        // RP2040 gets 2 rows, a 5-output RP2350 gets 3.
+        OutputRowsHost.RowDefinitions.Clear();
+        int rowCount = (outputs.Count + 1) / 2;
+        for (int r = 0; r < rowCount; r++)
+            OutputRowsHost.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        for (int i = 0; i < outputs.Count; i++)
+        {
+            var card = BuildPinCard(outputs[i]);
+            Grid.SetRow(card, i / 2);
+            Grid.SetColumn(card, i % 2);
+            OutputRowsHost.Children.Add(card);
+        }
     }
 
     private void PopulateAfterFetch()
@@ -153,46 +167,85 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
     }
 
     /// <summary>
-    /// Build one row Grid: colored dot, label, type combo, DEFAULT
-    /// badge, GPIO combo. Layout mirrors the legacy dialog so the page
-    /// is visually familiar — Phase 1 changes the chrome, not the row.
+    /// Build one output card: a bordered block with a header row
+    /// (colored dot + label, DEFAULT chip right-aligned) and a
+    /// controls row (type combo + GPIO combo, each filling half the
+    /// card width). Cards are placed by the caller into the 2-column
+    /// grid container.
     /// </summary>
-    private UIElement BuildPinRow(HardwarePins.PinOutput output)
+    private FrameworkElement BuildPinCard(HardwarePins.PinOutput output)
     {
-        var row = new Grid { Padding = new Thickness(0, 6, 0, 6) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });       // dot
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });       // label
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });       // type combo
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // badge spacer
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });       // gpio combo
-
-        var dot = new Ellipse
+        var card = new Border
         {
-            Width = 8, Height = 8,
+            Background = (Brush)Application.Current.Resources["LayerFillColorDefaultBrush"],
+            BorderBrush = (Brush)Application.Current.Resources["ControlStrokeColorDefaultBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12, 10, 12, 12),
+        };
+
+        var content = new Grid { RowSpacing = 10 };
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });   // header
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });   // controls
+
+        // ── Header row: dot + label on the left, DEFAULT chip on the right ──
+        var header = new Grid();
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var idGroup = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 10,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        idGroup.Children.Add(new Ellipse
+        {
+            Width = 10, Height = 10,
             Fill = new SolidColorBrush(output.Color),
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 10, 0)
-        };
-        Grid.SetColumn(dot, 0);
-        row.Children.Add(dot);
-
-        var label = new TextBlock
+        });
+        idGroup.Children.Add(new TextBlock
         {
             Text = output.Detail,
             FontSize = 13,
-            MinWidth = 64,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 20, 0)
-        };
-        Grid.SetColumn(label, 1);
-        row.Children.Add(label);
+        });
+        Grid.SetColumn(idGroup, 0);
+        header.Children.Add(idGroup);
 
-        // Type picker — PDM is fixed.
+        var badge = new Border
+        {
+            Background = (Brush)Application.Current.Resources["ControlFillColorSecondaryBrush"],
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(8, 2, 8, 2),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed,
+            Child = new TextBlock
+            {
+                Text = "DEFAULT",
+                FontSize = 9,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+            }
+        };
+        Grid.SetColumn(badge, 1);
+        header.Children.Add(badge);
+
+        Grid.SetRow(header, 0);
+        content.Children.Add(header);
+
+        // ── Controls row: type combo + GPIO combo, equal width ──
+        var controls = new Grid { ColumnSpacing = 8 };
+        controls.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        controls.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
         var typePicker = new ComboBox
         {
-            Width = 100,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 0)
         };
         if (output.SlotIndex >= 0)
         {
@@ -208,49 +261,30 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
             typePicker.SelectedIndex = 0;
             typePicker.IsEnabled = false;
         }
-        Grid.SetColumn(typePicker, 2);
-        row.Children.Add(typePicker);
+        Grid.SetColumn(typePicker, 0);
+        controls.Children.Add(typePicker);
 
-        // DEFAULT badge — visible only when the pin equals the factory
-        // default. Lives in the star-width spacer column, centred.
-        var badge = new Border
-        {
-            Background = (Brush)Application.Current.Resources["ControlFillColorSecondaryBrush"],
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(6, 2, 6, 2),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(10, 0, 10, 0),
-            Visibility = Visibility.Collapsed,
-            Child = new TextBlock
-            {
-                Text = "DEFAULT",
-                FontSize = 9,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
-            }
-        };
-        Grid.SetColumn(badge, 3);
-        row.Children.Add(badge);
-
-        // GPIO picker — every ValidPin enumerated, with conflict labels
-        // applied by UpdateComboConflicts.
         var gpioPicker = new ComboBox
         {
-            Width = 140,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Center,
-            Tag = output
+            Tag = output,
         };
         foreach (var pin in HardwarePins.ValidPins)
             gpioPicker.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
         var defaultIdx = System.Array.IndexOf(HardwarePins.ValidPins, output.DefaultPin);
         if (defaultIdx >= 0) gpioPicker.SelectedIndex = defaultIdx;
         gpioPicker.SelectionChanged += OnGpioChanged;
-        Grid.SetColumn(gpioPicker, 4);
-        row.Children.Add(gpioPicker);
+        Grid.SetColumn(gpioPicker, 1);
+        controls.Children.Add(gpioPicker);
+
+        Grid.SetRow(controls, 1);
+        content.Children.Add(controls);
+
+        card.Child = content;
 
         _rows.Add((output, typePicker, gpioPicker, badge));
-        return row;
+        return card;
     }
 
     // ── Live-apply handlers ──────────────────────────────────────────

@@ -37,9 +37,19 @@
                              Click="OnResetClick"/>
         </Grid>
 
-        <!-- Container for dynamically-built output rows. Each child is a
-             Grid produced by BuildPinRow in code-behind. -->
-        <StackPanel x:Name="OutputRowsHost" Spacing="0"/>
+        <!-- Two-column card grid. Cards are placed by code-behind at
+             (i/2, i%2); RowDefinitions are added dynamically to match
+             the output count (3 rows for RP2350's 5 outputs, 2 for
+             RP2040's 3 outputs). ColumnSpacing/RowSpacing controls the
+             inter-card breathing room. -->
+        <Grid x:Name="OutputRowsHost"
+              ColumnSpacing="12"
+              RowSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+        </Grid>
 
         <!-- Inline status text. Visible only while a status is current. -->
         <TextBlock x:Name="StatusText"
