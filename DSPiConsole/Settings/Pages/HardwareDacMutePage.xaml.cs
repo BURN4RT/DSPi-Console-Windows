@@ -10,7 +10,7 @@ using Microsoft.UI.Xaml.Controls;
 namespace DSPiConsole.Settings.Pages;
 
 /// <summary>
-/// Hardware › External DAC Mute — flat SettingsCard list, no
+/// Hardware › External Mute Control — flat SettingsCard list, no
 /// Expander. All five persistent fields (enable, polarity, pin, hold,
 /// release) ride a single firmware command, so every edit stages
 /// under one tracker key with the full updated config; the InfoBar
@@ -246,7 +246,7 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
         Tracker.Stage(new PendingChange(
             Key: ConfigKey,
             PageId: Id,
-            FieldLabel: "DAC mute config",
+            FieldLabel: "External mute config",
             OldDisplay: DescribeConfig(current),
             NewDisplay: DescribeConfig(pending),
             Apply: async () =>
@@ -308,7 +308,7 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
 
     // ── ISettingsPage ──────────────────────────────────────────────────
     public string Id => "hardware.dac-mute";
-    public string Title => "External DAC Mute";
+    public string Title => "External Mute Control";
     public SettingsCategory Category => SettingsCategory.Hardware;
     public string IconGlyph => ""; // Mute
     public int Order => 40;

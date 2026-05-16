@@ -80,6 +80,24 @@ public sealed partial class MainWindow : Window
     // Inline per-channel meters: keyed by ChannelId
     private readonly Dictionary<int, HorizontalMeterBar> _channelMeters = new();
 
+    /// <summary>
+    /// Resolve a firmware-side channel ID back to the Channel object
+    /// whose metadata the UI should display. <see cref="Channel.FromId"/>
+    /// alone can't do this because <c>(ChannelId)6</c> means
+    /// <c>Spdif3L</c> on RP2350 and PDM on RP2040 — same enum value,
+    /// different Channel instance. Iterate the platform-aware input/
+    /// output lists first so PDM on RP2040 lands on <see cref="Channel.PdmRp2040"/>
+    /// (Name="PDM") rather than Spdif3L (Name="SPDIF 3 L").
+    /// </summary>
+    private Channel LookupChannelById(int channelId)
+    {
+        foreach (var ch in Channel.Inputs)
+            if ((int)ch.Id == channelId) return ch;
+        foreach (var ch in ViewModel.ActiveOutputs)
+            if ((int)ch.Id == channelId) return ch;
+        return Channel.FromIndex(channelId);
+    }
+
     // Preset combo guard
     private bool _isUpdatingPresetCombo;
 
@@ -164,7 +182,7 @@ public sealed partial class MainWindow : Window
         ViewModel.ChannelNameChanged += channelId =>
         {
             if (_channelNameTexts.TryGetValue(channelId, out var tb))
-                tb.Text = ViewModel.GetChannelName(Channel.FromId((ChannelId)channelId));
+                tb.Text = ViewModel.GetChannelName(LookupChannelById(channelId));
         };
 
         ViewModel.ActiveOutputsChanged += (s, e) =>
@@ -2463,7 +2481,7 @@ public sealed partial class MainWindow : Window
             if (channelId < status.Peaks.Length)
                 meter.Level = status.Peaks[channelId];
             meter.IsClipping = status.IsClipping((ChannelId)channelId);
-            var channel = Channel.FromIndex(channelId);
+            var channel = LookupChannelById(channelId);
             meter.IsMuted = channel.IsOutput && ViewModel.GetChannelMute(channel);
         }
 

@@ -14,6 +14,12 @@ public enum ChannelId
     Spdif2L = 4,
     Spdif2R = 5,
     Spdif3L = 6,
+    // Alias: RP2040 has no SPDIF 3 in firmware — the channel-index
+    // slot at 6 is occupied by PDM instead (CH_OUT_5_PDM in config.h).
+    // Same underlying enum value as Spdif3L; the platform-specific
+    // Channel instance (PdmRp2040 vs Spdif3L) determines what
+    // metadata the UI shows.
+    PdmRp2040 = 6,
     Spdif3R = 7,
     Spdif4L = 8,
     Spdif4R = 9,
@@ -89,6 +95,16 @@ public class Channel
         ChannelId.Pdm, "PDM", "PDM", "OUT9",
         10, true, Color.FromArgb(255, 186, 135, 243)); // Purple
 
+    // PDM on RP2040 lives at firmware channel index 6 (CH_OUT_5_PDM in
+    // config.h), not 10. The ChannelId.PdmRp2040 enum value aliases
+    // Spdif3L (both = 6) — not a collision, because Spdif3L doesn't
+    // exist on RP2040 hardware. Using a distinct Channel instance
+    // keeps PDM metadata (name, colour) correct even though the
+    // underlying ID is shared with another platform's channel.
+    public static readonly Channel PdmRp2040 = new(
+        ChannelId.PdmRp2040, "PDM", "PDM", "OUT5",
+        10, true, Color.FromArgb(255, 186, 135, 243)); // Purple
+
     public static IReadOnlyList<Channel> All { get; } = new[]
     {
         MasterLeft, MasterRight,
@@ -107,7 +123,7 @@ public class Channel
 
     public static IReadOnlyList<Channel> Rp2040Outputs { get; } = new[]
     {
-        Spdif1L, Spdif1R, Spdif2L, Spdif2R, Pdm
+        Spdif1L, Spdif1R, Spdif2L, Spdif2R, PdmRp2040
     };
 
     public static Channel FromId(ChannelId id) => id switch

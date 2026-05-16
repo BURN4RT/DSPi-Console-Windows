@@ -25,7 +25,7 @@
     <StackPanel Spacing="4">
 
         <controls:SettingsCard Header="Enable"
-                                Description="Drive a GPIO pin to mute external DACs around sample-rate changes.">
+                                Description="Drive a GPIO pin to mute external devices during system state changes.">
             <ToggleSwitch x:Name="EnableToggle"
                           OnContent="On" OffContent="Off"
                           Toggled="OnConfigChanged"/>
@@ -40,8 +40,8 @@
             </ComboBox>
         </controls:SettingsCard>
 
-        <controls:SettingsCard Header="GPIO pin"
-                                Description="Pin connected to the DAC's mute input (PCM5102A XSMT, WM8741 MUTEB, AK4493 SMUTE).">
+        <controls:SettingsCard Header="GPIO Pin"
+                                Description="Pin connected to external device's mute input (PCM5102A XSMT, WM8741 MUTEB, AK4493 SMUTE).">
             <ComboBox x:Name="PinCombo" MinWidth="180"
                       SelectionChanged="OnConfigChanged"/>
         </controls:SettingsCard>
@@ -77,10 +77,10 @@
             </ComboBox>
         </controls:SettingsCard>
 
-        <controls:SettingsCard Header="Test pulse"
-                                Description="Fires a ~1 second mute pulse for installer verification. Runs live; not staged.">
+        <controls:SettingsCard Header="Test Pulse"
+                                Description="Engages mute for one second to verify connections and settings.">
             <Button x:Name="TestButton"
-                    Content="Test"
+                    Content="Begin Test"
                     Click="OnTestClick"/>
         </controls:SettingsCard>
 
