@@ -161,6 +161,19 @@ public sealed partial class MainWindow : Window
             if (_selectedChannel != null && !_isScrollAdjusting && !_isUpdatingGain && !_isUpdatingDelay)
                 ShowChannelEditor(_selectedChannel);
         };
+        // Bulk refreshes (preset load, factory reset, BULK_INVALIDATED) fire
+        // FiltersChanged too, so the 50ms ScheduleDashboardRefresh debounce
+        // would otherwise hold the dashboard back ~50ms while the BodePlot
+        // animation is already racing ahead. The debounce exists to coalesce
+        // EQ-drag thrashing — preset loads are single, intentional events,
+        // so cancel the pending debounce and rebuild the dashboard
+        // immediately on this dispatcher tick.
+        ViewModel.BulkRefreshed += (_, _) =>
+        {
+            _dashboardDebounce?.Stop();
+            if (DashboardPanel.Visibility == Visibility.Visible)
+                InitializeDashboard();
+        };
         ViewModel.BypassChanged += (_, _) => BodePlot.Invalidate();
         AppSettings.Instance.SettingsChanged += (_, _) =>
         {
