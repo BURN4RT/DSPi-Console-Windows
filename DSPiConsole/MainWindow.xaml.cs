@@ -1866,8 +1866,10 @@ public sealed partial class MainWindow : Window
                 Opacity = p.Type == FilterType.Flat ? 0.35 : 1.0,
                 VerticalAlignment = VerticalAlignment.Center
             };
-            ToolTipService.SetToolTip(bypassButton,
-                p.Bypass ? "Re-enable this band" : "Bypass this band");
+            // No tooltip — the filled-vs-hollow dot is self-explanatory once
+            // the user has clicked one, and WinUI 3's default tooltip timing
+            // pops the label whenever the cursor brushes one of the twelve
+            // per-band toggles, which reads as noise.
             bypassButton.Click += OnFilterBypassToggled;
             Grid.SetColumn(bypassButton, col);
             grid.Children.Add(bypassButton);
