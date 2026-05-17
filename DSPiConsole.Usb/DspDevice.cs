@@ -145,6 +145,15 @@ public static class VendorCommands
     public const byte GetDacHwMuteConfig   = 0xEB;
     public const byte TestDacHwMute        = 0xEC;
 
+    // LG Sound Sync (V8+). Decodes the LG TV's TOSLINK volume / mute messages
+    // and applies them through the user-volume path. Only the enable toggle is
+    // host-writable; volume/mute/present state are runtime-only fields exposed
+    // through the bulk params and the 16-byte status struct (0xE8). Older
+    // firmware STALLs the GET so the host treats null as "feature unsupported".
+    public const byte SetLgSoundSyncEnable = 0xE6;
+    public const byte GetLgSoundSyncEnable = 0xE7;
+    public const byte GetLgSoundSyncStatus = 0xE8;
+
     // Bootloader
     public const byte EnterBootloader = 0xF0;
 }
@@ -178,12 +187,13 @@ public enum SpdifInputState : byte
 public enum ParamSource : byte
 {
     Unknown  = 0,
-    HostSet  = 1,  // host EP0 SET
+    HostSet  = 1,  // host EP0 SET (vendor REQ_SET_*)
     BulkSet  = 2,  // REQ_SET_ALL_PARAMS
     Preset   = 3,  // preset load
     Factory  = 4,  // factory reset
     Gpio     = 5,  // hardware control (knobs, encoders)
-    Internal = 6   // firmware-initiated (clamp, recalc)
+    Internal = 6,  // firmware-initiated (clamp, recalc)
+    Uac1     = 7   // UAC1 Feature Unit SET_CUR (OS volume slider, mute key)
 }
 
 /// <summary>
@@ -209,6 +219,21 @@ public readonly struct BandParamNotification
     public int Channel { get; init; }
     public int Band { get; init; }
     public FilterParams Params { get; init; }
+    public ParamSource Source { get; init; }
+}
+
+/// <summary>
+/// A device-pushed user-volume change. Decoded from a v2 PARAM_CHANGED packet
+/// targeting WireBulkParams.user_volume.user_volume_db (4-byte float dB).
+/// Fired for any origin: <see cref="ParamSource.HostSet"/> for echoes of our
+/// own REQ_SET_USER_VOLUME writes, <see cref="ParamSource.Unknown"/> when the
+/// UAC1 class driver mirrors a system-tray / hardware-key volume change into
+/// audio_state.volume, and other sources for future GPIO knob support.
+/// Subscribers should suppress HostSet to avoid round-tripping their own writes.
+/// </summary>
+public readonly struct UserVolumeNotification
+{
+    public float Db { get; init; }
     public ParamSource Source { get; init; }
 }
 
@@ -397,6 +422,13 @@ public partial class DspDevice : ObservableObject, IDisposable
     /// knobs once the firmware ships that feature.</summary>
     public event EventHandler<BandParamNotification>? BandParamNotified;
 
+    /// <summary>Fired when the firmware emits a PARAM_CHANGED notification for
+    /// audio_state.volume (the vendor-channel user volume, in dB). Origin tag
+    /// distinguishes a UAC1 host echo (system tray, hardware volume keys) from
+    /// our own REQ_SET_USER_VOLUME write — subscribers should suppress
+    /// <see cref="ParamSource.HostSet"/> to avoid round-tripping their own writes.</summary>
+    public event EventHandler<UserVolumeNotification>? UserVolumeNotified;
+
     /// <summary>Fired for every raw packet read from the notification endpoint —
     /// IDLE keep-alives, decoded events, unknown event IDs, malformed packets.
     /// Diagnostic hook used by the Bulk Endpoint Monitor window. Fires on the
@@ -414,6 +446,12 @@ public partial class DspDevice : ObservableObject, IDisposable
     // V7 input config block sits at offsetof(WireBulkParams, input_config) = 2896.
     // input_source occupies the first byte of the 16-byte WireInputConfig struct.
     private const int InputSourceWireOffset = 2896;
+
+    // V9+ user volume block sits at offsetof(WireBulkParams, user_volume) = 2928
+    // (after input_config @ 2896 and lg_sound_sync @ 2912). user_volume_db
+    // occupies the first 4 bytes (float dB) of the 16-byte WireUserVolume
+    // struct; user_mute lives at +4.
+    private const int UserVolumeWireOffset = 2928;
 
     public DspDevice()
     {
@@ -1917,6 +1955,18 @@ public partial class DspDevice : ObservableObject, IDisposable
                 {
                     InputSourceNotified?.Invoke(this, (InputSource)buf[12]);
                 }
+                // User volume change: offset == user_volume.user_volume_db, size 4 (float dB).
+                // Fires for both UAC1 host echoes (Source=Unknown) and our own
+                // REQ_SET_USER_VOLUME writes (Source=HostSet).
+                else if (size == 4 && offset == UserVolumeWireOffset)
+                {
+                    float db = BitConverter.ToSingle(buf, 12);
+                    UserVolumeNotified?.Invoke(this, new UserVolumeNotification
+                    {
+                        Db = db,
+                        Source = source
+                    });
+                }
                 // Other PARAM_CHANGED offsets are ignored for now — the host
                 // already polls status / refetches on BULK_INVALIDATED.
                 break;
@@ -2069,6 +2119,36 @@ public partial class DspDevice : ObservableObject, IDisposable
     {
         var response = ControlTransferIn(VendorCommands.TestDacHwMute, 0, 1);
         return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
+    }
+
+    #endregion
+
+    #region LG Sound Sync (V8+)
+
+    /// <summary>
+    /// Enable or disable LG Sound Sync — the TOSLINK side-channel that decodes
+    /// LG TV remote volume / mute commands and applies them through the user
+    /// volume path. Single-byte payload (0 = off, 1 = on). Returns
+    /// <c>false</c> on USB transfer failure or older firmware that STALLs the
+    /// opcode.
+    /// </summary>
+    public bool SetLgSoundSyncEnabled(bool enabled)
+    {
+        return ControlTransferOut(VendorCommands.SetLgSoundSyncEnable, 0,
+                                  new[] { (byte)(enabled ? 1 : 0) });
+    }
+
+    /// <summary>
+    /// Read the current LG Sound Sync enable flag. Returns <c>null</c> on USB
+    /// transfer failure or pre-V8 firmware that STALLs the opcode — the host
+    /// treats null as "feature unsupported" and hides the toggle accordingly
+    /// (see <c>MainViewModel.LgSoundSyncSupported</c>).
+    /// </summary>
+    public bool? GetLgSoundSyncEnabled()
+    {
+        var response = ControlTransferIn(VendorCommands.GetLgSoundSyncEnable, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0] != 0;
     }
 
     #endregion
