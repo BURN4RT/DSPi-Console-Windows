@@ -2866,11 +2866,16 @@ public sealed partial class MainWindow : Window
                 bool newBypass = !filters[bandIndex].Bypass;
                 _ = ViewModel.SetBandBypass((int)channel.Id, bandIndex, newBypass);
 
-                // Refresh the row so the dot fills/empties and labels dim
-                if (_selectedChannel != null)
-                {
-                    ShowChannelEditor(_selectedChannel);
-                }
+                // No synchronous ShowChannelEditor here. SetBandBypass updates
+                // the local _channelData cache before awaiting the USB transfer,
+                // then fires FiltersChanged when the transfer completes — that
+                // handler already rebuilds the editor (with the dot filled/
+                // emptied and labels dimmed) on the next dispatcher tick.
+                // Calling ShowChannelEditor here too produced two back-to-back
+                // full editor rebuilds (~60-100ms each, including a
+                // BodePlot.Redraw(gridChanged: true) that clears and rebuilds
+                // every channel's polyline) — a ~150ms UI freeze per click,
+                // which is what was reading as "blocking".
             }
         }
     }
