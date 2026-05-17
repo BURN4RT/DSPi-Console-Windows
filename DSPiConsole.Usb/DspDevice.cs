@@ -486,7 +486,18 @@ public partial class DspDevice : ObservableObject, IDisposable
     {
         var setupPacket = new UsbSetupPacket(RequestTypeIn, VendorCommands.GetSerial, 0, VendorInterfaceNumber, 16);
         var buffer = new byte[16];
-        int transferred = tempDevice.ControlTransfer(setupPacket, buffer, 0, buffer.Length);
+        int transferred;
+        try
+        {
+            transferred = tempDevice.ControlTransfer(setupPacket, buffer, 0, buffer.Length);
+        }
+        catch
+        {
+            // Hot-plug races and brief WinUSB stalls can throw here during
+            // enumeration / open-by-serial. Treat them as "no serial" so the
+            // poll loop just skips this device and retries on the next tick.
+            return null;
+        }
         if (transferred > 0)
             return System.Text.Encoding.ASCII.GetString(buffer, 0, transferred).TrimEnd('\0');
         return null;
@@ -885,8 +896,20 @@ public partial class DspDevice : ObservableObject, IDisposable
                 VendorInterfaceNumber,
                 buffer.Length);
 
-            int transferred = _device.ControlTransfer(setupPacket, buffer, 0, buffer.Length);
-            return transferred >= 0;
+            try
+            {
+                int transferred = _device.ControlTransfer(setupPacket, buffer, 0, buffer.Length);
+                return transferred >= 0;
+            }
+            catch
+            {
+                // libusb / LibUsbDotNet throws on stall, device disappearance
+                // mid-transfer, NAK timeout, etc. Surface those as "transfer
+                // failed" rather than unwinding through an async void handler
+                // and killing the process. Callers already treat false as a
+                // generic USB failure.
+                return false;
+            }
         }
     }
 
@@ -907,7 +930,17 @@ public partial class DspDevice : ObservableObject, IDisposable
                 length);
 
             var buffer = new byte[length];
-            int transferred = _device.ControlTransfer(setupPacket, buffer, 0, buffer.Length);
+            int transferred;
+            try
+            {
+                transferred = _device.ControlTransfer(setupPacket, buffer, 0, buffer.Length);
+            }
+            catch
+            {
+                // See ControlTransferOut for the rationale — keep USB stack
+                // exceptions from propagating through async void handlers.
+                return null;
+            }
 
             if (transferred > 0)
             {
@@ -1987,13 +2020,18 @@ public partial class DspDevice : ObservableObject, IDisposable
 
     /// <summary>
     /// Fetch all DSP parameters in a single bulk transfer (firmware v2+).
-    /// Wire-format V7 (firmware April 2026) is 2912 bytes — older firmware
-    /// returns fewer bytes and the parser keys off the actual transfer length.
+    /// Wire-format V10 is 2960 bytes (V7 2912 + LG Sound Sync + user volume
+    /// + DAC HW mute, 16 bytes each). Older firmware returns fewer bytes and
+    /// <see cref="BulkParamsParser"/> keys feature presence off the actual
+    /// transfer length so this stays correct against any version &gt;= V2.
+    /// Bump this only when a new wire-format section is added on the firmware
+    /// side — the parser already handles a shorter response gracefully, so
+    /// future versions need a length bump here to deliver the new bytes.
     /// Returns the response, or null if the transfer failed.
     /// </summary>
     public byte[]? GetAllParams()
     {
-        return ControlTransferIn(VendorCommands.GetAllParams, 0, 2912);
+        return ControlTransferIn(VendorCommands.GetAllParams, 0, BulkParamsParser.PacketSizeV10);
     }
 
     #region Input Source (V7+)
