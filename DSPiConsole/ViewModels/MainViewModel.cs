@@ -24,7 +24,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     // Channel filter data: Dictionary<ChannelId, List<FilterParams>>
     private readonly Dictionary<int, ObservableCollection<FilterParams>> _channelData = new();
-    
+
+    // Per-output crossover bands (firmware V11+). 4 bands per OUTPUT channel,
+    // addressed on the wire as band CrossoverFilter.XoverBandBase + localBand
+    // (20..23). Only output channels get an entry — crossover is meaningless on
+    // the master/input channels and the firmware rejects it there.
+    private readonly Dictionary<int, ObservableCollection<FilterParams>> _xoverData = new();
+
+
     // Channel visibility for graph: Dictionary<ChannelId, bool>
     private readonly Dictionary<int, bool> _channelVisibility = new();
     
@@ -70,7 +77,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private readonly string[] _presetNames = new string[10];
     private byte _presetStartupMode;
     private byte _presetDefaultSlot;
-    private bool _presetIncludePins;
+    // Output-config persistence mode (output_config_independent_load_spec.md).
+    //   0 = OUTPUT_CONFIG_MODE_INDEPENDENT — IO (output pins/types, I2S
+    //       MCK/BCK, SPDIF RX pin) is device-global, applied at boot only,
+    //       persisted via SaveOutputConfig (0x52).
+    //   1 = OUTPUT_CONFIG_MODE_WITH_PRESET — IO travels with each preset.
+    // Repurposed from the former `include_pins` flag (same opcode, same
+    // 1:1 mapping; default stays with-preset so existing devices are unaffected).
+    private byte _outputConfigMode = 1;
     // Master volume persistence mode:
     //   0 = MASTER_VOLUME_MODE_INDEPENDENT — volume is independent of presets
     //       and is explicitly persisted via SaveMasterVolume (0xD6).
@@ -193,6 +207,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _bandBypassSupported;
 
+    // Per-output crossover filters (firmware V11+, wire format V11). Set true
+    // when a bulk fetch returns the crossover section (BulkParams.HasCrossover).
+    // Gates the PEQ/XO tab in the channel editor.
+    [ObservableProperty]
+    private bool _crossoverSupported;
+
     // External DAC hardware mute (firmware V10+). One typed config object as
     // the unit of read/write — avoids parameter-order bugs and lets future
     // fields land via DacHwMuteConfig.With(...) without touching every caller.
@@ -253,7 +273,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
     public byte PresetStartupMode => _presetStartupMode;
     public byte PresetDefaultSlot => _presetDefaultSlot;
-    public bool PresetIncludePins => _presetIncludePins;
+    public byte OutputConfigMode => _outputConfigMode;
     public byte MasterVolumeMode => _masterVolumeMode;
 
     // Multi-device support
@@ -416,6 +436,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
             {
                 _channelGains[(int)channel.Id] = 0.0f;
                 _channelMutes[(int)channel.Id] = false;
+
+                // Crossover bands exist only on output channels (firmware
+                // rejects them on master). Seed 4 default (off) bands.
+                var xover = new ObservableCollection<FilterParams>();
+                for (int i = 0; i < CrossoverFilter.MaxXoverBands; i++)
+                    xover.Add(new FilterParams());
+                _xoverData[(int)channel.Id] = xover;
             }
         }
 
@@ -527,6 +554,23 @@ public partial class MainViewModel : ObservableObject, IDisposable
                     && n.Band < filters.Count)
                 {
                     filters[n.Band] = n.Params;
+                    FiltersChanged?.Invoke(this, EventArgs.Empty);
+                    CheckDirty();
+                }
+            });
+        };
+
+        // Per-band crossover change pushed from the device (V11+). n.Band is the
+        // LOCAL crossover band (0..3). Same HostSet-suppression rationale as PEQ.
+        _device.XoverBandParamNotified += (_, n) =>
+        {
+            if (n.Source == ParamSource.HostSet) return;
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (_xoverData.TryGetValue(n.Channel, out var bands)
+                    && n.Band < bands.Count)
+                {
+                    bands[n.Band] = n.Params;
                     FiltersChanged?.Invoke(this, EventArgs.Empty);
                     CheckDirty();
                 }
@@ -791,6 +835,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<FilterParams> GetFilters(Channel channel) =>
         _channelData.TryGetValue((int)channel.Id, out var f) ? f : new();
+
+    /// <summary>
+    /// The crossover bands (up to 4) for an output channel. Empty for master/
+    /// input channels, which have no crossover stage. localBand index 0..3 maps
+    /// to wire band CrossoverFilter.XoverBandBase + localBand (20..23).
+    /// </summary>
+    public ObservableCollection<FilterParams> GetXoverFilters(Channel channel) =>
+        _xoverData.TryGetValue((int)channel.Id, out var f) ? f : new();
 
     // ── Matrix mixer accessors ──
 
@@ -1072,6 +1124,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         var outputs = ActiveOutputs;
 
+        // Record the wire-format version so per-band GET (REQ_GET_EQ_PARAM)
+        // uses the matching wValue band-field width (V11 widened it to 5 bits).
+        _device.WireFormatVersion = bp.FormatVersion;
+
         // EQ bands — apply first BandCount bands per channel
         foreach (var channel in Channel.All)
         {
@@ -1084,6 +1140,27 @@ public partial class MainViewModel : ObservableObject, IDisposable
                     int b = band; // capture for closure
                     if (!filters[b].Equals(fp))
                         _dispatcher.TryEnqueue(() => filters[b] = fp);
+                }
+            }
+        }
+
+        // Crossover bands (V11+) — 4 per output channel. Master rows in the
+        // wire payload are zeroed; we only seeded _xoverData for output
+        // channels, so the TryGetValue naturally skips master.
+        if (bp.HasCrossover)
+        {
+            foreach (var channel in Channel.All)
+            {
+                int ch = (int)channel.Id;
+                if (_xoverData.TryGetValue(ch, out var xbands))
+                {
+                    for (int i = 0; i < xbands.Count && i < CrossoverFilter.MaxXoverBands; i++)
+                    {
+                        var fp = bp.Xover[ch, i];
+                        int li = i; // capture for closure
+                        if (!xbands[li].Equals(fp))
+                            _dispatcher.TryEnqueue(() => xbands[li] = fp);
+                    }
                 }
             }
         }
@@ -1169,6 +1246,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             }
             if (bp.HasMasterVolume)
                 MasterVolumeDb = bp.MasterVolumeDb;
+            CrossoverSupported = bp.HasCrossover;
             Bypass = bp.Bypass;
             LoudnessEnabled = bp.LoudnessEnabled;
             LoudnessRefSPL = bp.LoudnessRefSpl;
@@ -2011,30 +2089,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Load parameters from device flash, refreshing UI.
-    /// </summary>
-    public async Task<byte> LoadParams()
-    {
-        if (!IsDeviceConnected) return FlashResult.ErrWrite;
-        return await Task.Run(() =>
-        {
-            var result = _device.LoadParams();
-            if (result == FlashResult.Ok)
-            {
-                _suppressDirtyCheck = true;
-                FetchAll();
-                _dispatcher.TryEnqueue(() =>
-                {
-                    UpdateSavedSnapshot();
-                    PresetsDirty = false;
-                    _suppressDirtyCheck = false;
-                });
-            }
-            return result;
-        });
-    }
-
-    /// <summary>
     /// Reset all parameters to factory defaults, refreshing UI.
     /// </summary>
     public async Task<byte> FactoryResetParams()
@@ -2080,7 +2134,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 _presetStartupMode = dir.Value.StartupMode;
                 _presetDefaultSlot = dir.Value.DefaultSlot;
                 var lastActive = dir.Value.LastActiveSlot;
-                _presetIncludePins = dir.Value.IncludePins;
+                // Firmware clamps anything >1 to independent, but defend against
+                // a transitional byte value by treating only the explicit 1 as
+                // with-preset.
+                _outputConfigMode = dir.Value.OutputConfigMode == 1 ? (byte)1 : (byte)0;
                 _masterVolumeMode = dir.Value.MasterVolumeMode;
 
                 // Use firmware's active slot if valid and occupied, otherwise default to slot 0
@@ -2278,6 +2335,122 @@ public partial class MainViewModel : ObservableObject, IDisposable
         FiltersChanged?.Invoke(this, EventArgs.Empty);
         CheckDirty();
         return success;
+    }
+
+    /// <summary>
+    /// Set a crossover band recipe on an output channel. Updates the local
+    /// cache and sends the full 16-byte EqParamPacket via REQ_SET_EQ_PARAM with
+    /// the wire band index (XoverBandBase + localBand = 20..23). Crossover has
+    /// no L/R linking — it applies per output driver, not to the master bus.
+    /// </summary>
+    public async Task<bool> SetXoverFilter(int channel, int localBand, FilterParams p)
+    {
+        if (_xoverData.TryGetValue(channel, out var bands) && localBand < bands.Count)
+            bands[localBand] = p;
+
+        int wireBand = CrossoverFilter.XoverBandBase + localBand;
+        var success = await Task.Run(() => _device.SetFilter(channel, wireBand, p));
+
+        FiltersChanged?.Invoke(this, EventArgs.Empty);
+        CheckDirty();
+        return success;
+    }
+
+    /// <summary>
+    /// Crossover counterpart to <see cref="SetFilterDeferred"/>: updates the
+    /// cache immediately and debounces the USB write (500 ms) so wheel-scrubbing
+    /// a crossover frequency doesn't flood the bus. Shares the same debounce CTS
+    /// as PEQ edits — only one band is ever being scrubbed at a time.
+    /// </summary>
+    public void SetXoverFilterDeferred(int channel, int localBand, FilterParams p)
+    {
+        if (_xoverData.TryGetValue(channel, out var bands) && localBand < bands.Count)
+            bands[localBand] = p;
+
+        FiltersChanged?.Invoke(this, EventArgs.Empty);
+        CheckDirty();
+
+        int wireBand = CrossoverFilter.XoverBandBase + localBand;
+        _filterDebounceCts?.Cancel();
+        _filterDebounceCts = new CancellationTokenSource();
+        var token = _filterDebounceCts.Token;
+        Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(500, token);
+                _device.SetFilter(channel, wireBand, p);
+            }
+            catch (TaskCanceledException) { }
+        });
+    }
+
+    /// <summary>
+    /// Toggle the bypass flag on a single crossover band via REQ_SET_BAND_BYPASS
+    /// (0xD8) with the wire band index (20..23), preserving its family/freq.
+    /// </summary>
+    public async Task<bool> SetXoverBandBypass(int channel, int localBand, bool bypass)
+    {
+        if (_xoverData.TryGetValue(channel, out var bands) && localBand < bands.Count)
+            bands[localBand].Bypass = bypass;
+
+        int wireBand = CrossoverFilter.XoverBandBase + localBand;
+        var success = await Task.Run(() => _device.SetBandBypass(channel, wireBand, bypass));
+
+        FiltersChanged?.Invoke(this, EventArgs.Empty);
+        CheckDirty();
+        return success;
+    }
+
+    /// <summary>
+    /// Bulk-toggle the bypass flag on every configured PEQ band of a channel
+    /// (Flat bands are skipped — there's nothing to bypass). Sends one
+    /// REQ_SET_BAND_BYPASS per band, mirrors to the linked master channel, then
+    /// fires FiltersChanged / CheckDirty once. Used by the "Enable All" /
+    /// "Bypass All" status-bar buttons on the PEQ page.
+    /// </summary>
+    public async Task SetAllBandsBypass(int channel, bool bypass)
+    {
+        if (!_channelData.TryGetValue(channel, out var filters)) return;
+        bool linked = _masterPeqLinked && IsMasterChannel(channel);
+        int other = linked ? GetLinkedMasterChannel(channel) : -1;
+
+        for (int b = 0; b < filters.Count; b++)
+        {
+            if (filters[b].Type == FilterType.Flat) continue;
+            filters[b].Bypass = bypass;
+            int bb = b;
+            await Task.Run(() => _device.SetBandBypass(channel, bb, bypass));
+
+            if (linked && _channelData.TryGetValue(other, out var otherFilters) && bb < otherFilters.Count)
+            {
+                otherFilters[bb].Bypass = bypass;
+                await Task.Run(() => _device.SetBandBypass(other, bb, bypass));
+            }
+        }
+
+        FiltersChanged?.Invoke(this, EventArgs.Empty);
+        CheckDirty();
+    }
+
+    /// <summary>
+    /// Bulk-toggle the bypass flag on every configured crossover band of an
+    /// output channel (bands not set to a crossover type are skipped). Backs the
+    /// "Enable All" / "Bypass All" status-bar buttons on the XO page.
+    /// </summary>
+    public async Task SetAllXoverBypass(int channel, bool bypass)
+    {
+        if (!_xoverData.TryGetValue(channel, out var bands)) return;
+        for (int i = 0; i < bands.Count; i++)
+        {
+            if (!bands[i].Type.IsCrossover()) continue;
+            bands[i].Bypass = bypass;
+            int wireBand = CrossoverFilter.XoverBandBase + i;
+            await Task.Run(() => _device.SetBandBypass(channel, wireBand, bypass));
+        }
+
+        FiltersChanged?.Invoke(this, EventArgs.Empty);
+        CheckDirty();
     }
 
     /// <summary>
@@ -2504,15 +2677,40 @@ public partial class MainViewModel : ObservableObject, IDisposable
         });
     }
 
-    public async Task<bool> SetPresetIncludePins(bool include)
+    /// <summary>
+    /// Set output-config persistence mode. 0 = independent, 1 = with preset.
+    /// Mode flips which diff applies (the IO block participates in preset dirty
+    /// only in with-preset mode), so re-check dirty and notify listeners so the
+    /// "Save Output Config" item can update its enabled state.
+    /// </summary>
+    public async Task<bool> SetOutputConfigMode(byte mode)
     {
         if (!IsDeviceConnected) return false;
         return await Task.Run(() =>
         {
-            var ok = _device.SetPresetIncludePins(include);
-            if (ok) _presetIncludePins = include;
+            var ok = _device.SetOutputConfigMode(mode);
+            if (ok)
+            {
+                _outputConfigMode = mode;
+                _dispatcher.TryEnqueue(() =>
+                {
+                    OnPropertyChanged(nameof(OutputConfigMode));
+                    CheckDirty();
+                });
+            }
             return ok;
         });
+    }
+
+    /// <summary>
+    /// Persist the current live IO config (output pins/types, I2S MCK/BCK,
+    /// SPDIF RX pin) into the device-global directory block. Accepted in both
+    /// modes; dormant in with-preset mode until the user switches to independent.
+    /// </summary>
+    public async Task<byte> SaveOutputConfig()
+    {
+        if (!IsDeviceConnected) return 0xFF;
+        return await Task.Run(() => _device.SaveOutputConfig());
     }
 
     /// <summary>

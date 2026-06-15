@@ -1,12 +1,13 @@
-﻿using DSPiConsole.ViewModels;
+using DSPiConsole.ViewModels;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 
 namespace DSPiConsole.Settings.Pages;
 
 /// <summary>
-/// Presets › Inclusion — single toggle controlling whether pin
-/// assignments are bundled with each preset (firmware
-/// REQ_SET_PRESET_INCLUDE_PINS).
+/// Presets &#x203A; Inclusion — output-config persistence mode
+/// (REQ_SET_OUTPUT_CONFIG_MODE, 0x98). Mirrors the master-volume mode pattern
+/// from GeneralVolumePage. See output_config_independent_load_spec.md.
 /// </summary>
 public sealed partial class PresetsInclusionPage : SettingsModule, ISettingsPage
 {
@@ -20,40 +21,42 @@ public sealed partial class PresetsInclusionPage : SettingsModule, ISettingsPage
         if (!Vm.PresetsSupported)
         {
             UnsupportedNotice.Visibility = Visibility.Visible;
-            IncludePinsCard.Visibility = Visibility.Collapsed;
+            OutputConfigModeCard.Visibility = Visibility.Collapsed;
             return;
         }
 
         _suppress = true;
-        try { IncludePinsToggle.IsOn = Vm.PresetIncludePins; }
+        try
+        {
+            // ComboBoxItem order: 0=With preset (Tag=1), 1=Independent (Tag=0).
+            OutputConfigModeCombo.SelectedIndex = Vm.OutputConfigMode == 1 ? 0 : 1;
+        }
         finally { _suppress = false; }
     }
 
-    private void OnIncludePinsToggled(object sender, RoutedEventArgs e)
+    private void OnOutputConfigModeChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppress || Vm == null || Tracker == null) return;
+        if (OutputConfigModeCombo.SelectedItem is not ComboBoxItem item) return;
+        if (!byte.TryParse(item.Tag?.ToString() ?? "1", out var newMode)) return;
 
-        // Stage rather than commit: the firmware write happens when
-        // the user clicks Apply in the InfoBar. Re-toggling produces
-        // a re-Stage with the same key, which the tracker dedupes;
-        // toggling back to the original value auto-discards.
-        var oldValue = Vm.PresetIncludePins;
-        var newValue = IncludePinsToggle.IsOn;
+        var oldMode = Vm.OutputConfigMode;
         var vm = Vm;
+        static string Label(byte m) => m == 1 ? "With preset" : "Independent";
         Tracker.Stage(new PendingChange(
-            Key: "presets.inclusion.pins",
+            Key: "presets.inclusion.output-config-mode",
             PageId: Id,
-            FieldLabel: "Include pin assignments",
-            OldDisplay: oldValue ? "On" : "Off",
-            NewDisplay: newValue ? "On" : "Off",
-            Apply: async () => await vm.SetPresetIncludePins(newValue) ? (byte)0 : (byte)0xFF));
+            FieldLabel: "Output configuration",
+            OldDisplay: Label(oldMode),
+            NewDisplay: Label(newMode),
+            Apply: async () => await vm.SetOutputConfigMode(newMode) ? (byte)0 : (byte)0xFF));
     }
 
     // ── ISettingsPage ──────────────────────────────────────────────────
     public string Id => "presets.inclusion";
     public string Title => "Inclusion";
     public SettingsCategory Category => SettingsCategory.Presets;
-    public string IconGlyph => ""; // Bulleted list
+    public string IconGlyph => ""; // Bulleted list
     public int Order => 20;
     public bool IsAvailable(MainViewModel vm) => true;
     public UIElement BuildContent(MainViewModel vm, IPendingChangeTracker tracker)

@@ -35,6 +35,11 @@ public sealed partial class MainWindow : Window
     public IReadOnlyList<Channel> OutputChannels => Channel.Outputs;
 
     private Channel? _selectedChannel;
+    // Which filter page the channel editor's status-bar tab is showing.
+    // false = PEQ, true = crossover (XO). Reset to PEQ whenever the editor
+    // switches to a different channel (tracked by _filterPageChannelId).
+    private bool _filterPageIsXover;
+    private int _filterPageChannelId = -1;
     private Slider? _inputPreampSlider;
     private TextBlock? _inputPreampValueText;
     private bool _isScrollAdjusting;
@@ -1069,6 +1074,14 @@ public sealed partial class MainWindow : Window
     {
         _selectedChannel = channel;
 
+        // Reset the filter page to PEQ when moving to a different channel.
+        // Same-channel rebuilds (e.g. from FiltersChanged) preserve the page.
+        if ((int)channel.Id != _filterPageChannelId)
+        {
+            _filterPageChannelId = (int)channel.Id;
+            _filterPageIsXover = false;
+        }
+
         // Set gradient flag before SetSelectedChannel to avoid a redraw without it
         bool linkedMaster = ViewModel.MasterPeqLinked &&
             (channel.Id == ChannelId.MasterLeft || channel.Id == ChannelId.MasterRight);
@@ -1082,6 +1095,10 @@ public sealed partial class MainWindow : Window
         ChannelEditorPanel.Visibility = Visibility.Visible;
 
         ChannelEditorPanel.Children.Clear();
+        // The per-channel header (output card / master header) lives in a static
+        // host above the scroll, so it stays put while the filter list scrolls.
+        ChannelHeaderHost.Child = null;
+        ChannelHeaderHost.Visibility = Visibility.Visible;
         _inputPreampSlider = null;
         _inputPreampValueText = null;
 
@@ -1316,7 +1333,7 @@ public sealed partial class MainWindow : Window
             Grid.SetColumn(clearBtn, 2);
             headerRow.Children.Add(clearBtn);
 
-            ChannelEditorPanel.Children.Add(headerRow);
+            ChannelHeaderHost.Child = headerRow;
         }
 
         // Output channel controls: Gain, Delay, Mute
@@ -1340,8 +1357,11 @@ public sealed partial class MainWindow : Window
             {
                 Background = new SolidColorBrush(Color.FromArgb(128, 45, 45, 48)),
                 CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(16, 4, 16, 4),
-                Margin = new Thickness(0, 4, 0, 4)
+                Padding = new Thickness(12, 6, 12, 6),
+                // Bottom margin (12) + the first filter row's 2px top margin equals
+                // the 14px gap between rows (StackPanel Spacing 12 + 2), so the
+                // card-to-list gap matches the gap between filters.
+                Margin = new Thickness(0, 0, 0, 12)
             };
 
             var cardGrid = new Grid { ColumnSpacing = 16 };
@@ -1800,15 +1820,43 @@ public sealed partial class MainWindow : Window
             cardGrid.Children.Add(routeSep);
 
             outputCard.Child = cardGrid;
-            ChannelEditorPanel.Children.Add(outputCard);
+            ChannelHeaderHost.Child = outputCard;
         }
 
-        // Filter rows
-        var filters = ViewModel.GetFilters(channel);
-        for (int i = 0; i < filters.Count; i++)
+        // Filter rows (PEQ or crossover) + the bottom status bar.
+        AddFilterSection(channel);
+    }
+
+    /// <summary>
+    /// Render the active filter page (PEQ or crossover) into the editor panel,
+    /// followed by the status bar (Enable All / Bypass All + PEQ|XO tab). The XO
+    /// page is only reachable on output channels with V11+ firmware; the tab is
+    /// disabled (but visible) on master/input channels.
+    /// </summary>
+    private void AddFilterSection(Channel channel)
+    {
+        bool xoverAvailable = channel.IsOutput && ViewModel.CrossoverSupported;
+        bool showXover = _filterPageIsXover && xoverAvailable;
+
+        if (showXover)
         {
-            ChannelEditorPanel.Children.Add(CreateFilterEditorRow(channel, i, filters[i]));
+            // No column-header row — matches the PEQ page, which relies on the
+            // self-describing controls (family/type/slope dropdowns + "Hz" suffix).
+            var xbands = ViewModel.GetXoverFilters(channel);
+            for (int i = 0; i < xbands.Count; i++)
+                ChannelEditorPanel.Children.Add(CreateXoverEditorRow(channel, i, xbands[i]));
         }
+        else
+        {
+            var filters = ViewModel.GetFilters(channel);
+            for (int i = 0; i < filters.Count; i++)
+                ChannelEditorPanel.Children.Add(CreateFilterEditorRow(channel, i, filters[i]));
+        }
+
+        // The status bar is pinned (lives outside the ScrollViewer), so it stays
+        // visible while the filter list scrolls. Refresh its content each rebuild.
+        FilterStatusBarHost.Child = BuildFilterStatusBar(channel, showXover, xoverAvailable);
+        FilterStatusBarHost.Visibility = Visibility.Visible;
     }
 
     private Border CreateFilterEditorRow(Channel channel, int bandIndex, FilterParams p)
@@ -1816,8 +1864,8 @@ public sealed partial class MainWindow : Window
         var row = new Border
         {
             Background = new SolidColorBrush(Color.FromArgb(128, 45, 45, 48)),
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(8, 6, 8, 6),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 6, 12, 6),
             Margin = new Thickness(0, 2, 0, 0)
         };
 
@@ -1890,13 +1938,17 @@ public sealed partial class MainWindow : Window
         grid.Children.Add(bandLabel);
         col++;
 
-        // Filter type selector
+        // Filter type selector — PEQ types only (0-7). The crossover types
+        // (8-39) share the FilterType enum but are edited on the XO page.
         var typeCombo = new ComboBox { Width = 120, Tag = (channel, bandIndex), Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] };
-        foreach (var type in Enum.GetValues<FilterType>())
+        foreach (var type in FilterTypeExtensions.PeqTypes)
         {
             typeCombo.Items.Add(new ComboBoxItem { Content = type.GetDisplayName(), Tag = type });
         }
-        typeCombo.SelectedIndex = (int)p.Type;
+        // PEQ bands only list types 0-7. Guard against a stray crossover type
+        // (8-39) round-tripped into a PEQ slot — an out-of-range SelectedIndex
+        // throws and crashes the XAML layer. Fall back to "Off".
+        typeCombo.SelectedIndex = (int)p.Type < FilterTypeExtensions.PeqTypes.Length ? (int)p.Type : 0;
         typeCombo.SelectionChanged += OnFilterTypeChanged;
         typeCombo.Opacity = p.Bypass ? 0.4 : 1.0;
         Grid.SetColumn(typeCombo, col);
@@ -1934,6 +1986,341 @@ public sealed partial class MainWindow : Window
 
         row.Child = grid;
         return row;
+    }
+
+    // ── Crossover (XO) filter page ─────────────────────────────────────────
+    // Shared column geometry for the XO header row and each XO band row so the
+    // "Family / Type / Slope / Frequency" labels line up over their controls.
+    private const double XoDotWidth = 22;     // col 0 (bypass dot)
+    private const double XoFamilyWidth = 140; // col 1
+    private const double XoTypeWidth = 110;   // col 2 (fits "High Pass" + chevron)
+    private const double XoSlopeWidth = 110;  // col 3
+    private const double XoFreqWidth = 58;    // col 4 (text box; +Hz suffix)
+
+    private static Grid BuildXoverGrid()
+    {
+        var grid = new Grid { ColumnSpacing = 16 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(XoDotWidth) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(XoFamilyWidth) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(XoTypeWidth) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(XoSlopeWidth) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        return grid;
+    }
+
+    private Border CreateXoverEditorRow(Channel channel, int localBand, FilterParams p)
+    {
+        var row = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(128, 45, 45, 48)),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 6, 12, 6),
+            Margin = new Thickness(0, 2, 0, 0)
+        };
+
+        var grid = BuildXoverGrid();
+        bool isXover = CrossoverFilter.TryGetMeta(p.Type, out var meta);
+        var family = isXover ? meta.Family : XoverFamily.None;
+        var secondary = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
+
+        // ── Col 0: bypass dot (filled = active, hollow = bypassed / off) ──
+        if (ViewModel.BandBypassSupported)
+        {
+            bool bandActive = !p.Bypass && isXover;
+            var dot = new Ellipse
+            {
+                Width = 12,
+                Height = 12,
+                StrokeThickness = 1.2,
+                Stroke = new SolidColorBrush(bandActive
+                    ? Color.FromArgb(255, 128, 128, 128)
+                    : Color.FromArgb(140, 160, 160, 160)),
+                Fill = bandActive
+                    ? new SolidColorBrush(Color.FromArgb(255, 128, 128, 128))
+                    : new SolidColorBrush(Colors.Transparent)
+            };
+            var bypassButton = new Button
+            {
+                Content = dot,
+                Width = 22,
+                Height = 22,
+                Padding = new Thickness(0),
+                MinWidth = 22,
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                Tag = (channel, localBand),
+                IsEnabled = isXover,          // nothing to bypass when family is Off
+                Opacity = isXover ? 1.0 : 0.35,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            bypassButton.Click += OnXoverBypassToggled;
+            Grid.SetColumn(bypassButton, 0);
+            grid.Children.Add(bypassButton);
+        }
+
+        // ── Col 1: Family (includes "Off" = disabled band) ──
+        var familyCombo = new ComboBox { Width = XoFamilyWidth, Foreground = secondary, Opacity = p.Bypass ? 0.4 : 1.0 };
+        familyCombo.Items.Add(new ComboBoxItem { Content = "Off", Tag = XoverFamily.None });
+        foreach (var fam in CrossoverFilter.Families)
+            familyCombo.Items.Add(new ComboBoxItem { Content = CrossoverFilter.FamilyName(fam), Tag = fam });
+        familyCombo.SelectedIndex = family == XoverFamily.None
+            ? 0
+            : Array.IndexOf(CrossoverFilter.Families, family) + 1;
+        Grid.SetColumn(familyCombo, 1);
+        grid.Children.Add(familyCombo);
+
+        ComboBox? typeCombo = null;
+        ComboBox? slopeCombo = null;
+
+        if (family != XoverFamily.None)
+        {
+            // ── Col 2: Type (Low Pass / High Pass) ──
+            typeCombo = new ComboBox { Width = XoTypeWidth, Foreground = secondary, Opacity = p.Bypass ? 0.4 : 1.0 };
+            typeCombo.Items.Add(new ComboBoxItem { Content = "Low Pass", Tag = false });
+            typeCombo.Items.Add(new ComboBoxItem { Content = "High Pass", Tag = true });
+            typeCombo.SelectedIndex = meta.IsHighPass ? 1 : 0;
+            Grid.SetColumn(typeCombo, 2);
+            grid.Children.Add(typeCombo);
+
+            // ── Col 3: Slope (orders valid for the family) ──
+            slopeCombo = new ComboBox { Width = XoSlopeWidth, Foreground = secondary, Opacity = p.Bypass ? 0.4 : 1.0 };
+            var orders = CrossoverFilter.OrdersFor(family);
+            int slopeSel = 0;
+            for (int i = 0; i < orders.Count; i++)
+            {
+                slopeCombo.Items.Add(new ComboBoxItem { Content = CrossoverFilter.SlopeLabel(orders[i]), Tag = orders[i] });
+                if (orders[i] == meta.Order) slopeSel = i;
+            }
+            slopeCombo.SelectedIndex = slopeSel;
+            Grid.SetColumn(slopeCombo, 3);
+            grid.Children.Add(slopeCombo);
+
+            // ── Col 4: Frequency (Hz) ──
+            var freqPanel = CreateXoverFreqField(channel, localBand, p);
+            freqPanel.Opacity = p.Bypass ? 0.4 : 1.0;
+            Grid.SetColumn(freqPanel, 4);
+            grid.Children.Add(freqPanel);
+        }
+
+        // Compose the three pickers into a single FilterType and push it. Handlers
+        // are attached AFTER initial population so seeding SelectedIndex above
+        // doesn't trigger a spurious write.
+        async void Apply()
+        {
+            var selFamily = (XoverFamily)((ComboBoxItem)familyCombo.SelectedItem).Tag;
+            FilterType newType;
+            if (selFamily == XoverFamily.None)
+            {
+                newType = FilterType.Flat;
+            }
+            else
+            {
+                bool isHigh = typeCombo?.SelectedItem is ComboBoxItem ti && (bool)ti.Tag;
+                int order = slopeCombo?.SelectedItem is ComboBoxItem si ? (int)si.Tag : 4;
+                var orders = CrossoverFilter.OrdersFor(selFamily);
+                if (!orders.Contains(order))
+                    order = orders.Contains(4) ? 4 : orders[0];
+                newType = CrossoverFilter.Compose(selFamily, isHigh, order) ?? FilterType.Flat;
+            }
+
+            float freq = p.Frequency > 0 ? p.Frequency : 1000f;
+            float q = p.Q > 0 ? p.Q : 0.707f;
+            var np = new FilterParams(newType, freq, q, p.Gain) { Bypass = p.Bypass };
+            await ViewModel.SetXoverFilter((int)channel.Id, localBand, np);
+        }
+
+        familyCombo.SelectionChanged += (_, _) => Apply();
+        if (typeCombo != null) typeCombo.SelectionChanged += (_, _) => Apply();
+        if (slopeCombo != null) slopeCombo.SelectionChanged += (_, _) => Apply();
+
+        row.Child = grid;
+        return row;
+    }
+
+    private StackPanel CreateXoverFreqField(Channel channel, int localBand, FilterParams p)
+    {
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+
+        var textBox = new TextBox
+        {
+            Width = XoFreqWidth,
+            Text = FormatFilterValue(p.Frequency, 2),
+            FontSize = 13,
+            FontFamily = new FontFamily("Cascadia Code, Consolas"),
+            Style = (Style)RootGrid.Resources["InlineValueTextBoxStyle"]
+        };
+
+        void Commit()
+        {
+            if (float.TryParse(textBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var hz))
+            {
+                hz = Math.Clamp(hz, 10f, 20000f);
+                var np = new FilterParams(p.Type, hz, p.Q, p.Gain) { Bypass = p.Bypass };
+                _ = ViewModel.SetXoverFilter((int)channel.Id, localBand, np);
+            }
+        }
+
+        textBox.LostFocus += (_, _) => Commit();
+        textBox.KeyDown += (s, e) =>
+        {
+            if (e.Key == Windows.System.VirtualKey.Enter)
+            {
+                e.Handled = true;
+                Commit();
+                FocusSink.Focus(FocusState.Programmatic);
+            }
+        };
+
+        panel.Children.Add(textBox);
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Hz",
+            FontSize = 10,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TextFillColorTertiaryBrush"],
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
+        // Wheel-scrub the cutoff (debounced USB write), mirroring the PEQ fields.
+        panel.PointerWheelChanged += (s, e) =>
+        {
+            var delta = e.GetCurrentPoint(panel).Properties.MouseWheelDelta;
+            if (delta == 0) return;
+
+            var now = DateTime.UtcNow;
+            bool fast = (now - _lastFilterScrollTime).TotalMilliseconds < 40;
+            _lastFilterScrollTime = now;
+
+            int direction = delta > 0 ? 1 : -1;
+            float hz = Math.Clamp(p.Frequency + direction * (fast ? 10 : 1), 10, 20000);
+            var np = new FilterParams(p.Type, hz, p.Q, p.Gain) { Bypass = p.Bypass };
+
+            _isScrollAdjusting = true;
+            ViewModel.SetXoverFilterDeferred((int)channel.Id, localBand, np);
+            _isScrollAdjusting = false;
+            p.Frequency = hz; // keep closure in sync for successive ticks
+            textBox.Text = FormatFilterValue(hz, 0);
+            e.Handled = true;
+        };
+
+        return panel;
+    }
+
+    private void OnXoverBypassToggled(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.Tag is (Channel channel, int localBand))
+        {
+            var bands = ViewModel.GetXoverFilters(channel);
+            if (localBand < bands.Count)
+            {
+                bool newBypass = !bands[localBand].Bypass;
+                _ = ViewModel.SetXoverBandBypass((int)channel.Id, localBand, newBypass);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The status bar pinned below the filter list: "Enable All" / "Bypass All"
+    /// (acting on the currently visible page) on the left, and the PEQ | XO tab
+    /// on the right. The XO tab is disabled on master/input channels and when
+    /// the firmware doesn't expose crossover (pre-V11).
+    /// </summary>
+    private Border BuildFilterStatusBar(Channel channel, bool showXover, bool xoverAvailable)
+    {
+        var grid = new Grid { ColumnSpacing = 8 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        // ── Bulk bypass buttons (act on the visible page) ──
+        var bulkPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+
+        Button BulkButton(string text, bool bypass)
+        {
+            var b = new Button
+            {
+                Content = new TextBlock { Text = text, FontSize = 12, Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] },
+                Height = 26,
+                MinHeight = 0,
+                Padding = new Thickness(10, 0, 10, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            b.Click += async (_, _) =>
+            {
+                if (showXover) await ViewModel.SetAllXoverBypass((int)channel.Id, bypass);
+                else await ViewModel.SetAllBandsBypass((int)channel.Id, bypass);
+            };
+            return b;
+        }
+
+        bulkPanel.Children.Add(BulkButton("Enable All", false));
+        bulkPanel.Children.Add(BulkButton("Bypass All", true));
+        Grid.SetColumn(bulkPanel, 0);
+        grid.Children.Add(bulkPanel);
+
+        // ── PEQ | XO segmented tab ──
+        var tabPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0, VerticalAlignment = VerticalAlignment.Center };
+
+        ToggleButton Tab(string text, bool isXoverTab)
+        {
+            var t = new ToggleButton
+            {
+                Content = new TextBlock { Text = text, FontSize = 11 },
+                MinWidth = 44,
+                MinHeight = 0,
+                Height = 26,
+                Padding = new Thickness(8, 0, 8, 0),
+                IsChecked = isXoverTab == showXover,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            // Calmer checked fill (system-accent-derived) instead of the default
+            // full-intensity accent — matches the Link L/R toggle treatment.
+            t.Resources["ToggleButtonBackgroundChecked"] = (Brush)Application.Current.Resources["AccentFillColorTertiaryBrush"];
+            t.Resources["ToggleButtonBackgroundCheckedPointerOver"] = (Brush)Application.Current.Resources["AccentFillColorSecondaryBrush"];
+            t.Resources["ToggleButtonBackgroundCheckedPressed"] = (Brush)Application.Current.Resources["AccentFillColorTertiaryBrush"];
+            t.Resources["ToggleButtonForegroundChecked"] = (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
+            t.Click += (_, _) =>
+            {
+                _filterPageIsXover = isXoverTab;
+                if (_selectedChannel != null) ShowChannelEditor(_selectedChannel);
+            };
+            return t;
+        }
+
+        var peqTab = Tab("PEQ", false);
+        var xoTab = Tab("XO", true);
+        // Crossover only exists on output channels with V11+ firmware.
+        xoTab.IsEnabled = xoverAvailable;
+        ToolTipService.SetToolTip(xoTab, xoverAvailable
+            ? null
+            : new ToolTip { Content = "Crossover filters apply to output channels (V11+ firmware)" });
+
+        tabPanel.Children.Add(peqTab);
+        tabPanel.Children.Add(xoTab);
+        Grid.SetColumn(tabPanel, 2);
+        grid.Children.Add(tabPanel);
+
+        return new Border
+        {
+            // Translucent in-app acrylic so the filter list shows through as it
+            // scrolls behind the bar. TintLuminosityOpacity keeps the controls
+            // readable over busy content; FallbackColor covers the case where
+            // OS transparency effects are disabled.
+            Background = new AcrylicBrush
+            {
+                TintColor = Color.FromArgb(255, 45, 45, 48),
+                TintOpacity = 0.25,
+                TintLuminosityOpacity = 0.45,
+                FallbackColor = Color.FromArgb(210, 45, 45, 48)
+            },
+            // Same hairline tone as the top card's underline so the header and
+            // footer read as a matched pair framing the list.
+            BorderBrush = new SolidColorBrush(Color.FromArgb(32, 255, 255, 255)),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 4, 12, 4),
+            Child = grid
+        };
     }
 
     private static string FormatFilterValue(float value, int decimals = 2) =>
@@ -2019,6 +2406,9 @@ public sealed partial class MainWindow : Window
     private void ShowDashboard()
     {
         _selectedChannel = null;
+        FilterStatusBarHost.Visibility = Visibility.Collapsed;
+        ChannelHeaderHost.Visibility = Visibility.Collapsed;
+        ChannelHeaderHost.Child = null;
         BodePlot.SetMasterLinkedGradient(ViewModel.MasterPeqLinked);
         BodePlot.SetSelectedChannel(-1);
         if (AppSettings.Instance.PopoutFollowsSelectedChannel)
@@ -2095,6 +2485,9 @@ public sealed partial class MainWindow : Window
 
             // Return to empty dashboard view
             _selectedChannel = null;
+            FilterStatusBarHost.Visibility = Visibility.Collapsed;
+            ChannelHeaderHost.Visibility = Visibility.Collapsed;
+            ChannelHeaderHost.Child = null;
             ChannelEditorPanel.Visibility = Visibility.Collapsed;
             ChannelEditorPanel.Children.Clear();
             DashboardPanel.Visibility = Visibility.Visible;
@@ -3067,6 +3460,13 @@ public sealed partial class MainWindow : Window
             if (!show) return;
 
             int target = (int)(byte)ViewModel.ActiveInputSource;
+            // Guard against the firmware reporting an input source this combo
+            // doesn't list (e.g. I2S=2 on firmware that bundles I2S input).
+            // Setting an out-of-range SelectedIndex throws ArgumentException,
+            // which surfaces from the native XAML layer as a stowed-exception
+            // crash on connect. Leave the selection unchanged in that case.
+            if (target < 0 || target >= SourceComboBox.Items.Count)
+                return;
             if (SourceComboBox.SelectedIndex != target)
                 SourceComboBox.SelectedIndex = target;
         }
@@ -3515,6 +3915,11 @@ public sealed partial class MainWindow : Window
         // per-preset. In with-preset mode, regular Save Preset already does it.
         SaveMasterVolumeMenuItem.IsEnabled =
             ViewModel.IsDeviceConnected && ViewModel.MasterVolumeMode == 0;
+        // Same shape for "Save Output Config" — only meaningful in independent
+        // mode (otherwise IO travels with the preset and is captured by Save
+        // Preset). See output_config_independent_load_spec.md.
+        SaveOutputConfigMenuItem.IsEnabled =
+            ViewModel.IsDeviceConnected && ViewModel.OutputConfigMode == 0;
     }
 
     private async void OnSaveMasterVolumeClick(object sender, RoutedEventArgs e)
@@ -3527,6 +3932,18 @@ public sealed partial class MainWindow : Window
         var status = await ViewModel.SaveMasterVolume();
         if (status != 0)
             await ShowErrorDialog($"Failed to save master volume (status 0x{status:X2})");
+    }
+
+    private async void OnSaveOutputConfigClick(object sender, RoutedEventArgs e)
+    {
+        if (!ViewModel.IsDeviceConnected)
+        {
+            await ShowErrorDialog("Not connected to device");
+            return;
+        }
+        var status = await ViewModel.SaveOutputConfig();
+        if (status != 0)
+            await ShowErrorDialog($"Failed to save output config (status 0x{status:X2})");
     }
 
     private async void OnSavePresetClick(object sender, RoutedEventArgs e)
@@ -3586,32 +4003,12 @@ public sealed partial class MainWindow : Window
         }
         else
         {
-            // Legacy: fall back to LoadParams
-            var dialog = new ContentDialog
-            {
-                Title = "Revert to Saved",
-                Content = "Revert to last saved parameters?\n\nCurrent unsaved changes will be lost.",
-                PrimaryButtonText = "Revert",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Primary,
-                XamlRoot = Content.XamlRoot
-            };
-
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-            {
-                var flashResult = await ViewModel.LoadParams();
-                switch (flashResult)
-                {
-                    case Usb.FlashResult.Ok:
-                        break;
-                    case Usb.FlashResult.ErrNoData:
-                        await ShowInfoDialog("No saved parameters found.\n\nThe device is using factory defaults.");
-                        break;
-                    default:
-                        await ShowErrorDialog("Failed to load parameters");
-                        break;
-                }
-            }
+            // Pre-preset firmware (V2 and earlier) is no longer supported here:
+            // the 0x52 opcode that used to mean REQ_LOAD_PARAMS has been
+            // repurposed by current firmware to REQ_SAVE_OUTPUT_CONFIG. There
+            // is no safe "revert" path against legacy firmware without that
+            // opcode, so surface a clear message instead.
+            await ShowInfoDialog("Revert is unavailable on this firmware. Update the firmware to use presets.");
         }
     }
 

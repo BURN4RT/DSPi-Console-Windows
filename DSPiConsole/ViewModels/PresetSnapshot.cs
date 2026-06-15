@@ -41,6 +41,11 @@ public class PresetSnapshot
     public Dictionary<int, float> OutputGains = new();
 
     public FilterParams[,] Eq = new FilterParams[11, 12];
+
+    // Crossover bands (V11+ firmware): 4 per output channel. Master/input rows
+    // stay null. Captured so crossover edits register as preset-dirty.
+    public FilterParams[,] Xover = new FilterParams[11, 4];
+
     public Dictionary<int, string> ChannelNames = new();
 
     public Dictionary<int, byte> OutputPins = new();
@@ -54,11 +59,10 @@ public class PresetSnapshot
     // Input source (V7+ wire format, V13+ slot data) — saved with each preset.
     public InputSource InputSource;
 
-    // SPDIF RX pin: V13+ slots persist it alongside the output pins, and
-    // apply_slot_to_live restores it when the directory's include_pins flag
-    // is on (flash_storage.c:695). Tracked the same way as OutputPins —
-    // captured unconditionally; the include_pins flag only controls what
-    // preset_load applies.
+    // SPDIF RX pin: V13+ slots persist it alongside the output pins.
+    // Tracked the same way as OutputPins — captured unconditionally; the
+    // directory's output_config_mode flag only controls whether preset_load
+    // applies it (with-preset) or leaves the live IO untouched (independent).
     public byte SpdifRxPin;
 
     // LG Sound Sync enable (V8+ preset slot field). Only the user-writable
@@ -126,6 +130,16 @@ public class PresetSnapshot
             {
                 snap.Eq[id, b] = filters[b].Clone();
             }
+        }
+
+        // Crossover bands (output channels only)
+        foreach (var ch in Channel.All)
+        {
+            if (!ch.IsOutput) continue;
+            int id = (int)ch.Id;
+            var xbands = vm.GetXoverFilters(ch);
+            for (int b = 0; b < xbands.Count && b < 4; b++)
+                snap.Xover[id, b] = xbands[b].Clone();
         }
 
         // Channel names
@@ -289,6 +303,27 @@ public static class PresetDiff
             }
         }
 
+        // Crossover bands per output channel
+        foreach (var ch in Channel.All)
+        {
+            if (!ch.IsOutput) continue;
+            int id = (int)ch.Id;
+            int xChanges = 0;
+            for (int b = 0; b < 4; b++)
+            {
+                var oldF = old.Xover[id, b];
+                var curF = cur.Xover[id, b];
+                if (oldF == null && curF == null) continue;
+                if (oldF == null || curF == null || !oldF.Equals(curF))
+                    xChanges++;
+            }
+            if (xChanges > 0)
+            {
+                var name = vm.GetChannelName(ch);
+                changes.Add($"{xChanges} crossover band{(xChanges == 1 ? "" : "s")} changed on {name}");
+            }
+        }
+
         // Channel names
         foreach (var ch in Channel.All)
         {
@@ -299,44 +334,53 @@ public static class PresetDiff
                 changes.Add($"{oldName} \u2192 {curName}");
         }
 
-        // Pin assignments
-        int pinChanges = 0;
-        foreach (var key in old.OutputPins.Keys)
+        // Physical IO block (output pins/types, I2S MCK/BCK, SPDIF RX pin)
+        // participates in preset dirty only when the firmware is configured
+        // to store it with each preset. In independent mode, the wiring is
+        // device-global and managed separately via "Save Output Config".
+        if (vm.OutputConfigMode == 1)
         {
-            byte oldPin = old.OutputPins[key];
-            byte curPin = cur.OutputPins.TryGetValue(key, out var cp) ? cp : (byte)0;
-            if (oldPin != curPin) pinChanges++;
+            // Pin assignments
+            int pinChanges = 0;
+            foreach (var key in old.OutputPins.Keys)
+            {
+                byte oldPin = old.OutputPins[key];
+                byte curPin = cur.OutputPins.TryGetValue(key, out var cp) ? cp : (byte)0;
+                if (oldPin != curPin) pinChanges++;
+            }
+            if (pinChanges > 0)
+                changes.Add($"{pinChanges} pin assignment{(pinChanges == 1 ? "" : "s")} changed");
+
+            // Output slot types (SPDIF/I2S)
+            int slotChanges = 0;
+            for (int s = 0; s < old.OutputSlotTypes.Length; s++)
+                if (old.OutputSlotTypes[s] != cur.OutputSlotTypes[s]) slotChanges++;
+            if (slotChanges > 0)
+                changes.Add($"{slotChanges} output slot type{(slotChanges == 1 ? "" : "s")} changed");
+
+            // I2S hardware config
+            if (old.I2SBckPin != cur.I2SBckPin)
+                changes.Add($"I2S BCK pin: {old.I2SBckPin} → {cur.I2SBckPin}");
+            if (old.MckEnabled != cur.MckEnabled)
+                changes.Add($"MCK: {(cur.MckEnabled ? "enabled" : "disabled")}");
+            if (old.MckPin != cur.MckPin)
+                changes.Add($"MCK pin: {old.MckPin} → {cur.MckPin}");
+            if (old.MckMultiplier != cur.MckMultiplier)
+                changes.Add($"MCK multiplier: {old.MckMultiplier}x → {cur.MckMultiplier}x");
+
+            // SPDIF RX pin (part of the IO block per the spec — input *source*
+            // is a separate per-preset listening choice, handled below).
+            if (old.SpdifRxPin != cur.SpdifRxPin)
+                changes.Add($"S/PDIF RX pin: GPIO {old.SpdifRxPin} → GPIO {cur.SpdifRxPin}");
         }
-        if (pinChanges > 0)
-            changes.Add($"{pinChanges} pin assignment{(pinChanges == 1 ? "" : "s")} changed");
 
-        // Output slot types (SPDIF/I2S)
-        int slotChanges = 0;
-        for (int s = 0; s < old.OutputSlotTypes.Length; s++)
-            if (old.OutputSlotTypes[s] != cur.OutputSlotTypes[s]) slotChanges++;
-        if (slotChanges > 0)
-            changes.Add($"{slotChanges} output slot type{(slotChanges == 1 ? "" : "s")} changed");
-
-        // I2S hardware config
-        if (old.I2SBckPin != cur.I2SBckPin)
-            changes.Add($"I2S BCK pin: {old.I2SBckPin} → {cur.I2SBckPin}");
-        if (old.MckEnabled != cur.MckEnabled)
-            changes.Add($"MCK: {(cur.MckEnabled ? "enabled" : "disabled")}");
-        if (old.MckPin != cur.MckPin)
-            changes.Add($"MCK pin: {old.MckPin} → {cur.MckPin}");
-        if (old.MckMultiplier != cur.MckMultiplier)
-            changes.Add($"MCK multiplier: {old.MckMultiplier}x → {cur.MckMultiplier}x");
-
-        // Input source
+        // Input source (USB vs SPDIF) is NOT part of the IO block — it stays
+        // per-preset in both modes, as it's a listening choice not wiring.
         if (old.InputSource != cur.InputSource)
         {
             string Name(InputSource s) => s == InputSource.Spdif ? "S/PDIF" : "USB";
             changes.Add($"Input source: {Name(old.InputSource)} → {Name(cur.InputSource)}");
         }
-
-        // SPDIF RX pin
-        if (old.SpdifRxPin != cur.SpdifRxPin)
-            changes.Add($"S/PDIF RX pin: GPIO {old.SpdifRxPin} → GPIO {cur.SpdifRxPin}");
 
         // LG Sound Sync
         if (old.LgSoundSyncEnabled != cur.LgSoundSyncEnabled)

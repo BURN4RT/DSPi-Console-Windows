@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <settings:SettingsModule
     x:Class="DSPiConsole.Settings.Pages.PresetsInclusionPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -7,9 +7,9 @@
     xmlns:controls="using:CommunityToolkit.WinUI.Controls">
 
     <!--
-        Single flash-persistent toggle (REQ_SET_PRESET_INCLUDE_PINS).
-        Controls whether GPIO pin assignments travel with the preset or
-        stay device-global.
+        Output config persistence mode (REQ_SET_OUTPUT_CONFIG_MODE, 0x98).
+        Governs whether the physical IO block (output pins/types, I2S MCK/BCK,
+        SPDIF RX pin) travels with each preset or stays device-global.
     -->
     <StackPanel Spacing="4">
 
@@ -26,11 +26,15 @@
                        TextWrapping="Wrap"/>
         </Border>
 
-        <controls:SettingsCard x:Name="IncludePinsCard"
-                                Header="Include pin assignments in presets"
-                                Description="When on, each preset stores its own GPIO pin map (output type, BCK/MCK/RX). When off, pins are device-global and unchanged by preset loads.">
-                        <ToggleSwitch x:Name="IncludePinsToggle" OnContent="On" OffContent="Off"
-                          Toggled="OnIncludePinsToggled"/>
+        <controls:SettingsCard x:Name="OutputConfigModeCard"
+                                Header="Output configuration"
+                                Description="How the physical IO config (output pins, output types, I2S MCK/BCK, S/PDIF RX pin) is persisted. With preset: each preset carries its own IO. Independent: IO is device-global and unchanged by preset loads; explicitly save with File &#x2192; Save Output Config.">
+            <ComboBox x:Name="OutputConfigModeCombo"
+                      MinWidth="160"
+                      SelectionChanged="OnOutputConfigModeChanged">
+                <ComboBoxItem Content="With preset"  Tag="1"/>
+                <ComboBoxItem Content="Independent"  Tag="0"/>
+            </ComboBox>
         </controls:SettingsCard>
     </StackPanel>
 </settings:SettingsModule>

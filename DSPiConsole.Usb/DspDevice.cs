@@ -22,7 +22,12 @@ public static class VendorCommands
     public const byte GetDelay = 0x49;
     public const byte GetStatus = 0x50;
     public const byte SaveParams = 0x51;
-    public const byte LoadParams = 0x52;
+    // 0x52 — repurposed by the firmware (output_config_independent_load_spec.md).
+    // Originally REQ_LOAD_PARAMS; on current firmware this is REQ_SAVE_OUTPUT_CONFIG,
+    // which snapshots the live IO config (output pins/types, I2S MCK/BCK, SPDIF RX
+    // pin) into the device-global directory block. Hosts use REQ_PRESET_LOAD (0x91)
+    // for "revert to saved".
+    public const byte SaveOutputConfig = 0x52;
     public const byte FactoryReset = 0x53;
     public const byte SetChannelGain = 0x54;
     public const byte GetChannelGain = 0x55;
@@ -74,8 +79,12 @@ public static class VendorCommands
     public const byte PresetGetDir         = 0x95;
     public const byte PresetSetStartup     = 0x96;
     public const byte PresetGetStartup     = 0x97;
-    public const byte PresetSetIncludePins = 0x98;
-    public const byte PresetGetIncludePins = 0x99;
+    // Output config mode (formerly REQ_PRESET_SET/GET_INCLUDE_PINS — same opcodes,
+    // same 1:1 value mapping (1=with preset, 0=independent), now governs the entire
+    // physical IO block (output pins/types, I2S MCK/BCK, SPDIF RX pin) rather than
+    // just the GPIO pin assignments. See output_config_independent_load_spec.md.
+    public const byte SetOutputConfigMode  = 0x98;
+    public const byte GetOutputConfigMode  = 0x99;
     public const byte PresetGetActive      = 0x9A;
     public const byte SetChannelName       = 0x9B;
     public const byte GetChannelName       = 0x9C;
@@ -316,7 +325,11 @@ public struct PresetDirectoryInfo
     public byte StartupMode;     // 0=last used, 1=specific slot, 2=factory defaults
     public byte DefaultSlot;
     public byte LastActiveSlot;   // 0xFF if none
-    public bool IncludePins;
+    // Output config persistence mode (byte 5 of GET_DIR). 0=independent
+    // (IO block lives in the directory and is applied at boot only),
+    // 1=with-preset (IO travels with each preset slot). Firmware clamps
+    // >1 to independent. See output_config_independent_load_spec.md.
+    public byte OutputConfigMode;
     public byte MasterVolumeMode; // 0=independent/global, 1=with preset (V12+)
 }
 
@@ -422,6 +435,13 @@ public partial class DspDevice : ObservableObject, IDisposable
     /// knobs once the firmware ships that feature.</summary>
     public event EventHandler<BandParamNotification>? BandParamNotified;
 
+    /// <summary>Fired when the firmware emits a per-band PARAM_CHANGED notification
+    /// whose offset falls inside WireBulkParams.crossovers (V11+, size 16).
+    /// <see cref="BandParamNotification.Band"/> carries the <em>local</em>
+    /// crossover band (0..3), not the wire band index (20..23). Origin tag lets
+    /// subscribers suppress their own EP0 echoes.</summary>
+    public event EventHandler<BandParamNotification>? XoverBandParamNotified;
+
     /// <summary>Fired when the firmware emits a PARAM_CHANGED notification for
     /// audio_state.volume (the vendor-channel user volume, in dB). Origin tag
     /// distinguishes a UAC1 host echo (system tray, hardware volume keys) from
@@ -452,6 +472,20 @@ public partial class DspDevice : ObservableObject, IDisposable
     // occupies the first 4 bytes (float dB) of the 16-byte WireUserVolume
     // struct; user_mute lives at +4.
     private const int UserVolumeWireOffset = 2928;
+
+    // V11+ crossover block sits at offsetof(WireBulkParams, crossovers) = 2960.
+    // WireCrossoverConfig is WireBandParams[11][4]; each band is 16 bytes.
+    private const int CrossoverWireOffset = BulkParamsParser.OffsetCrossover;
+    private const int CrossoverBandCount = BulkParamsParser.WireMaxXoverBands;
+
+    /// <summary>
+    /// Wire-format version reported by the most recent bulk params fetch
+    /// (WireBulkParams.header.format_version). 0 until the first bulk read.
+    /// Gates the <see cref="EncodeEqValue"/> band-field width: V11 widened the
+    /// REQ_GET_EQ_PARAM band field from 4 to 5 bits to address crossover bands
+    /// 20..23. See crossover_filters_spec.md §3.2.
+    /// </summary>
+    public int WireFormatVersion { get; set; }
 
     public DspDevice()
     {
@@ -966,11 +1000,19 @@ public partial class DspDevice : ObservableObject, IDisposable
     private const int EqParamGain = 3;
 
     /// <summary>
-    /// Encode wValue for EQ parameter access: (channel &lt;&lt; 8) | (band &lt;&lt; 4) | param
+    /// Encode wValue for REQ_GET_EQ_PARAM access. The band-field width depends
+    /// on the firmware wire-format version (crossover_filters_spec.md §3.2):
+    ///   • V11+: 5-bit band, 3-bit param — (channel &lt;&lt; 8) | (band &lt;&lt; 3) | param.
+    ///     Required so crossover bands 20..23 are addressable.
+    ///   • &lt; V11: legacy 4-bit band, 4-bit param — (channel &lt;&lt; 8) | (band &lt;&lt; 4) | param.
+    /// Only REQ_GET_EQ_PARAM changed; SET and the bulk transfer carry the band
+    /// in a full byte and are unaffected.
     /// </summary>
-    private static ushort EncodeEqValue(int channel, int band, int param = 0)
+    private ushort EncodeEqValue(int channel, int band, int param = 0)
     {
-        return (ushort)((channel << 8) | (band << 4) | param);
+        return WireFormatVersion >= 11
+            ? (ushort)((channel << 8) | (band << 3) | param)
+            : (ushort)((channel << 8) | (band << 4) | param);
     }
 
     /// <summary>
@@ -1253,13 +1295,15 @@ public partial class DspDevice : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Load parameters from flash memory.
-    /// Returns FlashResult code.
+    /// Persist the current live IO config (output pins/types, I2S MCK/BCK, SPDIF
+    /// RX pin) into the device-global directory block. Used in independent mode
+    /// to survive reboot — runtime changes via the per-field setters take effect
+    /// immediately, but only this save makes them stick. Returns PresetResult.
     /// </summary>
-    public byte LoadParams()
+    public byte SaveOutputConfig()
     {
-        var response = ControlTransferIn(VendorCommands.LoadParams, 0, 1);
-        return response != null && response.Length >= 1 ? response[0] : FlashResult.ErrWrite;
+        var response = ControlTransferIn(VendorCommands.SaveOutputConfig, 0, 1);
+        return response != null && response.Length >= 1 ? response[0] : PresetResult.FlashWriteError;
     }
 
     /// <summary>
@@ -1967,6 +2011,33 @@ public partial class DspDevice : ObservableObject, IDisposable
                         Source = source
                     });
                 }
+                // Crossover band change (V11+): offset inside
+                // WireBulkParams.crossovers (WireBandParams[11][4]), size 16.
+                // Reports the LOCAL crossover band (0..3); the subscriber maps
+                // it back to wire band 20..23 if needed.
+                else if (size == BulkParamsParser.WireBandSize
+                    && offset >= CrossoverWireOffset
+                    && offset <  CrossoverWireOffset
+                                 + BulkParamsParser.WireMaxChannels
+                                 * CrossoverBandCount
+                                 * BulkParamsParser.WireBandSize
+                    && (offset - CrossoverWireOffset)
+                       % BulkParamsParser.WireBandSize == 0)
+                {
+                    int flat = (offset - CrossoverWireOffset) / BulkParamsParser.WireBandSize;
+                    int ch = flat / CrossoverBandCount;
+                    int local = flat % CrossoverBandCount;
+                    var bandBuf = new byte[BulkParamsParser.WireBandSize];
+                    Buffer.BlockCopy(buf, 12, bandBuf, 0, BulkParamsParser.WireBandSize);
+                    var fp = BulkParamsParser.ParseBand(bandBuf, 0);
+                    XoverBandParamNotified?.Invoke(this, new BandParamNotification
+                    {
+                        Channel = ch,
+                        Band = local,
+                        Params = fp,
+                        Source = source
+                    });
+                }
                 // Channel name change: offset is in WireBulkParams.channel_names range,
                 // size is exactly WIRE_NAME_LEN (32).
                 else if (size == WireChannelNameLen
@@ -2020,18 +2091,19 @@ public partial class DspDevice : ObservableObject, IDisposable
 
     /// <summary>
     /// Fetch all DSP parameters in a single bulk transfer (firmware v2+).
-    /// Wire-format V10 is 2960 bytes (V7 2912 + LG Sound Sync + user volume
-    /// + DAC HW mute, 16 bytes each). Older firmware returns fewer bytes and
+    /// Wire-format V11 is 3664 bytes (V10 2960 + crossover section, 704 bytes).
+    /// We MUST request the largest size the firmware might return: a control-IN
+    /// whose data stage exceeds the host's requested length triggers a libusb
+    /// overflow on the WinUSB backend (a native fault that crashes the process,
+    /// not a catchable managed exception). Older firmware returns fewer bytes and
     /// <see cref="BulkParamsParser"/> keys feature presence off the actual
-    /// transfer length so this stays correct against any version &gt;= V2.
-    /// Bump this only when a new wire-format section is added on the firmware
-    /// side — the parser already handles a shorter response gracefully, so
-    /// future versions need a length bump here to deliver the new bytes.
-    /// Returns the response, or null if the transfer failed.
+    /// transfer length, so over-requesting is safe — a V10 device simply sends a
+    /// short 2960-byte response. Bump this whenever the firmware adds a new wire
+    /// section. Returns the response, or null if the transfer failed.
     /// </summary>
     public byte[]? GetAllParams()
     {
-        return ControlTransferIn(VendorCommands.GetAllParams, 0, BulkParamsParser.PacketSizeV10);
+        return ControlTransferIn(VendorCommands.GetAllParams, 0, BulkParamsParser.PacketSizeV11);
     }
 
     #region Input Source (V7+)
@@ -2293,7 +2365,7 @@ public partial class DspDevice : ObservableObject, IDisposable
             StartupMode = response[2],
             DefaultSlot = response[3],
             LastActiveSlot = response[4],
-            IncludePins = response[5] != 0,
+            OutputConfigMode = response[5],
             MasterVolumeMode = response.Length >= 7 ? response[6] : (byte)0
         };
     }
@@ -2308,11 +2380,24 @@ public partial class DspDevice : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Set whether pin assignments are included in presets.
+    /// Set output-config persistence mode. 0 = independent (IO config is
+    /// device-global, applied at boot only, persisted via SaveOutputConfig);
+    /// 1 = with preset (IO travels with each preset slot). Firmware clamps
+    /// other values to independent. See output_config_independent_load_spec.md.
     /// </summary>
-    public bool SetPresetIncludePins(bool include)
+    public bool SetOutputConfigMode(byte mode)
     {
-        return ControlTransferOut(VendorCommands.PresetSetIncludePins, 0, new[] { (byte)(include ? 1 : 0) });
+        return ControlTransferOut(VendorCommands.SetOutputConfigMode, 0, new[] { mode });
+    }
+
+    /// <summary>
+    /// Get the current output-config persistence mode. Returns null on failure.
+    /// </summary>
+    public byte? GetOutputConfigMode()
+    {
+        var response = ControlTransferIn(VendorCommands.GetOutputConfigMode, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0];
     }
 
     /// <summary>

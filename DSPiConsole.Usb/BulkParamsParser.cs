@@ -101,6 +101,14 @@ public class BulkParams
     // wire layout lives in one place.
     public DacHwMuteConfig? DacHwMute;
     public bool HasDacHwMute;
+
+    // Crossover bands (offset 2960, 704 bytes) — V11+, present when packet
+    // >= 3664. [channel, localBand] = 11 × 4 × 16. Crossover shares the
+    // 16-byte WireBandParams layout PEQ uses (Q/gain are ignored for crossover
+    // types). Firmware zeroes the master-channel rows (ch 0,1); the app hides
+    // crossover controls there. localBand 0..3 maps to wire band index 20..23.
+    public FilterParams[,] Xover = new FilterParams[11, 4];
+    public bool HasCrossover;
 }
 
 /// <summary>
@@ -116,6 +124,7 @@ public static class BulkParamsParser
     public const int PacketSize = 2832;         // V2 minimum payload
     public const int PacketSizeV7 = 2912;       // V7 payload (V2 + I2S + leveller + preamp + master + input)
     public const int PacketSizeV10 = 2960;      // V10 payload (V7 + LG + user vol + DAC HW mute)
+    public const int PacketSizeV11 = 3664;      // V11 payload (V10 + crossover section, 704 bytes)
     public const byte MinFormatVersion = 2;
 
     // Section offsets
@@ -131,6 +140,8 @@ public static class BulkParamsParser
     internal const int WireBandSize = 16;        // sizeof(WireBandParams)
     internal const int WireMaxChannels = 11;
     internal const int WireMaxBands = 12;
+    internal const int WireMaxXoverBands = 4;
+    internal const int OffsetCrossover = 2960;   // offsetof(WireBulkParams, crossovers); V11+. Exposed for notify dispatch.
     private const int OffsetChannelNames = 2480;
 
     public static BulkParams? Parse(byte[] buffer)
@@ -317,6 +328,25 @@ public static class BulkParamsParser
         {
             p.DacHwMute = DacHwMuteConfig.TryParse(buffer, OffsetDacHwMute);
             p.HasDacHwMute = p.DacHwMute != null;
+        }
+
+        // ── Crossover bands (704 bytes = 11 × 4 × 16, V11+) ──
+        // WireCrossoverConfig.bands[ch][localBand]; each entry is the same
+        // 16-byte WireBandParams PEQ uses. Master rows (ch 0,1) are zeroed by
+        // firmware. localBand 0..3 ⇔ wire band index 20..23.
+        if (p.FormatVersion >= 11 &&
+            buffer.Length >= OffsetCrossover + WireMaxChannels * WireMaxXoverBands * WireBandSize)
+        {
+            p.HasCrossover = true;
+            p.Xover = new FilterParams[WireMaxChannels, WireMaxXoverBands];
+            for (int ch = 0; ch < WireMaxChannels; ch++)
+            {
+                for (int band = 0; band < WireMaxXoverBands; band++)
+                {
+                    int off = OffsetCrossover + (ch * WireMaxXoverBands + band) * WireBandSize;
+                    p.Xover[ch, band] = ParseBand(buffer, off);
+                }
+            }
         }
 
         return p;

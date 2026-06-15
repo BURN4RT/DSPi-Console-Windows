@@ -81,6 +81,8 @@
                         </MenuFlyoutItem>
                         <MenuFlyoutItem x:Name="SaveMasterVolumeMenuItem" Text="Save Master Volume"
                                         Click="OnSaveMasterVolumeClick"/>
+                        <MenuFlyoutItem x:Name="SaveOutputConfigMenuItem" Text="Save Output Config"
+                                        Click="OnSaveOutputConfigClick"/>
                         <MenuFlyoutItem Text="Revert Preset..." Click="OnRevertPresetClick"/>
                         <MenuFlyoutItem Text="Factory Reset..." Click="OnFactoryResetClick"/>
                         <MenuFlyoutSeparator/>
@@ -451,19 +453,39 @@
                 <StackPanel x:Name="LegendPanel" Grid.Row="2" Orientation="Horizontal"
                             Spacing="8" Margin="0,4,0,16" />
 
-                <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Hidden">
-                    <Grid>
-                        <StackPanel x:Name="DashboardPanel" Spacing="16">
-                            <StackPanel.ChildrenTransitions>
-                                <TransitionCollection>
-                                    <AddDeleteThemeTransition />
-                                    <RepositionThemeTransition />
-                                </TransitionCollection>
-                            </StackPanel.ChildrenTransitions>
-                        </StackPanel>
-                        <StackPanel x:Name="ChannelEditorPanel" Visibility="Collapsed" Spacing="12" />
-                    </Grid>
-                </ScrollViewer>
+                <Grid Grid.Row="3">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Static per-channel header (output gain/delay/mute card, or
+                         the master input header). Stays fixed above the scrolling
+                         filter list; populated by ShowChannelEditor. -->
+                    <Border x:Name="ChannelHeaderHost" Grid.Row="0" Visibility="Collapsed" />
+
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Hidden">
+                        <Grid>
+                            <StackPanel x:Name="DashboardPanel" Spacing="16">
+                                <StackPanel.ChildrenTransitions>
+                                    <TransitionCollection>
+                                        <AddDeleteThemeTransition />
+                                        <RepositionThemeTransition />
+                                    </TransitionCollection>
+                                </StackPanel.ChildrenTransitions>
+                            </StackPanel>
+                            <StackPanel x:Name="ChannelEditorPanel" Visibility="Collapsed"
+                                        Spacing="12" />
+                        </Grid>
+                    </ScrollViewer>
+
+                    <!-- Status bar pinned below the filter list (always visible).
+                         The 14px top margin matches the gap between filter rows.
+                         Populated by AddFilterSection; hidden while the dashboard shows. -->
+                    <Border x:Name="FilterStatusBarHost" Grid.Row="2" Margin="0,14,0,0"
+                            Visibility="Collapsed" />
+                </Grid>
             </Grid>
         </Grid>
     </Grid>

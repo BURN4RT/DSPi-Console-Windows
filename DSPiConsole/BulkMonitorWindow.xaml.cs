@@ -317,6 +317,17 @@ internal static class NotifyPacketDecoder
             int flat = (offset - OffsetEq) / WireBandSize;
             return $"eq[ch={flat / WireMaxBands},band={flat % WireMaxBands}]";
         }
+        // Crossover band region (V11+): 11 channels × 4 bands × 16 bytes at 2960
+        const int OffsetCrossover = 2960;
+        const int WireMaxXoverBands = 4;
+        if (size == WireBandSize
+            && offset >= OffsetCrossover
+            && offset < OffsetCrossover + WireMaxChannels * WireMaxXoverBands * WireBandSize
+            && (offset - OffsetCrossover) % WireBandSize == 0)
+        {
+            int flat = (offset - OffsetCrossover) / WireBandSize;
+            return $"crossover[ch={flat / WireMaxXoverBands},band={flat % WireMaxXoverBands}]";
+        }
         // Channel name
         if (size == WireChannelNameLen
             && offset >= ChannelNamesWireOffset
