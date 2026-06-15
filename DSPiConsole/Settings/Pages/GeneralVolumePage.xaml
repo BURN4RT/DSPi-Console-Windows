@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <settings:SettingsModule
     x:Class="DSPiConsole.Settings.Pages.GeneralVolumePage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -6,19 +6,67 @@
     xmlns:settings="using:DSPiConsole.Settings"
     xmlns:controls="using:CommunityToolkit.WinUI.Controls">
 
+    <!--
+        Globals — device-wide settings that are NOT part of an individual
+        preset's DSP state:
+          • Master volume persistence mode (always available).
+          • Power-on startup behaviour (requires preset support).
+          • Output-config (physical IO) persistence mode (requires preset support).
+        The startup + output-config cards are hidden behind a notice when the
+        firmware doesn't expose presets. (Consolidates the former Volume,
+        Presets › Startup, and Presets › Inclusion pages.)
+    -->
     <StackPanel Spacing="4">
-        <!--
-            Master Volume Mode — flash-persistent (REQ_SET_MASTER_VOLUME_MODE).
-            Phase 1: writes flash on each change, matching the legacy dialog.
-            Phase 2 will route this through the pending-change tracker.
-        -->
+
         <controls:SettingsCard Header="Master volume mode"
                                 Description="How the master volume value is persisted across preset changes.">
-                        <ComboBox x:Name="MasterVolumeModeCombo"
+            <ComboBox x:Name="MasterVolumeModeCombo"
                       MinWidth="160"
                       SelectionChanged="OnMasterVolumeModeChanged">
                 <ComboBoxItem Content="Global"     Tag="0"/>
                 <ComboBoxItem Content="Per preset" Tag="1"/>
+            </ComboBox>
+        </controls:SettingsCard>
+
+        <Border x:Name="UnsupportedNotice"
+                Padding="12,8"
+                Background="{ThemeResource SubtleFillColorTertiaryBrush}"
+                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="4"
+                Visibility="Collapsed">
+            <TextBlock Text="Startup and output-configuration options require preset support, which this firmware version doesn't provide."
+                       FontSize="12"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       TextWrapping="Wrap"/>
+        </Border>
+
+        <controls:SettingsCard x:Name="StartupModeCard"
+                                Header="Startup mode"
+                                Description="Which preset loads when the device powers on.">
+            <ComboBox x:Name="StartupModeCombo" MinWidth="160"
+                      SelectionChanged="OnStartupModeChanged">
+                <ComboBoxItem Content="Default preset" Tag="0"/>
+                <ComboBoxItem Content="Last used"      Tag="1"/>
+            </ComboBox>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="DefaultPresetCard"
+                                Header="Default startup preset"
+                                Description="Used when Startup mode is &quot;Default preset&quot;.">
+            <ComboBox x:Name="DefaultPresetCombo" MinWidth="200"
+                      IsEnabled="False"
+                      SelectionChanged="OnDefaultPresetChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="OutputConfigModeCard"
+                                Header="Output configuration"
+                                Description="How the physical IO config (output pins, output types, I2S MCK/BCK, S/PDIF RX pin) is persisted. With preset: each preset carries its own IO. Independent: IO is device-global and unchanged by preset loads; explicitly save with File &#x2192; Save Output Config.">
+            <ComboBox x:Name="OutputConfigModeCombo"
+                      MinWidth="160"
+                      SelectionChanged="OnOutputConfigModeChanged">
+                <ComboBoxItem Content="With preset"  Tag="1"/>
+                <ComboBoxItem Content="Independent"  Tag="0"/>
             </ComboBox>
         </controls:SettingsCard>
     </StackPanel>

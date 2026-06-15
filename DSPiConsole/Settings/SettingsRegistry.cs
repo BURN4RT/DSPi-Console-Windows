@@ -55,8 +55,7 @@ internal static class SettingsRegistry
         TryAdd<HardwareDacMutePage>(pages);
 
         // ── Presets ────────────────────────────────────────────────
-        TryAdd<PresetsStartupPage>(pages);
-        TryAdd<PresetsInclusionPage>(pages);
+        // Startup + output-config (Inclusion) moved to General › Globals.
         TryAdd<PresetsUIPage>(pages);
 
         // ── Advanced ───────────────────────────────────────────────
