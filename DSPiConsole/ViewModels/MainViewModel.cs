@@ -2905,7 +2905,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
             return (freqs, mags);
         }
 
-        var result = DspMath.GenerateResponseCurve(filters);
+        // Output channels: fold the crossover bands into the curve alongside the
+        // PEQ bands. (The global EQ-bypass flatten above only applies to master
+        // channels; per the crossover spec the XO stage is never bypassed by it,
+        // so output curves always include crossover.)
+        IEnumerable<FilterParams> curveFilters = filters;
+        if (channel.IsOutput &&
+            _xoverData.TryGetValue((int)channel.Id, out var xbands) && xbands.Count > 0)
+            curveFilters = filters.Concat(xbands);
+
+        var result = DspMath.GenerateResponseCurve(curveFilters);
 
         // Apply output channel gain offset to the curve
         if (channel.IsOutput)
