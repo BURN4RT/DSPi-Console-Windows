@@ -3631,6 +3631,68 @@ public sealed partial class MainWindow : Window
             await ShowErrorDialog("Failed to copy preset");
     }
 
+    /// <summary>
+    /// "Save to..." — persist the current (modified) live state into the chosen
+    /// slot and switch the active preset to it, leaving the original preset
+    /// untouched on disk. Prompts for a name and, when the target is occupied,
+    /// confirms the overwrite (both in one dialog). Offered only while dirty.
+    /// </summary>
+    private async Task SavePresetToSlot(int slot)
+    {
+        if (!ViewModel.IsDeviceConnected)
+        {
+            await ShowErrorDialog("Not connected to device");
+            return;
+        }
+
+        bool occupied = ViewModel.IsPresetOccupied(slot);
+
+        // Default the name to the current preset's name (the state being saved)
+        // so the user can keep or tweak it; fall back to a slot label.
+        string defaultName = ViewModel.ActivePreset >= 0
+            ? ViewModel.GetPresetName(ViewModel.ActivePreset)
+            : $"Preset {slot + 1}";
+
+        var nameBox = new TextBox { Text = defaultName, MaxLength = 31 };
+        nameBox.SelectAll();
+
+        var panel = new StackPanel { Spacing = 8 };
+        panel.Children.Add(nameBox);
+        if (occupied)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"This will overwrite “{ViewModel.GetPresetName(slot)}”.",
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+            });
+        }
+
+        var dialog = new ContentDialog
+        {
+            Title = occupied
+                ? $"Save to {ViewModel.GetPresetName(slot)}"
+                : $"Save to Slot {slot + 1}",
+            Content = panel,
+            PrimaryButtonText = occupied ? "Overwrite" : "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var name = nameBox.Text.Trim();
+        if (string.IsNullOrEmpty(name)) name = $"Preset {slot + 1}";
+
+        // SavePreset writes the live state to the slot, switches the active
+        // preset to it, and clears the dirty flag (Save-As semantics).
+        var result = await ViewModel.SavePreset(slot, name);
+        if (result != Usb.PresetResult.Ok)
+            await ShowErrorDialog("Failed to save preset");
+    }
+
     private void OnPresetComboRightTapped(object sender, RightTappedRoutedEventArgs e)
     {
         e.Handled = true;
@@ -3643,21 +3705,34 @@ public sealed partial class MainWindow : Window
         });
         ((MenuFlyoutItem)flyout.Items[0]).Click += async (s, _) => await QuickSavePreset();
 
-        // "Copy to..." submenu — writes the current configuration to another
-        // slot without changing the active preset. Disabled while dirty to
-        // avoid silently persisting unsaved changes into a second slot.
+        // Dirty → "Save to..." (save the modified live state into another slot
+        // and switch to it, leaving the original untouched). Clean → "Copy to..."
+        // (duplicate the saved preset to another slot, active unchanged). One
+        // submenu; the label and per-slot action depend on the dirty state,
+        // captured once here so the click matches the label the user saw.
+        bool presetDirty = ViewModel.PresetsDirty;
         var copyToSub = new MenuFlyoutSubItem
         {
-            Text = "Copy to...",
+            Text = presetDirty ? "Save to..." : "Copy to...",
             Icon = new FontIcon { Glyph = "" },
-            IsEnabled = !ViewModel.PresetsDirty
         };
         for (int i = 0; i < MainViewModel.PresetSlotCount; i++)
         {
             if (i == ViewModel.ActivePreset) continue;
             int slot = i;
-            var item = new MenuFlyoutItem { Text = ViewModel.GetPresetDisplayName(slot) };
-            item.Click += async (s, _) => await CopyPresetToSlot(slot);
+            // Save-to lists slots distinguishably (so an unused target is easy
+            // to pick); copy-to keeps the existing name-or-"Empty" labels.
+            string label = !presetDirty
+                ? ViewModel.GetPresetDisplayName(slot)
+                : ViewModel.IsPresetOccupied(slot)
+                    ? $"Slot {slot + 1}: {ViewModel.GetPresetName(slot)}"
+                    : $"Slot {slot + 1} (empty)";
+            var item = new MenuFlyoutItem { Text = label };
+            item.Click += async (s, _) =>
+            {
+                if (presetDirty) await SavePresetToSlot(slot);
+                else await CopyPresetToSlot(slot);
+            };
             copyToSub.Items.Add(item);
         }
         flyout.Items.Add(copyToSub);
