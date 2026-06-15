@@ -66,6 +66,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private int _mckMultiplier = 128;
     private uint _sampleRateHz;
     private byte _spdifRxPin = 11;    // firmware default (PICO_SPDIF_RX_PIN_DEFAULT)
+    private byte _i2sRxPin = 4;       // firmware default (PICO_I2S_RX_PIN_DEFAULT)
+    private uint _i2sInputRateHz = 48000; // selected I2S-input master rate
 
     // Clip tracking
     private ushort _clipLatched;
@@ -200,6 +202,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // GetInputSource succeeds at least once — older firmware STALLs on 0xE1.
     [ObservableProperty]
     private bool _inputSourceSupported;
+
+    // I2S input (firmware V12+). True when the bulk packet carries the I2S input
+    // fields (format_version >= 12). Gates the I2S item in the Source dropdown
+    // and the I2S Input settings page.
+    [ObservableProperty]
+    private bool _inputI2sSupported;
 
     // Per-band bypass (firmware 1.1.4+). Mirrors the InputSource pattern: probe
     // once at connect via REQ_GET_BAND_BYPASS (0xD9); older firmware STALLs and
@@ -414,6 +422,19 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public int MckMultiplier => _mckMultiplier;
     public uint SampleRateHz => _sampleRateHz;
     public byte SpdifRxPin => _spdifRxPin;
+    public byte I2sRxPin => _i2sRxPin;
+    public uint I2sInputRateHz => _i2sInputRateHz;
+
+    /// <summary>The I2S-input master sample rates the firmware accepts.</summary>
+    public static readonly uint[] I2sInputRates = { 44100, 48000, 96000 };
+
+    /// <summary>Decode the wire encoding (0/1/2) to Hz; defaults to 48000.</summary>
+    public static uint DecodeI2sRate(byte encoded) => encoded switch
+    {
+        0 => 44100u,
+        2 => 96000u,
+        _ => 48000u
+    };
     public bool AnySlotIsI2S => _outputSlotTypes.Take(NumOutputSlots).Any(t => t == OutputSlotType.I2S);
 
     public MainViewModel()
@@ -979,6 +1000,52 @@ public partial class MainViewModel : ObservableObject, IDisposable
         return status;
     }
 
+    public void FetchI2sRxPin()
+    {
+        var pin = _device.GetI2sRxPin();
+        if (pin.HasValue) _i2sRxPin = pin.Value;
+    }
+
+    /// <summary>Set the I2S input data pin. Returns a <see cref="PinConfigResult"/>
+    /// status byte; updates the cache and raises PropertyChanged only on success.</summary>
+    public byte SetI2sRxPin(byte pin)
+    {
+        var status = _device.SetI2sRxPin(pin);
+        if (status == PinConfigResult.Success)
+        {
+            _i2sRxPin = pin;
+            _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(I2sRxPin)));
+            CheckDirty();
+        }
+        return status;
+    }
+
+    public void FetchI2sInputRate()
+    {
+        var rate = _device.GetInputRate();
+        // Use the stored I2S-input preference (second field), not the live
+        // pipeline rate (which follows whatever source is currently active).
+        if (rate.HasValue && rate.Value.selectedI2sHz > 0)
+            _i2sInputRateHz = rate.Value.selectedI2sHz;
+    }
+
+    /// <summary>Set the I2S-input master sample rate (44100/48000/96000 Hz).</summary>
+    public bool SetI2sInputRate(uint hz)
+    {
+        if (!IsDeviceConnected) return false;
+        var ok = _device.SetInputRate(hz);
+        if (ok)
+        {
+            _i2sInputRateHz = hz;
+            _dispatcher.TryEnqueue(() =>
+            {
+                OnPropertyChanged(nameof(I2sInputRateHz));
+                CheckDirty();
+            });
+        }
+        return ok;
+    }
+
     public byte SetOutputSlotType(int slot, OutputSlotType type)
     {
         var status = _device.SetOutputType(slot, type);
@@ -1209,6 +1276,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
         // Input source / SPDIF RX pin (V7+ wire format)
         if (bp.HasInputConfig)
             _spdifRxPin = bp.SpdifRxPin;
+        // I2S input data pin + master rate (V12+ wire format)
+        if (bp.HasI2sInputConfig)
+        {
+            _i2sRxPin = bp.I2sRxPin;
+            _i2sInputRateHz = DecodeI2sRate(bp.I2sInputRateEncoded);
+        }
         // Capture input source for the dispatcher block below — ActiveInputSource
         // is an ObservableProperty that fires on the UI thread. The firmware may
         // still be a few ms away from applying a deferred input_source switch when
@@ -1247,6 +1320,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             if (bp.HasMasterVolume)
                 MasterVolumeDb = bp.MasterVolumeDb;
             CrossoverSupported = bp.HasCrossover;
+            InputI2sSupported = bp.HasI2sInputConfig;
             Bypass = bp.Bypass;
             LoudnessEnabled = bp.LoudnessEnabled;
             LoudnessRefSPL = bp.LoudnessRefSpl;
@@ -1280,7 +1354,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
             VisibilityChanged?.Invoke(this, EventArgs.Empty);
             FiltersChanged?.Invoke(this, EventArgs.Empty);
 
-            if (bulkInputSource is { } src && (src == InputSource.Usb || src == InputSource.Spdif))
+            if (bulkInputSource is { } src &&
+                (src == InputSource.Usb || src == InputSource.Spdif || src == InputSource.I2s))
             {
                 if (ActiveInputSource != src)
                     ActiveInputSource = src;

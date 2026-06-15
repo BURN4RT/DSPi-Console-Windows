@@ -101,7 +101,8 @@ internal static class HardwarePins
         int excludeOutputId = -1,
         bool excludeMckSelf = false,
         bool excludeSpdifRxSelf = false,
-        bool excludeDacMuteSelf = false)
+        bool excludeDacMuteSelf = false,
+        bool excludeI2sRxSelf = false)
     {
         var owners = new Dictionary<byte, string>();
 
@@ -132,6 +133,11 @@ internal static class HardwarePins
 
         if (vm.InputSourceSupported && !excludeSpdifRxSelf)
             owners[vm.SpdifRxPin] = "SPDIF RX";
+
+        // I2S input data pin (V12+). Only claim when the firmware exposes I2S
+        // input, so older firmware's pin map is unaffected.
+        if (vm.InputI2sSupported && !excludeI2sRxSelf)
+            owners[vm.I2sRxPin] = "I2S RX";
 
         // External DAC mute pin (V10+): only claim when supported AND
         // configured with a real pin. The "No Pin" sentinel disables

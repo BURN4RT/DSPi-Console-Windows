@@ -3459,6 +3459,10 @@ public sealed partial class MainWindow : Window
             SourceSection.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
             if (!show) return;
 
+            // I2S is only a valid choice on firmware that bundles I2S input
+            // (V12+). Keep the item visible but disabled on older firmware.
+            SourceI2sItem.IsEnabled = ViewModel.InputI2sSupported;
+
             int target = (int)(byte)ViewModel.ActiveInputSource;
             // Guard against the firmware reporting an input source this combo
             // doesn't list (e.g. I2S=2 on firmware that bundles I2S input).

@@ -65,6 +65,11 @@ public class PresetSnapshot
     // applies it (with-preset) or leaves the live IO untouched (independent).
     public byte SpdifRxPin;
 
+    // I2S input data pin + master rate (V12+ wire, V17+ slot). Same IO-block
+    // treatment as SpdifRxPin — gated on output_config_mode in the diff.
+    public byte I2sRxPin;
+    public uint I2sInputRateHz;
+
     // LG Sound Sync enable (V8+ preset slot field). Only the user-writable
     // `enabled` flag is preset state; runtime fields (present, volume, muted)
     // are diagnostic and not captured. Tracks via REQ_SET/GET_LG_SOUND_SYNC
@@ -168,6 +173,10 @@ public class PresetSnapshot
 
         // SPDIF RX pin (V13+ slot data — persists alongside output_pins)
         snap.SpdifRxPin = vm.SpdifRxPin;
+
+        // I2S input data pin + master rate (V17+ slot data — IO block)
+        snap.I2sRxPin = vm.I2sRxPin;
+        snap.I2sInputRateHz = vm.I2sInputRateHz;
 
         // LG Sound Sync enable flag (V8+ preset slot field)
         snap.LgSoundSyncEnabled = vm.LgSoundSyncEnabled;
@@ -372,13 +381,24 @@ public static class PresetDiff
             // is a separate per-preset listening choice, handled below).
             if (old.SpdifRxPin != cur.SpdifRxPin)
                 changes.Add($"S/PDIF RX pin: GPIO {old.SpdifRxPin} → GPIO {cur.SpdifRxPin}");
+
+            // I2S input data pin + master rate — part of the IO block.
+            if (old.I2sRxPin != cur.I2sRxPin)
+                changes.Add($"I2S RX pin: GPIO {old.I2sRxPin} → GPIO {cur.I2sRxPin}");
+            if (old.I2sInputRateHz != cur.I2sInputRateHz)
+                changes.Add($"I2S sample rate: {old.I2sInputRateHz / 1000.0:0.#} → {cur.I2sInputRateHz / 1000.0:0.#} kHz");
         }
 
-        // Input source (USB vs SPDIF) is NOT part of the IO block — it stays
+        // Input source (USB / SPDIF / I2S) is NOT part of the IO block — it stays
         // per-preset in both modes, as it's a listening choice not wiring.
         if (old.InputSource != cur.InputSource)
         {
-            string Name(InputSource s) => s == InputSource.Spdif ? "S/PDIF" : "USB";
+            string Name(InputSource s) => s switch
+            {
+                InputSource.Spdif => "S/PDIF",
+                InputSource.I2s => "I2S",
+                _ => "USB"
+            };
             changes.Add($"Input source: {Name(old.InputSource)} → {Name(cur.InputSource)}");
         }
 

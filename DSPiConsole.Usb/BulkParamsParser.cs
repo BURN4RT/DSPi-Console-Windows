@@ -77,9 +77,15 @@ public class BulkParams
     public bool HasMasterVolume;
 
     // Input source config (offset 2896, 16 bytes) — V7+, present when packet >= 2898
-    public byte InputSource;        // 0 = USB, 1 = S/PDIF
+    public byte InputSource;        // 0 = USB, 1 = S/PDIF, 2 = I2S (V12+)
     public byte SpdifRxPin;          // GPIO pin (informational; not applied via bulk SET)
     public bool HasInputConfig;
+
+    // I2S input fields within WireInputConfig (offset 2896 +2/+3) — V12+,
+    // present when packet >= 2900. I2sInputRateEncoded: 0=44100, 1=48000, 2=96000.
+    public byte I2sRxPin;            // I2S input data GPIO pin
+    public byte I2sInputRateEncoded; // 0=44100, 1=48000, 2=96000 (NOT Hz)
+    public bool HasI2sInputConfig;
 
     // LG Sound Sync (offset 2912, 16 bytes) — V8+, present when packet >= 2928.
     // Only the user-writable `enabled` flag is captured; the runtime
@@ -294,6 +300,14 @@ public static class BulkParamsParser
             p.HasInputConfig = true;
             p.InputSource = buffer[OffsetInputCfg + 0];
             p.SpdifRxPin = buffer[OffsetInputCfg + 1];
+        }
+        // I2S input data pin + master rate live in the same 16-byte WireInputConfig
+        // block, claimed from its reserved bytes in V12 (wire size unchanged).
+        if (p.FormatVersion >= 12 && buffer.Length >= OffsetInputCfg + 4)
+        {
+            p.HasI2sInputConfig = true;
+            p.I2sRxPin = buffer[OffsetInputCfg + 2];
+            p.I2sInputRateEncoded = buffer[OffsetInputCfg + 3];
         }
 
         // ── LG Sound Sync (16 bytes, V8+) ──

@@ -332,6 +332,7 @@
                                   PointerExited="OnSourceComboPointerExited">
                             <ComboBoxItem Content="USB" Tag="0" />
                             <ComboBoxItem Content="S/PDIF" Tag="1" />
+                            <ComboBoxItem x:Name="SourceI2sItem" Content="I2S" Tag="2" />
                         </ComboBox>
                     </Grid>
 

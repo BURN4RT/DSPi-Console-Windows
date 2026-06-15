@@ -146,6 +146,14 @@ public static class VendorCommands
     public const byte SetSpdifRxPin        = 0xE4;
     public const byte GetSpdifRxPin        = 0xE5;
 
+    // I2S input (V12+). The device is the I2S clock master, so the host picks
+    // the sample rate (44.1/48/96 kHz) the device drives. BCK/LRCK/MCK clock
+    // pins are shared with the I2S output path (REQ_SET_I2S_BCK_PIN etc.).
+    public const byte SetInputRate         = 0xED; // OUT, uint32 Hz (44100/48000/96000)
+    public const byte GetInputRate         = 0xEE; // IN, 8 bytes: current Hz + selected I2S Hz
+    public const byte SetI2sRxPin          = 0xF1; // IN, wValue=pin, returns status byte
+    public const byte GetI2sRxPin          = 0xF2; // IN, 1 byte (GPIO)
+
     // External DAC hardware mute (V10+). Fire-and-forget SET — validation and
     // flash persistence happen in the firmware's main loop; the USB response
     // returns before the apply lands. Hosts confirm by following up with GET
@@ -173,7 +181,8 @@ public static class VendorCommands
 public enum InputSource : byte
 {
     Usb = 0,
-    Spdif = 1
+    Spdif = 1,
+    I2s = 2
 }
 
 /// <summary>
@@ -2177,6 +2186,49 @@ public partial class DspDevice : ObservableObject, IDisposable
     {
         var response = ControlTransferIn(VendorCommands.SetSpdifRxPin, pin, 1);
         return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
+    }
+
+    /// <summary>
+    /// Get the GPIO pin currently configured for the I2S input data line (V12+).
+    /// </summary>
+    public byte? GetI2sRxPin()
+    {
+        var response = ControlTransferIn(VendorCommands.GetI2sRxPin, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0];
+    }
+
+    /// <summary>
+    /// Change the I2S input data GPIO pin (V12+). Pin in wValue, firmware returns
+    /// a 1-byte <see cref="PinConfigResult"/> status (0=success, 1=invalid,
+    /// 2=in use). Same immediate-response shape as <see cref="SetSpdifRxPin"/>.
+    /// Returns 0xFF on transfer failure.
+    /// </summary>
+    public byte SetI2sRxPin(byte pin)
+    {
+        var response = ControlTransferIn(VendorCommands.SetI2sRxPin, pin, 1);
+        return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
+    }
+
+    /// <summary>
+    /// Set the I2S-input master sample rate (V12+). The device is the I2S clock
+    /// master, so it drives this rate. Only 44100/48000/96000 are accepted;
+    /// other values are silently ignored by the firmware. Stored as a preference
+    /// and applied when I2S is (or becomes) the active input source.
+    /// </summary>
+    public bool SetInputRate(uint hz) =>
+        ControlTransferOut(VendorCommands.SetInputRate, 0, BitConverter.GetBytes(hz));
+
+    /// <summary>
+    /// Get the input rate state (V12+): returns (currentPipelineHz, selectedI2sHz).
+    /// The first is the live pipeline rate for any source; the second is the
+    /// stored I2S-input rate preference. Null on transfer failure / older firmware.
+    /// </summary>
+    public (uint currentHz, uint selectedI2sHz)? GetInputRate()
+    {
+        var response = ControlTransferIn(VendorCommands.GetInputRate, 0, 8);
+        if (response == null || response.Length < 8) return null;
+        return (BitConverter.ToUInt32(response, 0), BitConverter.ToUInt32(response, 4));
     }
 
     #endregion
