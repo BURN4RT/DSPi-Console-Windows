@@ -1821,10 +1821,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
             ? f.Select(fp => fp.Clone()).ToList()
             : new List<FilterParams>();
 
+        // Crossover bands exist only on output channels.
+        var xover = channel.IsOutput && _xoverData.TryGetValue(channelId, out var x)
+            ? x.Select(fp => fp.Clone()).ToList()
+            : new List<FilterParams>();
+
         _channelClipboard = new ChannelClipboard
         {
             SourceIsOutput = channel.IsOutput,
             Filters = filters,
+            Xover = xover,
             Delay = channel.IsOutput && _channelDelays.TryGetValue(channelId, out var d) ? d : null,
             Gain = channel.IsOutput && _channelGains.TryGetValue(channelId, out var g) ? g : null,
             Mute = channel.IsOutput && _channelMutes.TryGetValue(channelId, out var m) ? m : null,
@@ -1850,6 +1856,29 @@ public partial class MainViewModel : ObservableObject, IDisposable
         FiltersChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// Replace all crossover bands on an output channel at once (used by channel
+    /// paste). Mirrors <see cref="SetAllFilters"/> but addresses the crossover
+    /// wire band indices (XoverBandBase + i). Output channels only.
+    /// </summary>
+    public void SetAllXoverFilters(int channelId, List<FilterParams> bands)
+    {
+        if (!_xoverData.TryGetValue(channelId, out var existing)) return;
+
+        var count = Math.Min(bands.Count, existing.Count);
+        for (int i = 0; i < count; i++)
+            existing[i] = bands[i];
+
+        var snapshot = bands.Take(count).Select(fp => fp.Clone()).ToList();
+        Task.Run(() =>
+        {
+            for (int i = 0; i < snapshot.Count; i++)
+                _device.SetFilter(channelId, CrossoverFilter.XoverBandBase + i, snapshot[i]);
+        });
+
+        FiltersChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     public void PasteChannelParams(Channel target)
     {
         if (_channelClipboard == null) return;
@@ -1859,9 +1888,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
         // Filters are universal — always paste (deep-cloned)
         SetAllFilters(targetId, _channelClipboard.Filters.Select(fp => fp.Clone()).ToList());
 
-        // Delay, gain, mute: only paste when both source and target are outputs
+        // Delay, gain, mute, and crossover bands are output-only — paste only
+        // when both source and target are outputs.
         if (target.IsOutput && _channelClipboard.SourceIsOutput)
         {
+            // Crossover only on V11+ firmware; skip the writes otherwise.
+            if (CrossoverSupported)
+                SetAllXoverFilters(targetId, _channelClipboard.Xover.Select(fp => fp.Clone()).ToList());
             if (_channelClipboard.Delay.HasValue)
                 SetDelay(targetId, _channelClipboard.Delay.Value);
             if (_channelClipboard.Gain.HasValue)
