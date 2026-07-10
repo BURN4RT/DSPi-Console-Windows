@@ -1874,7 +1874,7 @@ public sealed partial class MainWindow : Window
         if (bypassSupported)
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });    // Bypass toggle
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) }); // Type
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) }); // Freq
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(56) }); // Q
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(54) }); // Gain
@@ -1938,21 +1938,57 @@ public sealed partial class MainWindow : Window
         grid.Children.Add(bandLabel);
         col++;
 
-        // Filter type selector — PEQ types only (0-7). The crossover types
-        // (8-39) share the FilterType enum but are edited on the XO page.
-        var typeCombo = new ComboBox { Width = 120, Tag = (channel, bandIndex), Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] };
-        foreach (var type in FilterTypeExtensions.PeqTypes)
+        // Filter type selector — PEQ types only (0-10). Shelves and All Pass
+        // group their first/second-order variants (6 vs 12 dB) into submenus;
+        // the crossover types (32-63) share the FilterType enum but are edited
+        // on the XO page. A stray crossover type round-tripped into a PEQ slot
+        // simply shows its GetPickerLabel and is corrected on the next pick.
+        var typeButton = new DropDownButton
         {
-            typeCombo.Items.Add(new ComboBoxItem { Content = type.GetDisplayName(), Tag = type });
+            Tag = (channel, bandIndex),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(10, 4, 8, 4),
+            Opacity = p.Bypass ? 0.4 : 1.0,
+            Content = new TextBlock
+            {
+                Text = p.Type.GetPickerLabel(),
+                FontSize = 13,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+            }
+        };
+
+        var typeFlyout = new MenuFlyout();
+        void AddTypeItem(IList<MenuFlyoutItemBase> items, string text, FilterType t)
+        {
+            var mi = new MenuFlyoutItem { Text = text, Tag = (channel, bandIndex, t) };
+            mi.Click += OnFilterTypeMenuClick;
+            items.Add(mi);
         }
-        // PEQ bands only list types 0-7. Guard against a stray crossover type
-        // (8-39) round-tripped into a PEQ slot — an out-of-range SelectedIndex
-        // throws and crashes the XAML layer. Fall back to "Off".
-        typeCombo.SelectedIndex = (int)p.Type < FilterTypeExtensions.PeqTypes.Length ? (int)p.Type : 0;
-        typeCombo.SelectionChanged += OnFilterTypeChanged;
-        typeCombo.Opacity = p.Bypass ? 0.4 : 1.0;
-        Grid.SetColumn(typeCombo, col);
-        grid.Children.Add(typeCombo);
+        MenuFlyoutSubItem MakeGroup(string label, (string slope, FilterType t)[] variants)
+        {
+            var sub = new MenuFlyoutSubItem { Text = label };
+            foreach (var (slope, t) in variants)
+                AddTypeItem(sub.Items, slope, t);
+            return sub;
+        }
+
+        AddTypeItem(typeFlyout.Items, "Off", FilterType.Flat);
+        AddTypeItem(typeFlyout.Items, "Peaking", FilterType.Peaking);
+        typeFlyout.Items.Add(MakeGroup("Low Shelf",
+            new[] { ("6dB", FilterType.LowShelf1), ("12dB", FilterType.LowShelf) }));
+        typeFlyout.Items.Add(MakeGroup("High Shelf",
+            new[] { ("6dB", FilterType.HighShelf1), ("12dB", FilterType.HighShelf) }));
+        AddTypeItem(typeFlyout.Items, "Low Pass", FilterType.LowPass);
+        AddTypeItem(typeFlyout.Items, "High Pass", FilterType.HighPass);
+        AddTypeItem(typeFlyout.Items, "Notch", FilterType.Notch);
+        typeFlyout.Items.Add(MakeGroup("All Pass",
+            new[] { ("6dB", FilterType.AllPass1), ("12dB", FilterType.AllPass) }));
+
+        typeButton.Flyout = typeFlyout;
+        Grid.SetColumn(typeButton, col);
+        grid.Children.Add(typeButton);
         col++;
 
         // Frequency
@@ -3228,24 +3264,22 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void OnFilterTypeChanged(object sender, SelectionChangedEventArgs e)
+    private void OnFilterTypeMenuClick(object sender, RoutedEventArgs e)
     {
-        if (sender is ComboBox combo && combo.Tag is (Channel channel, int bandIndex))
+        if (sender is MenuFlyoutItem item &&
+            item.Tag is (Channel channel, int bandIndex, FilterType newType))
         {
-            if (combo.SelectedItem is ComboBoxItem item && item.Tag is FilterType newType)
+            var filters = ViewModel.GetFilters(channel);
+            if (bandIndex < filters.Count)
             {
-                var filters = ViewModel.GetFilters(channel);
-                if (bandIndex < filters.Count)
-                {
-                    var p = filters[bandIndex].Clone();
-                    p.Type = newType;
-                    _ = ViewModel.SetFilter((int)channel.Id, bandIndex, p);
+                var p = filters[bandIndex].Clone();
+                p.Type = newType;
+                _ = ViewModel.SetFilter((int)channel.Id, bandIndex, p);
 
-                    // Refresh the row
-                    if (_selectedChannel != null)
-                    {
-                        ShowChannelEditor(_selectedChannel);
-                    }
+                // Refresh the row (freq/Q/gain field visibility follows the type)
+                if (_selectedChannel != null)
+                {
+                    ShowChannelEditor(_selectedChannel);
                 }
             }
         }
