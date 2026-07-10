@@ -2,9 +2,12 @@ namespace DSPiConsole.Core.Models;
 
 /// <summary>
 /// Filter types matching the firmware definitions (config.h FilterType).
-/// Values 0-7 are PEQ biquad types; values 8-39 are the crossover filter
-/// types (Linkwitz-Riley / Butterworth / Bessel × order × HP/LP) used only
-/// in crossover bands. See Documentation/Features/crossover_filters_spec.md.
+/// Value space is partitioned: 0-10 PEQ biquad types, 11-31 reserved,
+/// 32-63 crossover filter types (Linkwitz-Riley / Butterworth / Bessel ×
+/// order × HP/LP, used only in crossover bands), 64+ reserved.
+/// firmware's filter_is_peq_type(t) == (t &lt; 32). The crossover block moved
+/// from 8-39 to 32-63 at wire V13; PEQ types 8/9/10 (first-order all-pass and
+/// shelves) were added at V13/V14. See crossover_filters_spec.md.
 /// </summary>
 public enum FilterType
 {
@@ -15,28 +18,33 @@ public enum FilterType
     LowPass = 4,
     HighPass = 5,
     Notch = 6,
-    AllPass = 7,
+    AllPass = 7,       // 2nd-order (RBJ) all-pass
+    AllPass1 = 8,      // 1st-order all-pass (V13+): frequency only
+    LowShelf1 = 9,     // 1st-order low shelf (V14+): frequency + gain, no Q
+    HighShelf1 = 10,   // 1st-order high shelf (V14+): frequency + gain, no Q
 
-    // ── Crossover types (FILTER_XOVER_FIRST = 8 .. FILTER_XOVER_LAST = 39) ──
+    // 11-31 reserved
+
+    // ── Crossover types (FILTER_XOVER_FIRST = 32 .. FILTER_XOVER_LAST = 63) ──
     // Linkwitz-Riley (orders 2/4/6/8)
-    Lr2Lp = 8,  Lr2Hp = 9,
-    Lr4Lp = 10, Lr4Hp = 11,
-    Lr6Lp = 12, Lr6Hp = 13,
-    Lr8Lp = 14, Lr8Hp = 15,
+    Lr2Lp = 32, Lr2Hp = 33,
+    Lr4Lp = 34, Lr4Hp = 35,
+    Lr6Lp = 36, Lr6Hp = 37,
+    Lr8Lp = 38, Lr8Hp = 39,
     // Butterworth (orders 1..8)
-    Bw1Lp = 16, Bw1Hp = 17,
-    Bw2Lp = 18, Bw2Hp = 19,
-    Bw3Lp = 20, Bw3Hp = 21,
-    Bw4Lp = 22, Bw4Hp = 23,
-    Bw5Lp = 24, Bw5Hp = 25,
-    Bw6Lp = 26, Bw6Hp = 27,
-    Bw7Lp = 28, Bw7Hp = 29,
-    Bw8Lp = 30, Bw8Hp = 31,
+    Bw1Lp = 40, Bw1Hp = 41,
+    Bw2Lp = 42, Bw2Hp = 43,
+    Bw3Lp = 44, Bw3Hp = 45,
+    Bw4Lp = 46, Bw4Hp = 47,
+    Bw5Lp = 48, Bw5Hp = 49,
+    Bw6Lp = 50, Bw6Hp = 51,
+    Bw7Lp = 52, Bw7Hp = 53,
+    Bw8Lp = 54, Bw8Hp = 55,
     // Bessel (orders 2/4/6/8)
-    Bes2Lp = 32, Bes2Hp = 33,
-    Bes4Lp = 34, Bes4Hp = 35,
-    Bes6Lp = 36, Bes6Hp = 37,
-    Bes8Lp = 38, Bes8Hp = 39
+    Bes2Lp = 56, Bes2Hp = 57,
+    Bes4Lp = 58, Bes4Hp = 59,
+    Bes6Lp = 60, Bes6Hp = 61,
+    Bes8Lp = 62, Bes8Hp = 63
 }
 
 /// <summary>
@@ -45,17 +53,18 @@ public enum FilterType
 public static class FilterTypeExtensions
 {
     /// <summary>
-    /// The PEQ-only filter types (enum values 0-7). The crossover types
-    /// (8-39) share the same enum but are never offered in a PEQ band's type
+    /// The PEQ-only filter types (enum values 0-10). The crossover types
+    /// (32-63) share the same enum but are never offered in a PEQ band's type
     /// picker — enumerate this instead of <c>Enum.GetValues</c> there.
     /// </summary>
     public static readonly FilterType[] PeqTypes =
     {
         FilterType.Flat, FilterType.Peaking, FilterType.LowShelf, FilterType.HighShelf,
-        FilterType.LowPass, FilterType.HighPass, FilterType.Notch, FilterType.AllPass
+        FilterType.LowPass, FilterType.HighPass, FilterType.Notch, FilterType.AllPass,
+        FilterType.AllPass1, FilterType.LowShelf1, FilterType.HighShelf1
     };
 
-    /// <summary>True for the crossover filter types (8-39).</summary>
+    /// <summary>True for the crossover filter types (32-63).</summary>
     public static bool IsCrossover(this FilterType type) =>
         (int)type >= (int)FilterType.Lr2Lp && (int)type <= (int)FilterType.Bes8Hp;
 
@@ -69,6 +78,9 @@ public static class FilterTypeExtensions
         FilterType.HighPass => "High Pass",
         FilterType.Notch => "Notch",
         FilterType.AllPass => "All Pass",
+        FilterType.AllPass1 => "All Pass (1st)",
+        FilterType.LowShelf1 => "Low Shelf (1st)",
+        FilterType.HighShelf1 => "High Shelf (1st)",
         _ => "Unknown"
     };
 
@@ -82,12 +94,17 @@ public static class FilterTypeExtensions
         FilterType.HighPass => "HP",
         FilterType.Notch => "NO",
         FilterType.AllPass => "AP",
+        FilterType.AllPass1 => "AP1",
+        FilterType.LowShelf1 => "LS1",
+        FilterType.HighShelf1 => "HS1",
         _ => "?"
     };
 
     public static bool HasGain(this FilterType type) =>
-        type is FilterType.Peaking or FilterType.LowShelf or FilterType.HighShelf;
+        type is FilterType.Peaking or FilterType.LowShelf or FilterType.HighShelf
+              or FilterType.LowShelf1 or FilterType.HighShelf1;
 
+    // First-order all-pass/shelves are defined by frequency alone (no Q).
     public static bool HasQ(this FilterType type) =>
         type is FilterType.Peaking or FilterType.LowShelf or FilterType.HighShelf
               or FilterType.LowPass or FilterType.HighPass

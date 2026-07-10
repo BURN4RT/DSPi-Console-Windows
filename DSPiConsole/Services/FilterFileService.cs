@@ -66,15 +66,18 @@ public static class FilterFileService
             return string.Format(inv, "Filter {0,2}: OFF", index);
         }
 
+        // REW-style text export understands only the standard 2nd-order PEQ
+        // codes; the first-order variants map to their closest standard code
+        // (lossy — REW has no first-order concept).
         var typeCode = filter.Type switch
         {
             FilterType.Peaking => "PK",
-            FilterType.LowShelf => "LS",
-            FilterType.HighShelf => "HS",
+            FilterType.LowShelf or FilterType.LowShelf1 => "LS",
+            FilterType.HighShelf or FilterType.HighShelf1 => "HS",
             FilterType.LowPass => "LP",
             FilterType.HighPass => "HP",
             FilterType.Notch => "NO",
-            FilterType.AllPass => "AP",
+            FilterType.AllPass or FilterType.AllPass1 => "AP",
             _ => "PK"
         };
 

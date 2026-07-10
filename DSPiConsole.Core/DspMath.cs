@@ -114,6 +114,30 @@ public static class DspMath
                 a1 = -2 * cs;
                 a2 = 1 - alpha;
                 break;
+
+            // First-order types (degenerate biquads, b2 = a2 = 0). Coefficients
+            // mirror the firmware compute_coefficients() fallback biquad forms.
+            case FilterType.AllPass1:
+                {
+                    // H(z) = (a + z⁻¹)/(1 + a·z⁻¹), a = (tan(πfc/Fs)−1)/(tan(πfc/Fs)+1)
+                    double ta = Math.Tan(omega / 2.0);
+                    double ap = (ta - 1.0) / (ta + 1.0);
+                    b0 = ap; b1 = 1; b2 = 0;
+                    a0 = 1;  a1 = ap; a2 = 0;
+                }
+                break;
+
+            case FilterType.LowShelf1:
+                // DC gain A², unity at Nyquist.
+                b0 = A * sn + 1 + cs; b1 = A * sn - 1 - cs; b2 = 0;
+                a0 = sn / A + 1 + cs; a1 = sn / A - 1 - cs; a2 = 0;
+                break;
+
+            case FilterType.HighShelf1:
+                // Unity at DC, gain A² at Nyquist.
+                b0 = sn + A + A * cs;     b1 = sn - A - A * cs;     b2 = 0;
+                a0 = sn + 1 / A + cs / A; a1 = sn - 1 / A - cs / A; a2 = 0;
+                break;
         }
 
         // Normalize by a0
@@ -123,7 +147,7 @@ public static class DspMath
     /// <summary>
     /// Calculate the frequency response magnitude in dB for a set of filters at a given frequency.
     /// Evaluates H(e^jω) for each filter and multiplies the magnitudes. PEQ bands
-    /// (types 0-7) are single biquads; crossover bands (types 8-39) are multi-section
+    /// (types 0-10) are single biquads; crossover bands (types 32-63) are multi-section
     /// cascades designed to match the firmware (see <see cref="CrossoverSections"/>).
     /// </summary>
     public static float ResponseAt(float freq, IEnumerable<FilterParams> filters, float sampleRate = SampleRate)
