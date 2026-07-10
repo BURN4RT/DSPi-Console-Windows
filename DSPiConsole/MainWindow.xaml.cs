@@ -1959,7 +1959,12 @@ public sealed partial class MainWindow : Window
             }
         };
 
-        var typeFlyout = new MenuFlyout();
+        var typeFlyout = new MenuFlyout
+        {
+            // Default FlyoutBase.Placement is Top, which pops the menu above the
+            // button; open downward from the button's bottom edge instead.
+            Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.Bottom
+        };
         void AddTypeItem(IList<MenuFlyoutItemBase> items, string text, FilterType t)
         {
             var mi = new MenuFlyoutItem { Text = text, Tag = (channel, bandIndex, t) };
