@@ -1961,10 +1961,23 @@ public sealed partial class MainWindow : Window
 
         var typeFlyout = new MenuFlyout
         {
-            // Default FlyoutBase.Placement is Top, which pops the menu above the
-            // button; open downward from the button's bottom edge instead.
-            Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.Bottom
+            // Left-align the menu to the button's edge and drop it straight down
+            // (default FlyoutBase.Placement is Top, and plain Bottom centres it)
+            // so it reads as an attached dropdown, not a detached popup.
+            Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft
         };
+        // Match the menu width to the picker and tuck it against the button's
+        // bottom edge so the two read as one control. Only applied when the
+        // framework's default presenter style is available to base on — a bare
+        // Style would drop the default template and render the menu blank.
+        if (Application.Current.Resources.TryGetValue("DefaultMenuFlyoutPresenterStyle", out var basePresenterStyle)
+            && basePresenterStyle is Style baseStyle)
+        {
+            var presenterStyle = new Style(typeof(MenuFlyoutPresenter)) { BasedOn = baseStyle };
+            presenterStyle.Setters.Add(new Setter(FrameworkElement.MinWidthProperty, 150.0));
+            presenterStyle.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(0, -4, 0, 0)));
+            typeFlyout.MenuFlyoutPresenterStyle = presenterStyle;
+        }
         void AddTypeItem(IList<MenuFlyoutItemBase> items, string text, FilterType t)
         {
             var mi = new MenuFlyoutItem { Text = text, Tag = (channel, bandIndex, t) };
