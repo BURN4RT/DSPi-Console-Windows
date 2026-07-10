@@ -84,22 +84,6 @@ public static class FilterTypeExtensions
         _ => "Unknown"
     };
 
-    /// <summary>
-    /// Label for the PEQ type picker. Shelf and all-pass types come in first-
-    /// and second-order variants; both are labelled by slope (6 vs 12 dB)
-    /// rather than order, and are grouped under a family submenu in the picker.
-    /// </summary>
-    public static string GetPickerLabel(this FilterType type) => type switch
-    {
-        FilterType.LowShelf => "Low Shelf (12dB)",
-        FilterType.LowShelf1 => "Low Shelf (6dB)",
-        FilterType.HighShelf => "High Shelf (12dB)",
-        FilterType.HighShelf1 => "High Shelf (6dB)",
-        FilterType.AllPass => "All Pass (12dB)",
-        FilterType.AllPass1 => "All Pass (6dB)",
-        _ => type.GetDisplayName()
-    };
-
     public static string GetShortName(this FilterType type) => type switch
     {
         FilterType.Flat => "OFF",

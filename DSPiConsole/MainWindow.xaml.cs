@@ -1938,78 +1938,37 @@ public sealed partial class MainWindow : Window
         grid.Children.Add(bandLabel);
         col++;
 
-        // Filter type selector — PEQ types only (0-10). Shelves and All Pass
-        // group their first/second-order variants (6 vs 12 dB) into submenus;
-        // the crossover types (32-63) share the FilterType enum but are edited
-        // on the XO page. A stray crossover type round-tripped into a PEQ slot
-        // simply shows its GetPickerLabel and is corrected on the next pick.
-        var typeButton = new DropDownButton
+        // Filter type selector — native ComboBox, flat list. PEQ types only; the
+        // shelf/all-pass first- and second-order variants are listed as separate
+        // entries labelled by slope (6 vs 12 dB). The crossover types (32-63)
+        // share the FilterType enum but are edited on the XO page; a stray
+        // crossover type round-tripped into a PEQ slot falls back to "Off".
+        var typeItems = new (string label, FilterType type)[]
         {
-            Tag = (channel, bandIndex),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left,
-            Padding = new Thickness(10, 4, 8, 4),
-            Opacity = p.Bypass ? 0.4 : 1.0,
-            Content = new TextBlock
-            {
-                Text = p.Type.GetPickerLabel(),
-                FontSize = 13,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
-            }
+            ("Off", FilterType.Flat),
+            ("Peaking", FilterType.Peaking),
+            ("Low Shelf 6dB", FilterType.LowShelf1),
+            ("Low Shelf 12dB", FilterType.LowShelf),
+            ("High Shelf 6dB", FilterType.HighShelf1),
+            ("High Shelf 12dB", FilterType.HighShelf),
+            ("Low Pass", FilterType.LowPass),
+            ("High Pass", FilterType.HighPass),
+            ("Notch", FilterType.Notch),
+            ("All Pass 6dB", FilterType.AllPass1),
+            ("All Pass 12dB", FilterType.AllPass),
         };
-
-        var typeFlyout = new MenuFlyout
+        var typeCombo = new ComboBox { Width = 150, Tag = (channel, bandIndex), Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] };
+        int selectedTypeIndex = 0; // fall back to "Off" for stray crossover types
+        for (int i = 0; i < typeItems.Length; i++)
         {
-            // Left-align the menu to the button's edge and drop it straight down
-            // (default FlyoutBase.Placement is Top, and plain Bottom centres it)
-            // so it reads as an attached dropdown, not a detached popup.
-            Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft
-        };
-        // Match the menu width to the picker and tuck it against the button's
-        // bottom edge so the two read as one control. Only applied when the
-        // framework's default presenter style is available to base on — a bare
-        // Style would drop the default template and render the menu blank.
-        if (Application.Current.Resources.TryGetValue("DefaultMenuFlyoutPresenterStyle", out var basePresenterStyle)
-            && basePresenterStyle is Style baseStyle)
-        {
-            var presenterStyle = new Style(typeof(MenuFlyoutPresenter)) { BasedOn = baseStyle };
-            presenterStyle.Setters.Add(new Setter(FrameworkElement.MinWidthProperty, 150.0));
-            presenterStyle.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(0, -4, 0, 0)));
-            typeFlyout.MenuFlyoutPresenterStyle = presenterStyle;
+            typeCombo.Items.Add(new ComboBoxItem { Content = typeItems[i].label, Tag = typeItems[i].type });
+            if (typeItems[i].type == p.Type) selectedTypeIndex = i;
         }
-        void AddTypeItem(IList<MenuFlyoutItemBase> items, string text, FilterType t)
-        {
-            var mi = new MenuFlyoutItem { Text = text, Tag = (channel, bandIndex, t) };
-            mi.Click += OnFilterTypeMenuClick;
-            items.Add(mi);
-        }
-        MenuFlyoutSubItem MakeGroup(string label, (string slope, FilterType t)[] variants)
-        {
-            var sub = new MenuFlyoutSubItem { Text = label };
-            foreach (var (slope, t) in variants)
-                AddTypeItem(sub.Items, slope, t);
-            return sub;
-        }
-
-        // Offer "Off" only when the band isn't already off — no point listing the
-        // current selection.
-        if (p.Type != FilterType.Flat)
-            AddTypeItem(typeFlyout.Items, "Off", FilterType.Flat);
-        AddTypeItem(typeFlyout.Items, "Peaking", FilterType.Peaking);
-        typeFlyout.Items.Add(MakeGroup("Low Shelf",
-            new[] { ("6dB", FilterType.LowShelf1), ("12dB", FilterType.LowShelf) }));
-        typeFlyout.Items.Add(MakeGroup("High Shelf",
-            new[] { ("6dB", FilterType.HighShelf1), ("12dB", FilterType.HighShelf) }));
-        AddTypeItem(typeFlyout.Items, "Low Pass", FilterType.LowPass);
-        AddTypeItem(typeFlyout.Items, "High Pass", FilterType.HighPass);
-        AddTypeItem(typeFlyout.Items, "Notch", FilterType.Notch);
-        typeFlyout.Items.Add(MakeGroup("All Pass",
-            new[] { ("6dB", FilterType.AllPass1), ("12dB", FilterType.AllPass) }));
-
-        typeButton.Flyout = typeFlyout;
-        Grid.SetColumn(typeButton, col);
-        grid.Children.Add(typeButton);
+        typeCombo.SelectedIndex = selectedTypeIndex;
+        typeCombo.SelectionChanged += OnFilterTypeChanged;
+        typeCombo.Opacity = p.Bypass ? 0.4 : 1.0;
+        Grid.SetColumn(typeCombo, col);
+        grid.Children.Add(typeCombo);
         col++;
 
         // Frequency
@@ -3285,22 +3244,24 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void OnFilterTypeMenuClick(object sender, RoutedEventArgs e)
+    private void OnFilterTypeChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (sender is MenuFlyoutItem item &&
-            item.Tag is (Channel channel, int bandIndex, FilterType newType))
+        if (sender is ComboBox combo && combo.Tag is (Channel channel, int bandIndex))
         {
-            var filters = ViewModel.GetFilters(channel);
-            if (bandIndex < filters.Count)
+            if (combo.SelectedItem is ComboBoxItem item && item.Tag is FilterType newType)
             {
-                var p = filters[bandIndex].Clone();
-                p.Type = newType;
-                _ = ViewModel.SetFilter((int)channel.Id, bandIndex, p);
-
-                // Refresh the row (freq/Q/gain field visibility follows the type)
-                if (_selectedChannel != null)
+                var filters = ViewModel.GetFilters(channel);
+                if (bandIndex < filters.Count)
                 {
-                    ShowChannelEditor(_selectedChannel);
+                    var p = filters[bandIndex].Clone();
+                    p.Type = newType;
+                    _ = ViewModel.SetFilter((int)channel.Id, bandIndex, p);
+
+                    // Refresh the row (freq/Q/gain field visibility follows the type)
+                    if (_selectedChannel != null)
+                    {
+                        ShowChannelEditor(_selectedChannel);
+                    }
                 }
             }
         }
