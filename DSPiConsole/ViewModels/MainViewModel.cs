@@ -186,6 +186,34 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private float _levellerGateDb = -96.0f;
 
+    // ── Multichannel DSP masks (firmware V18/V19/V20) ──
+    // The mask int is the authoritative bit set the UI mutates and re-sends in
+    // full on each change (there is no incremental per-bit wire protocol).
+    // Leveller masks span input channels (bit k = input k); loudness spans
+    // output channels (bit k = output k); crossfeed spans output pairs (bit p =
+    // outputs 2p/2p+1). The *Supported flags gate each window's selector on the
+    // firmware wire version (and, for the leveller, on having >2 inputs).
+    [ObservableProperty]
+    private int _levellerDetectorMask = 0xFF;
+
+    [ObservableProperty]
+    private int _levellerApplyMask = 0xFF;
+
+    [ObservableProperty]
+    private bool _levellerMasksSupported;
+
+    [ObservableProperty]
+    private int _loudnessOutputMask = 0xFFFF;
+
+    [ObservableProperty]
+    private bool _loudnessMaskSupported;
+
+    [ObservableProperty]
+    private int _crossfeedOutputPairMask = 0x01;
+
+    [ObservableProperty]
+    private bool _crossfeedMaskSupported;
+
     [ObservableProperty]
     private int _activePreset = -1;
 
@@ -1390,6 +1418,22 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 MasterVolumeDb = bp.MasterVolumeDb;
             CrossoverSupported = bp.HasCrossover;
             InputI2sSupported = bp.HasI2sInputConfig;
+
+            // Multichannel masks (V18/V19/V20). Gate each selector on the wire
+            // version; the leveller mask is additionally hidden for ≤2 inputs
+            // (stereo), where a per-input detector/apply split has no value.
+            LoudnessMaskSupported = bp.FormatVersion >= 19;
+            if (LoudnessMaskSupported)
+                LoudnessOutputMask = bp.LoudnessOutputMask;
+            CrossfeedMaskSupported = bp.FormatVersion >= 20;
+            if (CrossfeedMaskSupported)
+                CrossfeedOutputPairMask = bp.CrossfeedOutputPairMask;
+            LevellerMasksSupported = bp.FormatVersion >= 18 && bp.NumInputChannels > 2;
+            if (LevellerMasksSupported)
+            {
+                LevellerDetectorMask = bp.LevellerDetectorMask;
+                LevellerApplyMask = bp.LevellerApplyMask;
+            }
             Bypass = bp.Bypass;
             LoudnessEnabled = bp.LoudnessEnabled;
             LoudnessRefSPL = bp.LoudnessRefSpl;
@@ -2118,6 +2162,40 @@ public partial class MainViewModel : ObservableObject, IDisposable
         Task.Run(() => _device.SetLevellerGate(value));
         CheckDirty();
     }
+
+    // Multichannel mask push handlers. Each re-sends the whole mask (the wire
+    // protocol has no incremental per-bit form). Detector and apply share one
+    // 2-byte leveller command, so both partials funnel through PushLevellerMasks.
+    partial void OnLevellerDetectorMaskChanged(int value) => PushLevellerMasks();
+    partial void OnLevellerApplyMaskChanged(int value) => PushLevellerMasks();
+
+    private void PushLevellerMasks()
+    {
+        byte detector = (byte)(LevellerDetectorMask & 0xFF);
+        byte apply = (byte)(LevellerApplyMask & 0xFF);
+        Task.Run(() => _device.SetLevellerMasks(detector, apply));
+        CheckDirty();
+    }
+
+    partial void OnLoudnessOutputMaskChanged(int value)
+    {
+        ushort mask = (ushort)(value & 0xFFFF);
+        Task.Run(() => _device.SetLoudnessMask(mask));
+        CheckDirty();
+    }
+
+    partial void OnCrossfeedOutputPairMaskChanged(int value)
+    {
+        byte mask = (byte)(value & 0xFF);
+        Task.Run(() => _device.SetCrossfeedOutputs(mask));
+        CheckDirty();
+    }
+
+    /// <summary>Number of firmware input channels (drives the leveller mask chip count).</summary>
+    public int NumInputChannels => _device.NumInputChannels;
+
+    /// <summary>Number of firmware output channels (drives the loudness/crossfeed chip counts).</summary>
+    public int NumOutputChannels => _device.NumOutputChannels;
 
     partial void OnInputPreampLDbChanged(float value)
     {

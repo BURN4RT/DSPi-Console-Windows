@@ -1,4 +1,6 @@
 using System.Globalization;
+using DSPiConsole.Controls;
+using DSPiConsole.Core.Models;
 using DSPiConsole.ViewModels;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
@@ -12,6 +14,8 @@ public sealed partial class VolumeLevellerWindow : Window
 {
     private readonly MainViewModel _viewModel;
     private bool _isUpdating = true;
+    private MaskChipGrid? _detectorGrid;
+    private MaskChipGrid? _applyGrid;
 
     public VolumeLevellerWindow(MainViewModel viewModel)
     {
@@ -72,6 +76,66 @@ public sealed partial class VolumeLevellerWindow : Window
 
         // Subscribe to ViewModel changes
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+
+        BuildChannelMasks();
+    }
+
+    // ── Detector / apply channel masks (V18+) ──
+
+    private void BuildChannelMasks()
+    {
+        if (!_viewModel.LevellerMasksSupported)
+        {
+            ChannelMaskSection.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        int count = _viewModel.NumInputChannels;
+        string InputName(int i) => i < Channel.Inputs.Count ? Channel.Inputs[i].Name : $"Input {i + 1}";
+
+        var chans = MaskChipGrid.AllBits(count);
+        _detectorGrid = new MaskChipGrid(chans, InputName, OnDetectorToggle, stretch: true);
+        DetectorMaskHost.Children.Clear();
+        DetectorMaskHost.Children.Add(_detectorGrid.Root);
+        _detectorGrid.SetMask((uint)_viewModel.LevellerDetectorMask);
+
+        _applyGrid = new MaskChipGrid(chans, InputName, OnApplyToggle, stretch: true);
+        ApplyMaskHost.Children.Clear();
+        ApplyMaskHost.Children.Add(_applyGrid.Root);
+        _applyGrid.SetMask((uint)_viewModel.LevellerApplyMask);
+
+        int all = (1 << count) - 1;
+        var flyout = new MenuFlyout();
+        void AddPreset(string text, int detector, int apply)
+        {
+            var mi = new MenuFlyoutItem { Text = text };
+            mi.Click += (_, _) =>
+            {
+                _viewModel.LevellerDetectorMask = detector;
+                _viewModel.LevellerApplyMask = apply;
+            };
+            flyout.Items.Add(mi);
+        }
+        AddPreset("All channels", all, all);
+        AddPreset("Front L / R only", 0x03, 0x03);
+        AddPreset("Center only", 0x04, 0x04);
+        ChannelMaskPresets.Flyout = flyout;
+
+        ChannelMaskSection.Visibility = Visibility.Visible;
+    }
+
+    private void OnDetectorToggle(int index, bool on)
+    {
+        int mask = _viewModel.LevellerDetectorMask;
+        if (on) mask |= (1 << index); else mask &= ~(1 << index);
+        _viewModel.LevellerDetectorMask = mask;
+    }
+
+    private void OnApplyToggle(int index, bool on)
+    {
+        int mask = _viewModel.LevellerApplyMask;
+        if (on) mask |= (1 << index); else mask &= ~(1 << index);
+        _viewModel.LevellerApplyMask = mask;
     }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -104,6 +168,15 @@ public sealed partial class VolumeLevellerWindow : Window
                 case nameof(MainViewModel.LevellerGateDb):
                     GateSlider.Value = _viewModel.LevellerGateDb;
                     GateTextBox.Text = _viewModel.LevellerGateDb.ToString("F0", CultureInfo.InvariantCulture);
+                    break;
+                case nameof(MainViewModel.LevellerDetectorMask):
+                    _detectorGrid?.SetMask((uint)_viewModel.LevellerDetectorMask);
+                    break;
+                case nameof(MainViewModel.LevellerApplyMask):
+                    _applyGrid?.SetMask((uint)_viewModel.LevellerApplyMask);
+                    break;
+                case nameof(MainViewModel.LevellerMasksSupported):
+                    BuildChannelMasks();
                     break;
             }
             _isUpdating = false;

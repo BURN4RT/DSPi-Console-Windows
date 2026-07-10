@@ -1,4 +1,5 @@
 using System.Globalization;
+using DSPiConsole.Controls;
 using DSPiConsole.Core.Models;
 using DSPiConsole.ViewModels;
 using Microsoft.UI;
@@ -21,6 +22,7 @@ public sealed partial class CrossfeedWindow : Window
 
     private readonly MainViewModel _viewModel;
     private bool _isUpdating = true;
+    private MaskChipGrid? _outputPairGrid;
     private readonly DispatcherTimer _scrollbarFadeTimer;
     private bool _isPointerOverScrollViewer;
     private UIElement? _verticalScrollBar;
@@ -79,6 +81,8 @@ public sealed partial class CrossfeedWindow : Window
 
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         CurveCanvas.SizeChanged += (s, e) => DrawGraph();
+
+        BuildOutputPairMask();
 
         // Find scrollbar after layout is complete
         MainScrollViewer.Loaded += (s, e) =>
@@ -149,9 +153,67 @@ public sealed partial class CrossfeedWindow : Window
                 case nameof(MainViewModel.CrossfeedItd):
                     ItdToggle.IsOn = _viewModel.CrossfeedItd;
                     break;
+                case nameof(MainViewModel.CrossfeedOutputPairMask):
+                    _outputPairGrid?.SetMask((uint)_viewModel.CrossfeedOutputPairMask);
+                    break;
+                case nameof(MainViewModel.CrossfeedMaskSupported):
+                    BuildOutputPairMask();
+                    break;
             }
             _isUpdating = false;
         });
+    }
+
+    // ── Per-output-pair crossfeed mask (V20+) ──
+
+    private void BuildOutputPairMask()
+    {
+        if (!_viewModel.CrossfeedMaskSupported)
+        {
+            OutputPairSection.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        // Pairs are the stereo output slots; the last output (mono PDM sub) is
+        // not a pair. pairCount = (outputs - 1) / 2 → 4 on RP2350, 2 on RP2040.
+        int pairCount = Math.Max(0, (_viewModel.NumOutputChannels - 1) / 2);
+        var outputs = _viewModel.ActiveOutputs;
+        _outputPairGrid = new MaskChipGrid(
+            MaskChipGrid.AllBits(pairCount),
+            p =>
+            {
+                int l = 2 * p, r = 2 * p + 1;
+                string ln = l < outputs.Count ? outputs[l].Name : $"Out {l + 1}";
+                string rn = r < outputs.Count ? outputs[r].Name : $"Out {r + 1}";
+                return $"{ln} / {rn}";
+            },
+            OnOutputPairToggle);
+
+        OutputPairHost.Children.Clear();
+        OutputPairHost.Children.Add(_outputPairGrid.Root);
+        _outputPairGrid.SetMask((uint)_viewModel.CrossfeedOutputPairMask);
+
+        int all = (1 << pairCount) - 1;
+        var flyout = new MenuFlyout();
+        void AddPreset(string text, int mask)
+        {
+            var mi = new MenuFlyoutItem { Text = text };
+            mi.Click += (_, _) => _viewModel.CrossfeedOutputPairMask = mask;
+            flyout.Items.Add(mi);
+        }
+        AddPreset("All pairs", all);
+        AddPreset("First pair only", 0x01);
+        AddPreset("None", 0x00);
+        OutputPairPresets.Flyout = flyout;
+
+        OutputPairSection.Visibility = Visibility.Visible;
+    }
+
+    private void OnOutputPairToggle(int index, bool on)
+    {
+        int mask = _viewModel.CrossfeedOutputPairMask;
+        if (on) mask |= (1 << index); else mask &= ~(1 << index);
+        _viewModel.CrossfeedOutputPairMask = mask;
     }
 
     private void OnEnableToggled(object sender, RoutedEventArgs e)

@@ -4,9 +4,9 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Loudness Compensation">
 
-    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Padding="20">
+    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Padding="20,20,0,20">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <StackPanel Spacing="16">
+            <StackPanel Spacing="16" Padding="0,0,20,0">
                 <!-- Header: title on left, toggle on right -->
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -52,6 +52,24 @@
                         <Canvas x:Name="XAxisCanvas" Grid.Column="1" Grid.Row="1" Margin="0,0,8,0"/>
                     </Grid>
                 </Border>
+
+                <!-- Per-output mask (firmware V19+) -->
+                <StackPanel x:Name="OutputMaskSection" Spacing="6" Visibility="Collapsed">
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Outputs" FontWeight="Medium" VerticalAlignment="Center"/>
+                        <DropDownButton x:Name="OutputMaskPresets" Grid.Column="1" Content="Presets"
+                                        Padding="8,2,8,2" FontSize="12"/>
+                    </Grid>
+                    <TextBlock Text="Compensate only the outputs feeding your low-level listening chain."
+                               FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap"/>
+                    <StackPanel x:Name="OutputMaskHost" Margin="0,4,0,0"/>
+                </StackPanel>
 
                 <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
 

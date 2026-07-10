@@ -139,6 +139,13 @@ public static class VendorCommands
     public const byte GetLevellerLookahead = 0xBD;
     public const byte SetLevellerGate      = 0xBE;
     public const byte GetLevellerGate      = 0xBF;
+    // Multichannel DSP masks. All carry the mask in the data payload (wValue=0).
+    public const byte SetLevellerMasks     = 0xDE; // V18: 2 bytes [detector, apply] over input channels
+    public const byte GetLevellerMasks     = 0xDF;
+    public const byte SetLoudnessMask      = 0xFA; // V19: uint16 LE over output channels
+    public const byte GetLoudnessMask      = 0xFB;
+    public const byte SetCrossfeedOutputs  = 0xFC; // V20: uint8 over output pairs (bit p = outputs 2p/2p+1)
+    public const byte GetCrossfeedOutputs  = 0xFD;
 
     // Input source switching (V7+)
     public const byte SetInputSource       = 0xE0;
@@ -1901,6 +1908,55 @@ public partial class DspDevice : ObservableObject, IDisposable
         var response = ControlTransferIn(VendorCommands.GetLevellerGate, 0, 4);
         if (response == null || response.Length < 4) return null;
         return BitConverter.ToSingle(response, 0);
+    }
+
+    // ── Multichannel DSP masks (V18/V19/V20) ──
+    // Each SET carries the whole mask in the data payload and is re-sent in full
+    // on every change (there is no incremental per-bit wire protocol). GETs read
+    // the mask back via a data-IN stage. Bit spaces: leveller = input channels
+    // (0..7), loudness = output channels (0..8), crossfeed = output pairs.
+
+    /// <summary>Set the volume-leveller detector and apply channel masks (0xDE, V18).</summary>
+    public bool SetLevellerMasks(byte detectorMask, byte applyMask)
+    {
+        return ControlTransferOut(VendorCommands.SetLevellerMasks, 0,
+            new[] { detectorMask, applyMask });
+    }
+
+    /// <summary>Get the leveller detector/apply masks (0xDF). Null on STALL/short read.</summary>
+    public (byte detector, byte apply)? GetLevellerMasks()
+    {
+        var response = ControlTransferIn(VendorCommands.GetLevellerMasks, 0, 2);
+        if (response == null || response.Length < 2) return null;
+        return (response[0], response[1]);
+    }
+
+    /// <summary>Set the per-output loudness compensation mask (0xFA, V19). uint16 LE.</summary>
+    public bool SetLoudnessMask(ushort mask)
+    {
+        return ControlTransferOut(VendorCommands.SetLoudnessMask, 0, BitConverter.GetBytes(mask));
+    }
+
+    /// <summary>Get the per-output loudness mask (0xFB). Null on STALL/short read.</summary>
+    public ushort? GetLoudnessMask()
+    {
+        var response = ControlTransferIn(VendorCommands.GetLoudnessMask, 0, 2);
+        if (response == null || response.Length < 2) return null;
+        return BitConverter.ToUInt16(response, 0);
+    }
+
+    /// <summary>Set the per-output-pair crossfeed mask (0xFC, V20). uint8; bit p = outputs 2p/2p+1.</summary>
+    public bool SetCrossfeedOutputs(byte pairMask)
+    {
+        return ControlTransferOut(VendorCommands.SetCrossfeedOutputs, 0, new[] { pairMask });
+    }
+
+    /// <summary>Get the crossfeed output-pair mask (0xFD). Null on STALL/short read.</summary>
+    public byte? GetCrossfeedOutputs()
+    {
+        var response = ControlTransferIn(VendorCommands.GetCrossfeedOutputs, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0];
     }
 
     #endregion

@@ -1,4 +1,5 @@
 using System.Globalization;
+using DSPiConsole.Controls;
 using DSPiConsole.Core.Models;
 using DSPiConsole.ViewModels;
 using Microsoft.UI;
@@ -20,6 +21,7 @@ public sealed partial class LoudnessWindow : Window
 
     private readonly MainViewModel _viewModel;
     private bool _isUpdating = true;
+    private MaskChipGrid? _outputMaskGrid;
 
     private const float LogMin = 1.30103f;  // log10(20)
     private const float LogMax = 4.09691f;  // log10(12500)
@@ -66,6 +68,55 @@ public sealed partial class LoudnessWindow : Window
 
         // Draw initial curve on size
         CurveCanvas.SizeChanged += (s, e) => DrawCurve();
+
+        BuildOutputMask();
+    }
+
+    // ── Per-output loudness mask (V19+) ──
+
+    private void BuildOutputMask()
+    {
+        if (!_viewModel.LoudnessMaskSupported)
+        {
+            OutputMaskSection.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        int count = _viewModel.NumOutputChannels;
+        var outputs = _viewModel.ActiveOutputs;
+        _outputMaskGrid = new MaskChipGrid(
+            MaskChipGrid.AllBits(count),
+            bit => bit < outputs.Count ? outputs[bit].Name : $"Output {bit + 1}",
+            OnOutputMaskToggle,
+            stretch: true,
+            // The mono PDM sub shows "S" instead of its channel number.
+            captionForBit: bit => bit < outputs.Count && outputs[bit].ShortName == "PDM" ? "S" : null);
+
+        OutputMaskHost.Children.Clear();
+        OutputMaskHost.Children.Add(_outputMaskGrid.Root);
+        _outputMaskGrid.SetMask((uint)_viewModel.LoudnessOutputMask);
+
+        int all = count >= 16 ? 0xFFFF : (1 << count) - 1;
+        var flyout = new MenuFlyout();
+        void AddPreset(string text, int mask)
+        {
+            var mi = new MenuFlyoutItem { Text = text };
+            mi.Click += (_, _) => _viewModel.LoudnessOutputMask = mask;
+            flyout.Items.Add(mi);
+        }
+        AddPreset("All outputs", all);
+        AddPreset("First pair only", 0x0003);
+        AddPreset("None", 0x0000);
+        OutputMaskPresets.Flyout = flyout;
+
+        OutputMaskSection.Visibility = Visibility.Visible;
+    }
+
+    private void OnOutputMaskToggle(int index, bool on)
+    {
+        int mask = _viewModel.LoudnessOutputMask;
+        if (on) mask |= (1 << index); else mask &= ~(1 << index);
+        _viewModel.LoudnessOutputMask = mask;
     }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -87,6 +138,12 @@ public sealed partial class LoudnessWindow : Window
                 case nameof(MainViewModel.LoudnessIntensity):
                     IntensitySlider.Value = _viewModel.LoudnessIntensity;
                     IntensityTextBox.Text = _viewModel.LoudnessIntensity.ToString("F0", CultureInfo.InvariantCulture);
+                    break;
+                case nameof(MainViewModel.LoudnessOutputMask):
+                    _outputMaskGrid?.SetMask((uint)_viewModel.LoudnessOutputMask);
+                    break;
+                case nameof(MainViewModel.LoudnessMaskSupported):
+                    BuildOutputMask();
                     break;
             }
             _isUpdating = false;

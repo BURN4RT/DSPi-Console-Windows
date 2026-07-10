@@ -28,6 +28,33 @@
 
                 <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
 
+                <!-- Detector / apply channel masks (firmware V18+, multi-input only) -->
+                <StackPanel x:Name="ChannelMaskSection" Spacing="8" Visibility="Collapsed">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="CHANNELS" FontSize="10" FontWeight="Bold" VerticalAlignment="Center"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <DropDownButton x:Name="ChannelMaskPresets" Grid.Column="1" Content="Presets"
+                                        Padding="8,2,8,2" FontSize="12"/>
+                    </Grid>
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Detector" FontWeight="Medium"/>
+                        <TextBlock Text="Channels that feed the shared level detector."
+                                   FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <StackPanel x:Name="DetectorMaskHost" Margin="0,2,0,0"/>
+                    </StackPanel>
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Apply" FontWeight="Medium"/>
+                        <TextBlock Text="Channels the shared gain is applied to."
+                                   FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <StackPanel x:Name="ApplyMaskHost" Margin="0,2,0,0"/>
+                    </StackPanel>
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+                </StackPanel>
+
                 <TextBlock Text="PARAMETERS" FontSize="10" FontWeight="Bold"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
 

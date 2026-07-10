@@ -57,6 +57,24 @@
                     </Grid>
                 </Border>
 
+                <!-- Per-output-pair mask (firmware V20+) -->
+                <StackPanel x:Name="OutputPairSection" Spacing="6" Visibility="Collapsed">
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Output Pairs" FontWeight="Medium" VerticalAlignment="Center"/>
+                        <DropDownButton x:Name="OutputPairPresets" Grid.Column="1" Content="Presets"
+                                        Padding="8,2,8,2" FontSize="12"/>
+                    </Grid>
+                    <TextBlock Text="Crossfeed only the stereo pairs feeding headphones. Other pairs stay bit-accurate; the mono sub is never crossfed."
+                               FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap"/>
+                    <StackPanel x:Name="OutputPairHost" Margin="0,4,0,0"/>
+                </StackPanel>
+
                 <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
 
                 <!-- Preset selection -->

@@ -31,6 +31,14 @@ public class PresetSnapshot
     public float CrossfeedFeed;
     public bool CrossfeedItd;
 
+    // Multichannel DSP masks (V18/V19/V20). Part of the preset slot: loudness
+    // output mask, crossfeed output-pair mask, and the leveller detector/apply
+    // channel masks. Captured so mask edits register as preset-dirty.
+    public int LoudnessOutputMask;
+    public int CrossfeedOutputPairMask;
+    public int LevellerDetectorMask;
+    public int LevellerApplyMask;
+
     public Dictionary<int, float> Delays = new();
     public bool[,] MatrixRouting = new bool[2, 9];
     public float[,] MatrixGain = new float[2, 9];
@@ -96,6 +104,10 @@ public class PresetSnapshot
             CrossfeedFreq = vm.CrossfeedFreq,
             CrossfeedFeed = vm.CrossfeedFeed,
             CrossfeedItd = vm.CrossfeedItd,
+            LoudnessOutputMask = vm.LoudnessOutputMask,
+            CrossfeedOutputPairMask = vm.CrossfeedOutputPairMask,
+            LevellerDetectorMask = vm.LevellerDetectorMask,
+            LevellerApplyMask = vm.LevellerApplyMask,
         };
 
         // Delays and gains
@@ -197,6 +209,15 @@ public static class PresetDiff
     private static string FormatVal(float v) =>
         v == (int)v && Math.Abs(v) < 100000 ? $"{(int)v}" : $"{v:F1}";
 
+    // Renders a channel/pair bitmask as a 1-based comma list, e.g. "1,2,5".
+    private static string MaskList(int mask)
+    {
+        var nums = new List<string>();
+        for (int i = 0; i < 16; i++)
+            if ((mask & (1 << i)) != 0) nums.Add((i + 1).ToString());
+        return nums.Count == 0 ? "none" : string.Join(",", nums);
+    }
+
     public static List<string> Diff(PresetSnapshot old, PresetSnapshot cur, MainViewModel vm)
     {
         var changes = new List<string>();
@@ -232,6 +253,8 @@ public static class PresetDiff
             changes.Add($"Loudness ref SPL: {FormatVal(old.LoudnessRefSpl)} \u2192 {FormatVal(cur.LoudnessRefSpl)}");
         if (Math.Abs(old.LoudnessIntensity - cur.LoudnessIntensity) > 0.05f)
             changes.Add($"Loudness intensity: {FormatVal(old.LoudnessIntensity)}% \u2192 {FormatVal(cur.LoudnessIntensity)}%");
+        if (old.LoudnessOutputMask != cur.LoudnessOutputMask)
+            changes.Add($"Loudness outputs: {MaskList(old.LoudnessOutputMask)} \u2192 {MaskList(cur.LoudnessOutputMask)}");
 
         // Crossfeed
         if (old.CrossfeedEnabled != cur.CrossfeedEnabled)
@@ -244,6 +267,14 @@ public static class PresetDiff
             changes.Add($"Crossfeed feed: {FormatDb(old.CrossfeedFeed)} \u2192 {FormatDb(cur.CrossfeedFeed)}");
         if (old.CrossfeedItd != cur.CrossfeedItd)
             changes.Add($"Crossfeed ITD: {(cur.CrossfeedItd ? "enabled" : "disabled")}");
+        if (old.CrossfeedOutputPairMask != cur.CrossfeedOutputPairMask)
+            changes.Add($"Crossfeed pairs: {MaskList(old.CrossfeedOutputPairMask)} → {MaskList(cur.CrossfeedOutputPairMask)}");
+
+        // Volume leveller detector / apply channel masks
+        if (old.LevellerDetectorMask != cur.LevellerDetectorMask)
+            changes.Add($"Leveller detector: {MaskList(old.LevellerDetectorMask)} → {MaskList(cur.LevellerDetectorMask)}");
+        if (old.LevellerApplyMask != cur.LevellerApplyMask)
+            changes.Add($"Leveller apply: {MaskList(old.LevellerApplyMask)} → {MaskList(cur.LevellerApplyMask)}");
 
         // Channel delays
         foreach (var ch in Channel.All)
