@@ -1992,7 +1992,10 @@ public sealed partial class MainWindow : Window
             return sub;
         }
 
-        AddTypeItem(typeFlyout.Items, "Off", FilterType.Flat);
+        // Offer "Off" only when the band isn't already off — no point listing the
+        // current selection.
+        if (p.Type != FilterType.Flat)
+            AddTypeItem(typeFlyout.Items, "Off", FilterType.Flat);
         AddTypeItem(typeFlyout.Items, "Peaking", FilterType.Peaking);
         typeFlyout.Items.Add(MakeGroup("Low Shelf",
             new[] { ("6dB", FilterType.LowShelf1), ("12dB", FilterType.LowShelf) }));
