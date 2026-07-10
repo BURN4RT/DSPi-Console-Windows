@@ -158,23 +158,25 @@ internal static class NotifyPacketDecoder
     // ── WireBulkParams section offsets ─────────────────────────────────
     // Authoritative struct layout: firmware/DSPi/bulk_params.h.
     // BulkParamsParser uses the same numbers; keep these in sync.
+    // V20 layout (17-channel unified model, 5876 bytes).
     private const int GlobalWireOffset       = 16;     // WireGlobalParams (16B)
     private const int CrossfeedWireOffset    = 32;     // WireCrossfeedParams (16B)
-    private const int DelaysWireOffset       = 64;     // float[11] delay_ms
-    private const int CrosspointsWireOffset  = 108;    // WireCrosspoint[2][9] (8B each)
-    private const int OutputsWireOffset      = 252;    // WireOutputChannel[9] (12B each)
-    private const int PinConfigWireOffset    = 360;    // WirePinConfig (8B)
-    // 368 = OffsetEq (still inline in DescribeOffset)
-    private const int ChannelNamesWireOffset = 2480;
+    private const int DelaysWireOffset       = 64;     // float[17] delay_ms (68B)
+    private const int CrosspointsWireOffset  = 132;    // WireCrosspoint[8][9] (8B each, 576B)
+    private const int OutputsWireOffset      = 708;    // WireOutputChannel[9] (12B each, 108B)
+    private const int PinConfigWireOffset    = 816;    // WirePinConfig (8B)
+    // 824 = OffsetEq (still inline in DescribeOffset)
+    private const int ChannelNamesWireOffset = 4088;   // WireChannelNames (17×32 = 544B)
     private const int WireChannelNameLen     = 32;
-    private const int I2sConfigWireOffset    = 2832;   // WireI2SConfig (16B)
-    private const int LevellerWireOffset     = 2848;   // WireLevellerConfig (16B)
-    private const int PreampWireOffset       = 2864;   // WirePreampConfig (16B)
-    private const int MasterVolumeWireOffset = 2880;
-    private const int InputSourceWireOffset  = 2896;   // WireInputConfig (16B)
-    private const int LgSoundSyncWireOffset  = 2912;   // WireLgSoundSync (16B)
-    private const int UserVolumeWireOffset   = 2928;
-    private const int DacHwMuteWireOffset    = 2944;   // WireDacHwMute (16B, V10+)
+    private const int I2sConfigWireOffset    = 4632;   // WireI2SConfig (16B)
+    private const int LevellerWireOffset     = 4648;   // WireLevellerConfig (20B)
+    private const int PreampWireOffset       = 4668;   // WirePreampConfig (32B, 8 inputs)
+    private const int MasterVolumeWireOffset = 4700;
+    private const int InputSourceWireOffset  = 4716;   // WireInputConfig (16B)
+    private const int LgSoundSyncWireOffset  = 4732;   // WireLgSoundSync (16B)
+    private const int UserVolumeWireOffset   = 4748;
+    private const int DacHwMuteWireOffset    = 4764;   // WireDacHwMute (16B)
+    private const int AdatConfigWireOffset   = 5868;   // WireAdatConfig (8B, V17+)
 
     // ── Field offsets within Global block (offset 16) ──
     private const int PreampGainDbWireOffset       = GlobalWireOffset + 0;   // float
@@ -304,11 +306,11 @@ internal static class NotifyPacketDecoder
 
     private static string? DescribeOffset(int offset, int size)
     {
-        // EQ band region: 11 channels × 12 bands × 16 bytes = 2112 bytes
-        const int OffsetEq = 368;
+        // EQ band region: 17 channels × 12 bands × 16 bytes = 3264 bytes
+        const int OffsetEq = 824;
         const int WireBandSize = 16;
         const int WireMaxBands = 12;
-        const int WireMaxChannels = 11;
+        const int WireMaxChannels = 17;
         if (size == WireBandSize
             && offset >= OffsetEq
             && offset < OffsetEq + WireMaxChannels * WireMaxBands * WireBandSize
@@ -317,8 +319,8 @@ internal static class NotifyPacketDecoder
             int flat = (offset - OffsetEq) / WireBandSize;
             return $"eq[ch={flat / WireMaxBands},band={flat % WireMaxBands}]";
         }
-        // Crossover band region (V11+): 11 channels × 4 bands × 16 bytes at 2960
-        const int OffsetCrossover = 2960;
+        // Crossover band region (V20): 17 channels × 4 bands × 16 bytes at 4780
+        const int OffsetCrossover = 4780;
         const int WireMaxXoverBands = 4;
         if (size == WireBandSize
             && offset >= OffsetCrossover
@@ -331,7 +333,7 @@ internal static class NotifyPacketDecoder
         // Channel name
         if (size == WireChannelNameLen
             && offset >= ChannelNamesWireOffset
-            && offset < ChannelNamesWireOffset + 11 * WireChannelNameLen
+            && offset < ChannelNamesWireOffset + 17 * WireChannelNameLen
             && (offset - ChannelNamesWireOffset) % WireChannelNameLen == 0)
         {
             return $"channel_names[{(offset - ChannelNamesWireOffset) / WireChannelNameLen}]";

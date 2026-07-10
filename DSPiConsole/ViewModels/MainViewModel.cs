@@ -267,8 +267,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _        => Array.Empty<Channel>()
     };
 
+    // Total wire channels on V16+ firmware (unified model: inputs + outputs).
+    // RP2350 = 8 in + 9 out = 17; RP2040 = 2 in + 5 out = 7.
     private static int ChannelCountForPlatform(string? platform) =>
-        platform == "RP2350" ? 11 : 7;
+        platform == "RP2350" ? 17 : 7;
+
+    private static int InputChannelCountForPlatform(string? platform) =>
+        platform == "RP2350" ? 8 : 2;
+
+    private static int OutputChannelCountForPlatform(string? platform) =>
+        platform == "RP2350" ? 9 : 5;
 
     private static int OutputSlotCountForPlatform(string? platform) =>
         platform == "RP2350" ? 4 : 2;
@@ -499,8 +507,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
                         {
                             var info = _device.GetDeviceInfo();
                             var newPlatform = info?.Platform ?? "";
-                            // Set channel count for platform-aware status parsing
+                            // Set channel counts for platform-aware status
+                            // parsing and the app↔wire channel-index mapping.
+                            // The bulk header refines these authoritatively in
+                            // ApplyBulkParams; set them here so per-channel
+                            // commands issued before the first bulk read map
+                            // correctly on RP2350.
                             _device.NumChannels = ChannelCountForPlatform(newPlatform);
+                            _device.NumInputChannels = InputChannelCountForPlatform(newPlatform);
+                            _device.NumOutputChannels = OutputChannelCountForPlatform(newPlatform);
                             ApplyPlatformBeforeInitialSync(newPlatform);
                             // Use the same platform value for the first full
                             // sync. That keeps output-index mapping stable even
@@ -1235,15 +1250,25 @@ public partial class MainViewModel : ObservableObject, IDisposable
         // uses the matching wValue band-field width (V11 widened it to 5 bits).
         _device.WireFormatVersion = bp.FormatVersion;
 
-        // EQ bands — apply first BandCount bands per channel
+        // The bulk header carries the authoritative channel counts for the
+        // unified model; refine the app↔wire mapping from them (they drive
+        // ChannelMap for per-channel commands, meters and notifications).
+        int numInputs = bp.NumInputChannels;
+        _device.NumInputChannels = numInputs;
+        _device.NumOutputChannels = bp.NumOutputChannels;
+        _device.NumChannels = bp.NumChannels;
+
+        // EQ bands — apply first BandCount bands per channel. bp.Eq is indexed
+        // by wire channel; map the app channel id through ChannelMap.
         foreach (var channel in Channel.All)
         {
             int ch = (int)channel.Id;
+            int wireCh = ChannelMap.AppToWire(ch, numInputs);
             if (_channelData.TryGetValue(ch, out var filters))
             {
                 for (int band = 0; band < channel.BandCount && band < bp.MaxBands; band++)
                 {
-                    var fp = bp.Eq[ch, band];
+                    var fp = bp.Eq[wireCh, band];
                     int b = band; // capture for closure
                     if (!filters[b].Equals(fp))
                         _dispatcher.TryEnqueue(() => filters[b] = fp);
@@ -1259,11 +1284,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
             foreach (var channel in Channel.All)
             {
                 int ch = (int)channel.Id;
+                int wireCh = ChannelMap.AppToWire(ch, numInputs);
                 if (_xoverData.TryGetValue(ch, out var xbands))
                 {
                     for (int i = 0; i < xbands.Count && i < CrossoverFilter.MaxXoverBands; i++)
                     {
-                        var fp = bp.Xover[ch, i];
+                        var fp = bp.Xover[wireCh, i];
                         int li = i; // capture for closure
                         if (!xbands[li].Equals(fp))
                             _dispatcher.TryEnqueue(() => xbands[li] = fp);
@@ -1335,12 +1361,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var sr = _device.GetStatusUInt32(15);
         if (sr.HasValue) _sampleRateHz = sr.Value;
 
-        // Channel names
-        for (int ch = 0; ch < bp.ChannelNames.Length; ch++)
+        // Channel names — bp.ChannelNames is wire-indexed; _channelNames is
+        // keyed by app channel id, so map each wire row through ChannelMap.
+        for (int wireCh = 0; wireCh < bp.ChannelNames.Length; wireCh++)
         {
-            var name = bp.ChannelNames[ch];
+            int appCh = ChannelMap.WireToApp(wireCh, numInputs);
+            if (appCh < 0) continue;
+            var name = bp.ChannelNames[wireCh];
             if (!string.IsNullOrEmpty(name))
-                _channelNames[ch] = name;
+                _channelNames[appCh] = name;
         }
 
         // Dispatch all UI updates
@@ -1385,10 +1414,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
                     MatrixRouteChanged?.Invoke(inp, o);
             }
 
-            for (int ch = 0; ch < bp.ChannelNames.Length; ch++)
+            for (int wireCh = 0; wireCh < bp.ChannelNames.Length; wireCh++)
             {
-                if (!string.IsNullOrEmpty(bp.ChannelNames[ch]))
-                    ChannelNameChanged?.Invoke(ch);
+                int appCh = ChannelMap.WireToApp(wireCh, numInputs);
+                if (appCh < 0) continue;
+                if (!string.IsNullOrEmpty(bp.ChannelNames[wireCh]))
+                    ChannelNameChanged?.Invoke(appCh);
             }
 
             VisibilityChanged?.Invoke(this, EventArgs.Empty);

@@ -4,53 +4,68 @@ using DSPiConsole.Core.Models;
 namespace DSPiConsole.Usb;
 
 /// <summary>
-/// Parsed result from a bulk parameter fetch (REQ_GET_ALL_PARAMS, 0xA0).
+/// Parsed result from a bulk parameter fetch (REQ_GET_ALL_PARAMS, 0xA0 /
+/// chunked 0xA2). Wire format V20 (firmware 1.1.x, unified channel model).
+///
+/// V16 broke bulk-params backward compatibility with no migration: inputs are
+/// now first-class channels (no "master"), and the channel index space is
+/// [ inputs 0..NumInputChannels-1 ][ outputs NumInputChannels..NumChannels-1 ].
+/// The firmware rejects any payload whose format_version != 20 or whose length
+/// != sizeof(WireBulkParams) (5876), so there are no legacy size anchors or
+/// per-section version gates anymore — every section is always present.
 /// </summary>
 public class BulkParams
 {
-    // Header (offset 0, 16 bytes)
+    // ── Header (offset 0, 16 bytes) ──
     public byte FormatVersion;
-    public byte PlatformId;       // 0=RP2040, 1=RP2350
-    public byte NumChannels;      // total (11)
-    public byte NumOutputChannels; // outputs (9)
-    public byte NumInputChannels;  // inputs (2)
-    public byte MaxBands;          // bands per channel (12)
+    public byte PlatformId;         // 0=RP2040, 1=RP2350
+    public byte NumChannels;        // total valid channels (7 on RP2040, 17 on RP2350)
+    public byte NumOutputChannels;  // valid outputs (5 or 9)
+    public byte NumInputChannels;   // valid inputs (2 or 8)
+    public byte MaxBands;           // PEQ bands per channel (12)
+    public ushort PayloadLength;    // total packet size including header
+    public ushort FwVersionMajor;
+    public ushort FwVersionMinor;
 
-    // Global (offset 16, 16 bytes)
+    // ── Global (offset 16, 16 bytes) ──
     public float PreampGainDb;
     public bool Bypass;
     public bool LoudnessEnabled;
+    public ushort LoudnessOutputMask;  // bit k = loudness processes output channel k (V19+)
     public float LoudnessRefSpl;
     public float LoudnessIntensityPct;
 
-    // Crossfeed (offset 32, 16 bytes)
+    // ── Crossfeed (offset 32, 16 bytes) ──
     public bool CrossfeedEnabled;
     public byte CrossfeedPreset;
     public bool CrossfeedItd;
+    public byte CrossfeedOutputPairMask;  // bit p = crossfeed runs on output pair p (V20+)
     public float CrossfeedFreq;
     public float CrossfeedFeedDb;
 
-    // Delays (offset 64, 44 bytes) — float[11]
+    // ── Delays (offset 64, 68 bytes) — float[17] ──
     public float[] Delays = Array.Empty<float>();
 
-    // Matrix crosspoints (offset 108, 144 bytes) — [input, output]
-    public (bool enabled, bool invert, float gain)[,] Crosspoints = new (bool, bool, float)[2, 9];
+    // ── Matrix crosspoints (offset 132, 576 bytes) — [input 0..7, output 0..8] ──
+    public (bool enabled, bool invert, float gain)[,] Crosspoints =
+        new (bool, bool, float)[BulkParamsParser.WireMaxInputChannels, BulkParamsParser.WireMaxOutputChannels];
 
-    // Outputs (offset 252, 108 bytes) — 9 × 12 bytes
+    // ── Outputs (offset 708, 108 bytes) — 9 × 12 bytes, output-relative ──
     public (bool enabled, bool muted, float gain, float delay)[] Outputs =
-        new (bool, bool, float, float)[9];
+        new (bool, bool, float, float)[BulkParamsParser.WireMaxOutputChannels];
 
-    // Pin config (offset 360, 8 bytes)
+    // ── Pin config (offset 816, 8 bytes) ──
     public byte NumPinOutputs;
     public byte[] Pins = Array.Empty<byte>();
 
-    // EQ bands (offset 368, 2112 bytes) — [channel, band] 11×12×16
-    public FilterParams[,] Eq = new FilterParams[11, 12];
+    // ── EQ bands (offset 824, 3264 bytes) — [channel 0..16, band 0..11] ──
+    public FilterParams[,] Eq =
+        new FilterParams[BulkParamsParser.WireMaxChannels, BulkParamsParser.WireMaxBands];
 
-    // Channel names (offset 2480, 352 bytes) — 11 × 32-char strings
+    // ── Channel names (offset 4088, 544 bytes) — 17 × 32-char strings ──
     public string[] ChannelNames = Array.Empty<string>();
 
-    // I2S config (offset 2832, 16 bytes) — present when packet >= 2848
+    // ── I2S output config (offset 4632, 16 bytes) ──
     public byte[] OutputSlotTypes = new byte[4]; // per-slot: 0=S/PDIF, 1=I2S
     public byte BckPin;
     public byte MckPin;
@@ -58,101 +73,118 @@ public class BulkParams
     public byte MckMultiplierEncoded; // 0=128x, 1=256x
     public bool HasI2SConfig;
 
-    // Volume leveller (offset 2848, 16 bytes) — present when packet >= 2864
+    // ── Volume leveller (offset 4648, 20 bytes) ──
     public bool LevellerEnabled;
     public byte LevellerSpeed;       // 0=Slow, 1=Medium, 2=Fast
     public bool LevellerLookahead;
     public float LevellerAmount;     // 0-100
     public float LevellerMaxGainDb;  // 0-35
     public float LevellerGateDb;     // -96 to 0
+    public byte LevellerDetectorMask; // bit k = input channel k feeds the detector (V18+)
+    public byte LevellerApplyMask;    // bit k = gain applied to input channel k (V18+)
     public bool HasLevellerConfig;
 
-    // Per-channel preamp (offset 2864, 16 bytes) — V6+, present when packet >= 2872
-    public float PreampLDb;
-    public float PreampRDb;
+    // ── Per-channel preamp (offset 4668, 32 bytes) — float[8], per input channel ──
+    public float[] Preamp = Array.Empty<float>();
+    public float PreampLDb;          // convenience: Preamp[0]
+    public float PreampRDb;          // convenience: Preamp[1]
     public bool HasPerChannelPreamp;
 
-    // Master volume (offset 2880, 16 bytes) — V6+, present when packet >= 2884
+    // ── Master volume (offset 4700, 16 bytes) ──
     public float MasterVolumeDb;
     public bool HasMasterVolume;
 
-    // Input source config (offset 2896, 16 bytes) — V7+, present when packet >= 2898
-    public byte InputSource;        // 0 = USB, 1 = S/PDIF, 2 = I2S (V12+)
-    public byte SpdifRxPin;          // GPIO pin (informational; not applied via bulk SET)
+    // ── Input source config (offset 4716, 16 bytes) ──
+    public byte InputSource;         // 0 = USB, 1 = S/PDIF, 2 = I2S
+    public byte SpdifRxPin;          // primary SPDIF RX GPIO
     public bool HasInputConfig;
 
-    // I2S input fields within WireInputConfig (offset 2896 +2/+3) — V12+,
-    // present when packet >= 2900. I2sInputRateEncoded: 0=44100, 1=48000, 2=96000.
-    public byte I2sRxPin;            // I2S input data GPIO pin
+    // I2S input fields within WireInputConfig — I2sInputRateEncoded: 0=44100, 1=48000, 2=96000.
+    public byte I2sRxPin;            // I2S input data GPIO, stereo pair 0
     public byte I2sInputRateEncoded; // 0=44100, 1=48000, 2=96000 (NOT Hz)
+    public byte I2sInputChannels;    // active I2S input channels: 2/4/6/8 (0 = absent)
+    public byte[] I2sRxPinExt = new byte[3];   // I2S RX GPIOs for pairs 1..3
     public bool HasI2sInputConfig;
 
-    // LG Sound Sync (offset 2912, 16 bytes) — V8+, present when packet >= 2928.
-    // Only the user-writable `enabled` flag is captured; the runtime
-    // observation fields (present, volume, muted) are diagnostic-only and
-    // not part of preset state.
+    // Optional SPDIF inputs 2/3 (stored enable-mask PLUS ONE on the wire).
+    public byte[] SpdifRxPinExt = new byte[2];      // SPDIF RX 2/3 GPIOs (0 = absent)
+    public byte SpdifRxEnabledExt;                  // decoded enable mask (0 = both disabled)
+    public bool HasSpdifExtInputs;
+
+    // ── LG Sound Sync (offset 4732, 16 bytes) ──
     public bool LgSoundSyncEnabled;
     public bool HasLgSoundSync;
 
-    // User volume / vendor mute (offset 2928, 16 bytes) — V9+, present
-    // when packet >= 2944. UserVolumeDb mirrors the UAC1 host slider's
-    // dB value; UserMute is the standalone vendor mute (independent of
-    // UAC1 mute state — see Documentation/current_architecture.md).
+    // ── User volume / vendor mute (offset 4748, 16 bytes) ──
     public float UserVolumeDb;
     public bool UserMute;
     public bool HasUserVolume;
 
-    // External DAC hardware mute (offset 2944, 16 bytes) — V10+, present
-    // when packet >= 2960. Decoded via DacHwMuteConfig.TryParse so the
-    // wire layout lives in one place.
+    // ── External DAC hardware mute (offset 4764, 16 bytes) ──
     public DacHwMuteConfig? DacHwMute;
     public bool HasDacHwMute;
 
-    // Crossover bands (offset 2960, 704 bytes) — V11+, present when packet
-    // >= 3664. [channel, localBand] = 11 × 4 × 16. Crossover shares the
-    // 16-byte WireBandParams layout PEQ uses (Q/gain are ignored for crossover
-    // types). Firmware zeroes the master-channel rows (ch 0,1); the app hides
-    // crossover controls there. localBand 0..3 maps to wire band index 20..23.
-    public FilterParams[,] Xover = new FilterParams[11, 4];
+    // ── Crossover bands (offset 4780, 1088 bytes) — [channel 0..16, localBand 0..3] ──
+    // localBand 0..3 maps to wire band index 20..23. Input rows are zeroed by
+    // firmware (crossover is output-only).
+    public FilterParams[,] Xover =
+        new FilterParams[BulkParamsParser.WireMaxChannels, BulkParamsParser.WireMaxXoverBands];
     public bool HasCrossover;
+
+    // ── ADAT output config (offset 5868, 8 bytes) — RP2350-only (V17+) ──
+    public bool AdatEnabled;
+    public byte AdatPin;
+    public bool HasAdat;
 }
 
 /// <summary>
-/// Parses the bulk parameter packet from firmware. V2 is 2832 bytes; V3+ grows
-/// with trailing optional sections (I2S, leveller, per-channel preamp, master
-/// volume, input source, LG Sound Sync, user volume / mute, DAC hardware
-/// mute). V10 is 2960 bytes. Accept any version &gt;= V2 so newer firmwares
-/// aren't rejected, and key feature presence off the actual transfer length
-/// so older firmware still works.
+/// Parses the V20 bulk parameter packet (5876 bytes, 17-channel unified model).
+/// The firmware only emits the full current layout, so this parser requires the
+/// full size; older/truncated payloads are rejected (return null) rather than
+/// mis-parsed. See firmware bulk_params.h for the authoritative struct.
 /// </summary>
 public static class BulkParamsParser
 {
-    public const int PacketSize = 2832;         // V2 minimum payload
-    public const int PacketSizeV7 = 2912;       // V7 payload (V2 + I2S + leveller + preamp + master + input)
-    public const int PacketSizeV10 = 2960;      // V10 payload (V7 + LG + user vol + DAC HW mute)
-    public const int PacketSizeV11 = 3664;      // V11 payload (V10 + crossover section, 704 bytes)
-    public const byte MinFormatVersion = 2;
-
-    // Section offsets
-    private const int OffsetHeader = 0;
-    private const int OffsetGlobal = 16;
-    private const int OffsetCrossfeed = 32;
-    // offset 48 = legacy channels (ignored)
-    private const int OffsetDelays = 64;
-    private const int OffsetCrosspoints = 108;
-    private const int OffsetOutputs = 252;
-    private const int OffsetPinConfig = 360;
-    internal const int OffsetEq = 368;           // Start of WireBandParams[11][12]; exposed for notify-endpoint dispatch.
-    internal const int WireBandSize = 16;        // sizeof(WireBandParams)
-    internal const int WireMaxChannels = 11;
+    // Wire-format maximums (must match firmware bulk_params.h WIRE_MAX_* defines).
+    internal const int WireMaxInputChannels = 8;
+    internal const int WireMaxOutputChannels = 9;
+    internal const int WireMaxChannels = 17;     // inputs + outputs
     internal const int WireMaxBands = 12;
     internal const int WireMaxXoverBands = 4;
-    internal const int OffsetCrossover = 2960;   // offsetof(WireBulkParams, crossovers); V11+. Exposed for notify dispatch.
-    private const int OffsetChannelNames = 2480;
+    internal const int WireMaxPinOutputs = 5;
+    internal const int WireNameLen = 32;
+    internal const int WireBandSize = 16;        // sizeof(WireBandParams)
+
+    public const int PacketSizeV20 = 5876;       // sizeof(WireBulkParams) at V20
+    public const byte MinFormatVersion = 16;     // unified channel model floor
+    public const byte CurrentFormatVersion = 20;
+
+    // Section offsets (bytes) into WireBulkParams. Derived directly from the
+    // struct member order + sizes in firmware bulk_params.h.
+    private const int OffsetHeader = 0;          // 16
+    private const int OffsetGlobal = 16;         // 16
+    private const int OffsetCrossfeed = 32;      // 16
+    private const int OffsetLegacy = 48;         // 16 (ignored)
+    private const int OffsetDelays = 64;         // 68  (17 × float)
+    private const int OffsetCrosspoints = 132;   // 576 (8 × 9 × 8)
+    private const int OffsetOutputs = 708;       // 108 (9 × 12)
+    private const int OffsetPinConfig = 816;     // 8
+    internal const int OffsetEq = 824;           // 3264 (17 × 12 × 16); exposed for notify dispatch
+    internal const int OffsetChannelNames = 4088; // 544 (17 × 32); exposed for notify dispatch
+    private const int OffsetI2S = 4632;          // 16
+    private const int OffsetLeveller = 4648;     // 20
+    private const int OffsetPreamp = 4668;       // 32 (8 × float)
+    private const int OffsetMasterVol = 4700;    // 16
+    internal const int OffsetInputCfg = 4716;    // 16; exposed for notify dispatch
+    private const int OffsetLgSoundSync = 4732;  // 16
+    internal const int OffsetUserVolume = 4748;  // 16; exposed for notify dispatch
+    private const int OffsetDacHwMute = 4764;    // 16
+    internal const int OffsetCrossover = 4780;   // 1088 (17 × 4 × 16); exposed for notify dispatch
+    private const int OffsetAdat = 5868;         // 8
 
     public static BulkParams? Parse(byte[] buffer)
     {
-        if (buffer == null || buffer.Length < PacketSize)
+        if (buffer == null || buffer.Length < PacketSizeV20)
             return null;
 
         var p = new BulkParams();
@@ -167,12 +199,15 @@ public static class BulkParamsParser
         p.NumOutputChannels = buffer[OffsetHeader + 3];
         p.NumInputChannels = buffer[OffsetHeader + 4];
         p.MaxBands = buffer[OffsetHeader + 5];
+        p.PayloadLength = BitConverter.ToUInt16(buffer, OffsetHeader + 6);
+        p.FwVersionMajor = BitConverter.ToUInt16(buffer, OffsetHeader + 8);
+        p.FwVersionMinor = BitConverter.ToUInt16(buffer, OffsetHeader + 10);
 
         // ── Global (16 bytes) ──
         p.PreampGainDb = BitConverter.ToSingle(buffer, OffsetGlobal + 0);
         p.Bypass = buffer[OffsetGlobal + 4] != 0;
         p.LoudnessEnabled = buffer[OffsetGlobal + 5] != 0;
-        // bytes 6-7 reserved
+        p.LoudnessOutputMask = BitConverter.ToUInt16(buffer, OffsetGlobal + 6);
         p.LoudnessRefSpl = BitConverter.ToSingle(buffer, OffsetGlobal + 8);
         p.LoudnessIntensityPct = BitConverter.ToSingle(buffer, OffsetGlobal + 12);
 
@@ -180,23 +215,23 @@ public static class BulkParamsParser
         p.CrossfeedEnabled = buffer[OffsetCrossfeed + 0] != 0;
         p.CrossfeedPreset = buffer[OffsetCrossfeed + 1];
         p.CrossfeedItd = buffer[OffsetCrossfeed + 2] != 0;
-        // byte 3 reserved
+        p.CrossfeedOutputPairMask = buffer[OffsetCrossfeed + 3];
         p.CrossfeedFreq = BitConverter.ToSingle(buffer, OffsetCrossfeed + 4);
         p.CrossfeedFeedDb = BitConverter.ToSingle(buffer, OffsetCrossfeed + 8);
 
-        // ── Delays (44 bytes = 11 × float) ──
-        p.Delays = new float[11];
-        for (int i = 0; i < 11; i++)
+        // ── Delays (68 bytes = 17 × float) ──
+        p.Delays = new float[WireMaxChannels];
+        for (int i = 0; i < WireMaxChannels; i++)
             p.Delays[i] = BitConverter.ToSingle(buffer, OffsetDelays + i * 4);
 
-        // ── Crosspoints (144 bytes = 2 inputs × 9 outputs × 8 bytes) ──
-        // Each crosspoint: enabled(1), invert(1), reserved(2), gain(4)
-        p.Crosspoints = new (bool, bool, float)[2, 9];
-        for (int inp = 0; inp < 2; inp++)
+        // ── Crosspoints (576 bytes = 8 inputs × 9 outputs × 8 bytes) ──
+        // Each crosspoint: enabled(1), phase_invert(1), reserved(2), gain(4)
+        p.Crosspoints = new (bool, bool, float)[WireMaxInputChannels, WireMaxOutputChannels];
+        for (int inp = 0; inp < WireMaxInputChannels; inp++)
         {
-            for (int outp = 0; outp < 9; outp++)
+            for (int outp = 0; outp < WireMaxOutputChannels; outp++)
             {
-                int off = OffsetCrosspoints + (inp * 9 + outp) * 8;
+                int off = OffsetCrosspoints + (inp * WireMaxOutputChannels + outp) * 8;
                 bool enabled = buffer[off + 0] != 0;
                 bool invert = buffer[off + 1] != 0;
                 float gain = BitConverter.ToSingle(buffer, off + 4);
@@ -206,8 +241,8 @@ public static class BulkParamsParser
 
         // ── Outputs (108 bytes = 9 × 12 bytes) ──
         // Each: enabled(1), mute(1), reserved(2), gain(4), delay(4)
-        p.Outputs = new (bool, bool, float, float)[9];
-        for (int o = 0; o < 9; o++)
+        p.Outputs = new (bool, bool, float, float)[WireMaxOutputChannels];
+        for (int o = 0; o < WireMaxOutputChannels; o++)
         {
             int off = OffsetOutputs + o * 12;
             bool enabled = buffer[off + 0] != 0;
@@ -219,14 +254,11 @@ public static class BulkParamsParser
 
         // ── Pin config (8 bytes) ──
         p.NumPinOutputs = buffer[OffsetPinConfig + 0];
-        p.Pins = new byte[5];
-        for (int i = 0; i < 5; i++)
+        p.Pins = new byte[WireMaxPinOutputs];
+        for (int i = 0; i < WireMaxPinOutputs; i++)
             p.Pins[i] = buffer[OffsetPinConfig + 1 + i];
 
-        // ── EQ bands (2112 bytes = 11 channels × 12 bands × 16 bytes) ──
-        // Each band: type(1), bypass(1), reserved(2), freq(4), Q(4), gain(4)
-        // Bypass byte is firmware 1.1.4+; older firmware leaves byte at 0 (active).
-        // Firmware normalizes to 0 or 1 on collect, so strict == 1 is safe.
+        // ── EQ bands (3264 bytes = 17 channels × 12 bands × 16 bytes) ──
         p.Eq = new FilterParams[WireMaxChannels, WireMaxBands];
         for (int ch = 0; ch < WireMaxChannels; ch++)
         {
@@ -237,131 +269,102 @@ public static class BulkParamsParser
             }
         }
 
-        // ── Channel names (352 bytes = 11 × 32-char null-terminated strings) ──
-        p.ChannelNames = new string[11];
-        for (int ch = 0; ch < 11; ch++)
+        // ── Channel names (544 bytes = 17 × 32-char null-terminated strings) ──
+        p.ChannelNames = new string[WireMaxChannels];
+        for (int ch = 0; ch < WireMaxChannels; ch++)
         {
-            int off = OffsetChannelNames + ch * 32;
+            int off = OffsetChannelNames + ch * WireNameLen;
             int len = 0;
-            while (len < 32 && buffer[off + len] != 0) len++;
+            while (len < WireNameLen && buffer[off + len] != 0) len++;
             p.ChannelNames[ch] = Encoding.UTF8.GetString(buffer, off, len);
         }
 
-        // ── I2S config (16 bytes, optional) ──
-        const int OffsetI2S = 2832;
-        if (buffer.Length >= OffsetI2S + 16)
+        // ── I2S output config (16 bytes) ──
+        p.HasI2SConfig = true;
+        for (int i = 0; i < 4; i++)
+            p.OutputSlotTypes[i] = buffer[OffsetI2S + i];
+        p.BckPin = buffer[OffsetI2S + 4];
+        p.MckPin = buffer[OffsetI2S + 5];
+        p.MckEnabled = buffer[OffsetI2S + 6] != 0;
+        p.MckMultiplierEncoded = buffer[OffsetI2S + 7];
+
+        // ── Volume leveller (20 bytes) ──
+        p.HasLevellerConfig = true;
+        p.LevellerEnabled = buffer[OffsetLeveller + 0] != 0;
+        p.LevellerSpeed = buffer[OffsetLeveller + 1];
+        p.LevellerLookahead = buffer[OffsetLeveller + 2] != 0;
+        p.LevellerAmount = BitConverter.ToSingle(buffer, OffsetLeveller + 4);
+        p.LevellerMaxGainDb = BitConverter.ToSingle(buffer, OffsetLeveller + 8);
+        p.LevellerGateDb = BitConverter.ToSingle(buffer, OffsetLeveller + 12);
+        p.LevellerDetectorMask = buffer[OffsetLeveller + 16];
+        p.LevellerApplyMask = buffer[OffsetLeveller + 17];
+
+        // ── Per-channel preamp (32 bytes = 8 × float) ──
+        p.HasPerChannelPreamp = true;
+        p.Preamp = new float[WireMaxInputChannels];
+        for (int i = 0; i < WireMaxInputChannels; i++)
+            p.Preamp[i] = BitConverter.ToSingle(buffer, OffsetPreamp + i * 4);
+        p.PreampLDb = p.Preamp[0];
+        p.PreampRDb = p.Preamp.Length > 1 ? p.Preamp[1] : p.Preamp[0];
+
+        // ── Master volume (16 bytes) ──
+        p.HasMasterVolume = true;
+        p.MasterVolumeDb = BitConverter.ToSingle(buffer, OffsetMasterVol + 0);
+
+        // ── Input source config (16 bytes) ──
+        // WireInputConfig: input_source(1), spdif_rx_pin(1), i2s_rx_pin(1),
+        // i2s_input_rate(1), i2s_input_channels(1), i2s_rx_pin_ext[3],
+        // spdif_rx_pin_ext[2], spdif_rx_enabled_ext_p1(1), reserved[5].
+        p.HasInputConfig = true;
+        p.InputSource = buffer[OffsetInputCfg + 0];
+        p.SpdifRxPin = buffer[OffsetInputCfg + 1];
+        p.HasI2sInputConfig = true;
+        p.I2sRxPin = buffer[OffsetInputCfg + 2];
+        p.I2sInputRateEncoded = buffer[OffsetInputCfg + 3];
+        p.I2sInputChannels = buffer[OffsetInputCfg + 4];
+        p.I2sRxPinExt = new byte[3];
+        for (int i = 0; i < 3; i++)
+            p.I2sRxPinExt[i] = buffer[OffsetInputCfg + 5 + i];
+        p.SpdifRxPinExt = new byte[2];
+        p.SpdifRxPinExt[0] = buffer[OffsetInputCfg + 8];
+        p.SpdifRxPinExt[1] = buffer[OffsetInputCfg + 9];
+        // Enable mask is stored PLUS ONE (0 = absent/keep-live); decode by subtracting 1.
+        byte spdifEnP1 = buffer[OffsetInputCfg + 10];
+        if (spdifEnP1 != 0)
         {
-            p.HasI2SConfig = true;
-            for (int i = 0; i < 4; i++)
-                p.OutputSlotTypes[i] = buffer[OffsetI2S + i];
-            p.BckPin = buffer[OffsetI2S + 4];
-            p.MckPin = buffer[OffsetI2S + 5];
-            p.MckEnabled = buffer[OffsetI2S + 6] != 0;
-            p.MckMultiplierEncoded = buffer[OffsetI2S + 7];
-            // bytes 8-15 reserved
+            p.HasSpdifExtInputs = true;
+            p.SpdifRxEnabledExt = (byte)(spdifEnP1 - 1);
         }
 
-        // ── Volume leveller (16 bytes, optional) ──
-        const int OffsetLeveller = 2848;
-        if (buffer.Length >= OffsetLeveller + 16)
-        {
-            p.HasLevellerConfig = true;
-            p.LevellerEnabled = buffer[OffsetLeveller] != 0;
-            p.LevellerSpeed = buffer[OffsetLeveller + 1];
-            p.LevellerLookahead = buffer[OffsetLeveller + 2] != 0;
-            // byte 3 reserved
-            p.LevellerAmount = BitConverter.ToSingle(buffer, OffsetLeveller + 4);
-            p.LevellerMaxGainDb = BitConverter.ToSingle(buffer, OffsetLeveller + 8);
-            p.LevellerGateDb = BitConverter.ToSingle(buffer, OffsetLeveller + 12);
-        }
+        // ── LG Sound Sync (16 bytes) ──
+        p.HasLgSoundSync = true;
+        p.LgSoundSyncEnabled = buffer[OffsetLgSoundSync + 0] != 0;
 
-        // ── Per-channel preamp (16 bytes, V6+) ──
-        const int OffsetPreamp = 2864;
-        if (p.FormatVersion >= 6 && buffer.Length >= OffsetPreamp + 8)
-        {
-            p.HasPerChannelPreamp = true;
-            p.PreampLDb = BitConverter.ToSingle(buffer, OffsetPreamp + 0);
-            p.PreampRDb = BitConverter.ToSingle(buffer, OffsetPreamp + 4);
-        }
+        // ── User volume / vendor mute (16 bytes) ──
+        p.HasUserVolume = true;
+        p.UserVolumeDb = BitConverter.ToSingle(buffer, OffsetUserVolume + 0);
+        p.UserMute = buffer[OffsetUserVolume + 4] != 0;
 
-        // ── Master volume (16 bytes, V6+) ──
-        const int OffsetMasterVol = 2880;
-        if (p.FormatVersion >= 6 && buffer.Length >= OffsetMasterVol + 4)
-        {
-            p.HasMasterVolume = true;
-            p.MasterVolumeDb = BitConverter.ToSingle(buffer, OffsetMasterVol + 0);
-        }
+        // ── External DAC hardware mute (16 bytes) ──
+        p.DacHwMute = DacHwMuteConfig.TryParse(buffer, OffsetDacHwMute);
+        p.HasDacHwMute = p.DacHwMute != null;
 
-        // ── Input source config (16 bytes, V7+) ──
-        // WireInputConfig: input_source(1), spdif_rx_pin(1), reserved[14]
-        const int OffsetInputCfg = 2896;
-        if (p.FormatVersion >= 7 && buffer.Length >= OffsetInputCfg + 2)
+        // ── Crossover bands (1088 bytes = 17 × 4 × 16) ──
+        p.HasCrossover = true;
+        p.Xover = new FilterParams[WireMaxChannels, WireMaxXoverBands];
+        for (int ch = 0; ch < WireMaxChannels; ch++)
         {
-            p.HasInputConfig = true;
-            p.InputSource = buffer[OffsetInputCfg + 0];
-            p.SpdifRxPin = buffer[OffsetInputCfg + 1];
-        }
-        // I2S input data pin + master rate live in the same 16-byte WireInputConfig
-        // block, claimed from its reserved bytes in V12 (wire size unchanged).
-        if (p.FormatVersion >= 12 && buffer.Length >= OffsetInputCfg + 4)
-        {
-            p.HasI2sInputConfig = true;
-            p.I2sRxPin = buffer[OffsetInputCfg + 2];
-            p.I2sInputRateEncoded = buffer[OffsetInputCfg + 3];
-        }
-
-        // ── LG Sound Sync (16 bytes, V8+) ──
-        // WireLgSoundSync: enabled(1), present(1), volume(1), muted(1),
-        // reserved[12]. Only `enabled` is preset state; runtime fields
-        // (present, volume, muted) are diagnostic and not captured here.
-        const int OffsetLgSoundSync = 2912;
-        if (p.FormatVersion >= 8 && buffer.Length >= OffsetLgSoundSync + 16)
-        {
-            p.HasLgSoundSync = true;
-            p.LgSoundSyncEnabled = buffer[OffsetLgSoundSync + 0] != 0;
-        }
-
-        // ── User volume / vendor mute (16 bytes, V9+) ──
-        // WireUserVolume: user_volume_db(float, 4), user_mute(1), reserved[11]
-        const int OffsetUserVolume = 2928;
-        if (p.FormatVersion >= 9 && buffer.Length >= OffsetUserVolume + 16)
-        {
-            p.HasUserVolume = true;
-            p.UserVolumeDb = BitConverter.ToSingle(buffer, OffsetUserVolume + 0);
-            p.UserMute = buffer[OffsetUserVolume + 4] != 0;
-        }
-
-        // ── External DAC hardware mute (16 bytes, V10+) ──
-        // WireDacHwMute: enabled(1), active_low(1), pin(1), reserved0(1),
-        // hold_ms(uint16 LE), release_ms(uint16 LE), reserved[8]. Decoded
-        // via DacHwMuteConfig.TryParse so the wire layout (LE uint16s, the
-        // reserved0 alignment byte, the 0xFF "no pin" sentinel) is defined
-        // in exactly one place.
-        const int OffsetDacHwMute = 2944;
-        if (p.FormatVersion >= 10 && buffer.Length >= OffsetDacHwMute + DacHwMuteConfig.WireSize)
-        {
-            p.DacHwMute = DacHwMuteConfig.TryParse(buffer, OffsetDacHwMute);
-            p.HasDacHwMute = p.DacHwMute != null;
-        }
-
-        // ── Crossover bands (704 bytes = 11 × 4 × 16, V11+) ──
-        // WireCrossoverConfig.bands[ch][localBand]; each entry is the same
-        // 16-byte WireBandParams PEQ uses. Master rows (ch 0,1) are zeroed by
-        // firmware. localBand 0..3 ⇔ wire band index 20..23.
-        if (p.FormatVersion >= 11 &&
-            buffer.Length >= OffsetCrossover + WireMaxChannels * WireMaxXoverBands * WireBandSize)
-        {
-            p.HasCrossover = true;
-            p.Xover = new FilterParams[WireMaxChannels, WireMaxXoverBands];
-            for (int ch = 0; ch < WireMaxChannels; ch++)
+            for (int band = 0; band < WireMaxXoverBands; band++)
             {
-                for (int band = 0; band < WireMaxXoverBands; band++)
-                {
-                    int off = OffsetCrossover + (ch * WireMaxXoverBands + band) * WireBandSize;
-                    p.Xover[ch, band] = ParseBand(buffer, off);
-                }
+                int off = OffsetCrossover + (ch * WireMaxXoverBands + band) * WireBandSize;
+                p.Xover[ch, band] = ParseBand(buffer, off);
             }
         }
+
+        // ── ADAT output config (8 bytes) ──
+        p.HasAdat = true;
+        p.AdatEnabled = buffer[OffsetAdat + 0] != 0;
+        p.AdatPin = buffer[OffsetAdat + 1];
 
         return p;
     }

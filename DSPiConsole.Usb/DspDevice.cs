@@ -65,6 +65,8 @@ public static class VendorCommands
     public const byte GetPlatform = 0x7F;
     public const byte ClearClips = 0x83;
     public const byte GetAllParams = 0xA0;
+    public const byte GetAllParamsChunk = 0xA2; // chunked GET (WinUSB 4 KB control cap)
+    public const byte SetAllParamsChunk = 0xA3; // chunked SET
 
     // Buffer statistics (firmware v3+)
     public const byte GetBufferStats  = 0xB0;
@@ -386,9 +388,24 @@ public partial class DspDevice : ObservableObject, IDisposable
     private string? _openDeviceSerial; // serial of the currently open _device handle
 
     /// <summary>
-    /// Number of audio channels (set after GetDeviceInfo). RP2040=7, RP2350=11.
+    /// Total audio channels in the wire model (set after GetDeviceInfo /
+    /// refined from the bulk header). RP2040=7 (2 in + 5 out), RP2350=17
+    /// (8 in + 9 out) on V16+ firmware.
     /// </summary>
     public int NumChannels { get; set; } = 5; // Legacy default (5 peaks)
+
+    /// <summary>
+    /// Number of firmware input channels (RP2040=2, RP2350=8 on V16+). Drives
+    /// the app↔wire channel-index mapping (<see cref="ChannelMap"/>) used by
+    /// per-channel commands, meter/notify decoding and bulk-array reads.
+    /// Defaults to 2 (matches pre-V16 and RP2040) until platform/bulk sets it.
+    /// </summary>
+    public int NumInputChannels { get; set; } = 2;
+
+    /// <summary>
+    /// Number of firmware output channels (RP2040=5, RP2350=9).
+    /// </summary>
+    public int NumOutputChannels { get; set; } = 5;
 
     [ObservableProperty]
     private bool _isConnected;
@@ -469,21 +486,21 @@ public partial class DspDevice : ObservableObject, IDisposable
     private Thread? _notifyThread;
     private volatile bool _notifyStop;
     private const int NotifyPacketSize = 64;
-    private const int ChannelNamesWireOffset = 2480; // offsetof(WireBulkParams, channel_names)
+    private const int ChannelNamesWireOffset = BulkParamsParser.OffsetChannelNames; // offsetof(WireBulkParams, channel_names)
     private const int WireChannelNameLen = 32;
 
     // V7 input config block sits at offsetof(WireBulkParams, input_config) = 2896.
     // input_source occupies the first byte of the 16-byte WireInputConfig struct.
-    private const int InputSourceWireOffset = 2896;
+    private const int InputSourceWireOffset = BulkParamsParser.OffsetInputCfg;
 
     // V9+ user volume block sits at offsetof(WireBulkParams, user_volume) = 2928
     // (after input_config @ 2896 and lg_sound_sync @ 2912). user_volume_db
     // occupies the first 4 bytes (float dB) of the 16-byte WireUserVolume
     // struct; user_mute lives at +4.
-    private const int UserVolumeWireOffset = 2928;
+    private const int UserVolumeWireOffset = BulkParamsParser.OffsetUserVolume;
 
-    // V11+ crossover block sits at offsetof(WireBulkParams, crossovers) = 2960.
-    // WireCrossoverConfig is WireBandParams[11][4]; each band is 16 bytes.
+    // V20 crossover block sits at offsetof(WireBulkParams, crossovers) = 4780.
+    // WireCrossoverConfig is WireBandParams[17][4]; each band is 16 bytes.
     private const int CrossoverWireOffset = BulkParamsParser.OffsetCrossover;
     private const int CrossoverBandCount = BulkParamsParser.WireMaxXoverBands;
 
@@ -849,10 +866,15 @@ public partial class DspDevice : ObservableObject, IDisposable
         int numCh = NumChannels;
         int peakBytes = numCh * 2;
 
-        var peaks = new float[11]; // Always 11 slots (max channels)
+        // Firmware indexes peaks and clip bits by WIRE channel (unified model:
+        // inputs then outputs). Remap to the app's stable ChannelId space so
+        // meters and clip indicators land on the correct rows.
+        var peaks = new float[ChannelMap.AppChannelCount]; // 11 app channels
         for (int i = 0; i < numCh && (i * 2 + 1) < buffer.Length; i++)
         {
-            peaks[i] = BitConverter.ToUInt16(buffer, i * 2) / 32767.0f;
+            int appId = ChannelMap.WireToApp(i, NumInputChannels);
+            if (appId < 0) continue; // extra inputs 2..7 not modeled by the app UI
+            peaks[appId] = BitConverter.ToUInt16(buffer, i * 2) / 32767.0f;
         }
 
         int cpuOffset = peakBytes;
@@ -863,7 +885,16 @@ public partial class DspDevice : ObservableObject, IDisposable
         int clipOffset = cpuOffset + 2;
         if (clipOffset + 1 < buffer.Length)
         {
-            clipFlags = BitConverter.ToUInt16(buffer, clipOffset);
+            // clip field is 16 bits on the wire; remap each set bit from wire
+            // channel to app channel id (wire channel 16, RP2350 PDM, cannot be
+            // represented in a 16-bit field and is therefore not carried).
+            ushort wireClip = BitConverter.ToUInt16(buffer, clipOffset);
+            for (int i = 0; i < numCh && i < 16; i++)
+            {
+                if ((wireClip & (1 << i)) == 0) continue;
+                int appId = ChannelMap.WireToApp(i, NumInputChannels);
+                if (appId >= 0) clipFlags |= (ushort)(1 << appId);
+            }
         }
 
         return new SystemStatus
@@ -1034,7 +1065,7 @@ public partial class DspDevice : ObservableObject, IDisposable
     public bool SetFilter(int channel, int band, FilterParams p)
     {
         var data = new byte[16];
-        data[0] = (byte)channel;
+        data[0] = (byte)ChannelMap.AppToWire(channel, NumInputChannels);
         data[1] = (byte)band;
         data[2] = (byte)p.Type;
         data[3] = p.Bypass ? (byte)1 : (byte)0;
@@ -1051,23 +1082,25 @@ public partial class DspDevice : ObservableObject, IDisposable
     /// </summary>
     public FilterParams? GetFilter(int channel, int band)
     {
+        int wireCh = ChannelMap.AppToWire(channel, NumInputChannels);
+
         // Read type (returned as uint32)
-        var typeData = ControlTransferIn(VendorCommands.GetEqParam, EncodeEqValue(channel, band, EqParamType), 4);
+        var typeData = ControlTransferIn(VendorCommands.GetEqParam, EncodeEqValue(wireCh, band, EqParamType), 4);
         if (typeData == null || typeData.Length < 4) return null;
         var type = BitConverter.ToUInt32(typeData, 0);
 
         // Read frequency (float)
-        var freqData = ControlTransferIn(VendorCommands.GetEqParam, EncodeEqValue(channel, band, EqParamFreq), 4);
+        var freqData = ControlTransferIn(VendorCommands.GetEqParam, EncodeEqValue(wireCh, band, EqParamFreq), 4);
         if (freqData == null || freqData.Length < 4) return null;
         var freq = BitConverter.ToSingle(freqData, 0);
 
         // Read Q (float)
-        var qData = ControlTransferIn(VendorCommands.GetEqParam, EncodeEqValue(channel, band, EqParamQ), 4);
+        var qData = ControlTransferIn(VendorCommands.GetEqParam, EncodeEqValue(wireCh, band, EqParamQ), 4);
         if (qData == null || qData.Length < 4) return null;
         var q = BitConverter.ToSingle(qData, 0);
 
         // Read gain (float)
-        var gainData = ControlTransferIn(VendorCommands.GetEqParam, EncodeEqValue(channel, band, EqParamGain), 4);
+        var gainData = ControlTransferIn(VendorCommands.GetEqParam, EncodeEqValue(wireCh, band, EqParamGain), 4);
         if (gainData == null || gainData.Length < 4) return null;
         var gain = BitConverter.ToSingle(gainData, 0);
 
@@ -1088,7 +1121,8 @@ public partial class DspDevice : ObservableObject, IDisposable
     /// </summary>
     public bool SetBandBypass(int channel, int band, bool bypass)
     {
-        ushort wValue = (ushort)((channel << 8) | (band & 0xFF));
+        int wireCh = ChannelMap.AppToWire(channel, NumInputChannels);
+        ushort wValue = (ushort)((wireCh << 8) | (band & 0xFF));
         return ControlTransferOut(VendorCommands.SetBandBypass, wValue,
             new byte[] { bypass ? (byte)1 : (byte)0 });
     }
@@ -1100,7 +1134,8 @@ public partial class DspDevice : ObservableObject, IDisposable
     /// </summary>
     public bool? GetBandBypass(int channel, int band)
     {
-        ushort wValue = (ushort)((channel << 8) | (band & 0xFF));
+        int wireCh = ChannelMap.AppToWire(channel, NumInputChannels);
+        ushort wValue = (ushort)((wireCh << 8) | (band & 0xFF));
         var data = ControlTransferIn(VendorCommands.GetBandBypass, wValue, 1);
         if (data == null || data.Length < 1) return null;
         return data[0] == 1;
@@ -1262,7 +1297,8 @@ public partial class DspDevice : ObservableObject, IDisposable
     public bool SetDelay(int channel, float ms)
     {
         var data = BitConverter.GetBytes(ms);
-        return ControlTransferOut(VendorCommands.SetDelay, (ushort)channel, data);
+        return ControlTransferOut(VendorCommands.SetDelay,
+            (ushort)ChannelMap.AppToWire(channel, NumInputChannels), data);
     }
 
     /// <summary>
@@ -1270,7 +1306,8 @@ public partial class DspDevice : ObservableObject, IDisposable
     /// </summary>
     public float? GetDelay(int channel)
     {
-        var response = ControlTransferIn(VendorCommands.GetDelay, (ushort)channel, 4);
+        var response = ControlTransferIn(VendorCommands.GetDelay,
+            (ushort)ChannelMap.AppToWire(channel, NumInputChannels), 4);
 
         if (response == null || response.Length < 4)
             return null;
@@ -2006,6 +2043,10 @@ public partial class DspDevice : ObservableObject, IDisposable
                     int flat = (offset - BulkParamsParser.OffsetEq) / BulkParamsParser.WireBandSize;
                     int ch = flat / BulkParamsParser.WireMaxBands;
                     int b  = flat % BulkParamsParser.WireMaxBands;
+                    // Map wire channel → app channel id; ignore changes on wire
+                    // channels the app doesn't model (extra inputs 2..7 / padding).
+                    int appCh = ChannelMap.WireToApp(ch, NumInputChannels);
+                    if (appCh < 0) return;
                     // Parser expects the band entry at the given offset within the
                     // buffer. The notify packet places the payload at offset 12,
                     // so shift accordingly by passing the payload region.
@@ -2014,7 +2055,7 @@ public partial class DspDevice : ObservableObject, IDisposable
                     var fp = BulkParamsParser.ParseBand(bandBuf, 0);
                     BandParamNotified?.Invoke(this, new BandParamNotification
                     {
-                        Channel = ch,
+                        Channel = appCh,
                         Band = b,
                         Params = fp,
                         Source = source
@@ -2036,12 +2077,14 @@ public partial class DspDevice : ObservableObject, IDisposable
                     int flat = (offset - CrossoverWireOffset) / BulkParamsParser.WireBandSize;
                     int ch = flat / CrossoverBandCount;
                     int local = flat % CrossoverBandCount;
+                    int appCh = ChannelMap.WireToApp(ch, NumInputChannels);
+                    if (appCh < 0) return; // crossover only lives on output channels
                     var bandBuf = new byte[BulkParamsParser.WireBandSize];
                     Buffer.BlockCopy(buf, 12, bandBuf, 0, BulkParamsParser.WireBandSize);
                     var fp = BulkParamsParser.ParseBand(bandBuf, 0);
                     XoverBandParamNotified?.Invoke(this, new BandParamNotification
                     {
-                        Channel = ch,
+                        Channel = appCh,
                         Band = local,
                         Params = fp,
                         Source = source
@@ -2051,14 +2094,16 @@ public partial class DspDevice : ObservableObject, IDisposable
                 // size is exactly WIRE_NAME_LEN (32).
                 else if (size == WireChannelNameLen
                     && offset >= ChannelNamesWireOffset
-                    && offset <  ChannelNamesWireOffset + 11 * WireChannelNameLen
+                    && offset <  ChannelNamesWireOffset + BulkParamsParser.WireMaxChannels * WireChannelNameLen
                     && (offset - ChannelNamesWireOffset) % WireChannelNameLen == 0)
                 {
                     int ch = (offset - ChannelNamesWireOffset) / WireChannelNameLen;
+                    int appCh = ChannelMap.WireToApp(ch, NumInputChannels);
+                    if (appCh < 0) return;
                     var name = System.Text.Encoding.UTF8.GetString(buf, 12, size).TrimEnd('\0');
                     ChannelNameNotified?.Invoke(this, new ChannelNameNotification
                     {
-                        ChannelIndex = ch,
+                        ChannelIndex = appCh,
                         Name = name,
                         Source = source
                     });
@@ -2099,20 +2144,52 @@ public partial class DspDevice : ObservableObject, IDisposable
     #endregion
 
     /// <summary>
-    /// Fetch all DSP parameters in a single bulk transfer (firmware v2+).
-    /// Wire-format V11 is 3664 bytes (V10 2960 + crossover section, 704 bytes).
-    /// We MUST request the largest size the firmware might return: a control-IN
-    /// whose data stage exceeds the host's requested length triggers a libusb
-    /// overflow on the WinUSB backend (a native fault that crashes the process,
-    /// not a catchable managed exception). Older firmware returns fewer bytes and
-    /// <see cref="BulkParamsParser"/> keys feature presence off the actual
-    /// transfer length, so over-requesting is safe — a V10 device simply sends a
-    /// short 2960-byte response. Bump this whenever the firmware adds a new wire
-    /// section. Returns the response, or null if the transfer failed.
+    /// Fetch all DSP parameters (wire-format V20, 5876 bytes). The V16+ payload
+    /// exceeds WinUSB's documented 4096-byte control-transfer cap, so it is read
+    /// in ≤2048-byte sequential chunks via REQ_GET_ALL_PARAMS_CHUNK (0xA2).
+    ///
+    /// Requesting offset 0 makes the device snapshot the whole struct into an
+    /// internal buffer, so every chunk comes from one coherent image. The
+    /// firmware reaps the session if any non-chunk vendor request interleaves,
+    /// so the entire read is done while holding <c>_lock</c> — the reentrant
+    /// lock keeps the status-poll thread out until all chunks land. A STALL or
+    /// short read aborts and returns null; the caller retries the whole fetch.
     /// </summary>
     public byte[]? GetAllParams()
     {
-        return ControlTransferIn(VendorCommands.GetAllParams, 0, BulkParamsParser.PacketSizeV11);
+        const int chunkSize = 2048; // ≤ 4096 WinUSB cap; 3 transfers for 5876 B
+
+        lock (_lock)
+        {
+            if (_device == null) return null;
+
+            // First chunk (offset 0) opens the session and carries the header,
+            // from which we read the authoritative payload length.
+            var first = ControlTransferIn(VendorCommands.GetAllParamsChunk, 0, chunkSize);
+            if (first == null || first.Length < 16)
+                return null;
+
+            int total = BitConverter.ToUInt16(first, 6); // WireHeader.payload_length
+            if (total < BulkParamsParser.PacketSizeV20)
+                total = BulkParamsParser.PacketSizeV20; // header underreport safety net
+
+            var buffer = new byte[total];
+            int offset = Math.Min(first.Length, total);
+            Buffer.BlockCopy(first, 0, buffer, 0, offset);
+
+            while (offset < total)
+            {
+                int want = Math.Min(chunkSize, total - offset);
+                var chunk = ControlTransferIn(VendorCommands.GetAllParamsChunk, (ushort)offset, want);
+                if (chunk == null || chunk.Length == 0)
+                    return null; // STALL/short → session lost; caller re-fetches
+                int n = Math.Min(chunk.Length, total - offset);
+                Buffer.BlockCopy(chunk, 0, buffer, offset, n);
+                offset += n;
+            }
+
+            return buffer;
+        }
     }
 
     #region Input Source (V7+)
@@ -2484,7 +2561,8 @@ public partial class DspDevice : ObservableObject, IDisposable
         var data = new byte[32];
         var bytes = System.Text.Encoding.UTF8.GetBytes(name);
         Array.Copy(bytes, data, Math.Min(bytes.Length, 31));
-        return ControlTransferOut(VendorCommands.SetChannelName, (ushort)channel, data);
+        return ControlTransferOut(VendorCommands.SetChannelName,
+            (ushort)ChannelMap.AppToWire(channel, NumInputChannels), data);
     }
 
     /// <summary>
@@ -2492,7 +2570,8 @@ public partial class DspDevice : ObservableObject, IDisposable
     /// </summary>
     public string? GetChannelNameFromDevice(int channel)
     {
-        var response = ControlTransferIn(VendorCommands.GetChannelName, (ushort)channel, 32);
+        var response = ControlTransferIn(VendorCommands.GetChannelName,
+            (ushort)ChannelMap.AppToWire(channel, NumInputChannels), 32);
         if (response == null || response.Length < 1) return null;
         return System.Text.Encoding.UTF8.GetString(response).TrimEnd('\0');
     }
