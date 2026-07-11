@@ -101,7 +101,7 @@ public sealed partial class HardwareI2SInputPage : SettingsModule, ISettingsPage
 
         // One data-pin card per active stereo pair.
         int pairs = Vm.I2sActivePairs;
-        RxPinCard0.Header = pairs > 1 ? "Serial Data 1" : "RX data pin";
+        RxPinCard0.Header = pairs > 1 ? "Serial Data 1" : "Serial Data";
         RxPinCard1.Visibility = pairs >= 2 ? Visibility.Visible : Visibility.Collapsed;
         RxPinCard2.Visibility = pairs >= 3 ? Visibility.Visible : Visibility.Collapsed;
         RxPinCard3.Visibility = pairs >= 4 ? Visibility.Visible : Visibility.Collapsed;

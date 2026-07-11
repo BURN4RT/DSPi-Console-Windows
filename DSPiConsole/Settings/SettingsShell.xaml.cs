@@ -331,13 +331,22 @@ public sealed partial class SettingsShell : UserControl
                 continue;
             _tracker.Stage(new PendingChange(
                 Key: c.Key,
-                PageId: "hardware.output-assignment",
+                PageId: PageForIoKey(c.Key),
                 FieldLabel: c.Label,
                 OldDisplay: c.Old,
                 NewDisplay: c.New,
                 Apply: async () => await _vm.SaveOutputConfig()));
         }
     }
+
+    /// <summary>Map an IO-block change key to the settings page that owns it, so
+    /// the sidebar pending-dot lands on the right page instead of always the
+    /// Output Assignment page.</summary>
+    private static string PageForIoKey(string key) =>
+        key.StartsWith("io.spdif") ? "hardware.spdif-input"
+        : key.StartsWith("io.i2s-") ? "hardware.i2s-input"   // io.i2s-rx / io.i2s-ch / io.i2s-rate
+        : key.StartsWith("io.bck") || key.StartsWith("io.mck") ? "hardware.i2s"
+        : "hardware.output-assignment";                      // io.pin.* / io.slot.*
 
     private async void OnDiscardClick(object sender, RoutedEventArgs e)
     {

@@ -29,8 +29,8 @@
             </ComboBox>
         </controls:SettingsCard>
 
-        <controls:SettingsCard x:Name="RxPinCard0" Header="RX data pin"
-                               Description="GPIO pin for the I2S input data line (default 4). The BCK/LRCK clock pins are shared with I2S output — set them on the I2S page.">
+        <controls:SettingsCard x:Name="RxPinCard0" Header="Serial Data"
+                               Description="GPIO data pin for input channels 1-2.">
             <ComboBox x:Name="RxPinCombo0" MinWidth="140" SelectionChanged="OnI2sRxPinChanged"/>
         </controls:SettingsCard>
 

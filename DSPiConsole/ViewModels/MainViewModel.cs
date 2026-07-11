@@ -596,6 +596,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
                                 UpdateSavedSnapshot();
                                 PresetsDirty = false;
                                 _suppressDirtyCheck = false;
+                                // Recompute once now that the baseline is set and
+                                // suppression is lifted: refreshes OutputConfigDirty
+                                // and re-syncs the settings pending entries (clears
+                                // anything stale carried across a reconnect).
+                                CheckDirty();
                             });
                         });
                     }
@@ -609,6 +614,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
                         OutputConfigDirty = false;
                         _savedSnapshot = null;
                         ClearIoUndoLog();
+                        // Drop any staged output-config changes — fire the event so
+                        // the settings window discards its pending entries (they'd
+                        // otherwise linger past a reconnect where CheckDirty is
+                        // suppressed during the initial sync).
+                        _outputConfigChanges = Array.Empty<PresetDiff.IoChange>();
+                        _ioSignature = "";
+                        OutputConfigStateChanged?.Invoke(this, EventArgs.Empty);
                     }
                 });
             }
@@ -1687,6 +1699,20 @@ public partial class MainViewModel : ObservableObject, IDisposable
             // property is idempotent.
             NotifyHardwareConfigPropertiesChanged();
             BulkRefreshed?.Invoke(this, EventArgs.Empty);
+
+            // When there are no unsaved user IO edits, the freshly-synced device
+            // state IS the output-config baseline (RAM == flash). Advance it so a
+            // follow-up/settling bulk read on reconnect (or a device/other-host
+            // notification) doesn't register as a spurious "unsaved output config"
+            // change. A pending user edit (non-empty undo log) preserves the dirty
+            // state — we don't re-baseline over it.
+            bool noUserIoEdits;
+            lock (_ioUndoLock) noUserIoEdits = _ioUndoLog.Count == 0;
+            if (_savedSnapshot != null && noUserIoEdits)
+            {
+                _savedSnapshot.CopyIoBlockFrom(PresetSnapshot.Capture(this));
+                CheckDirty();
+            }
 
             if (bp.HasLevellerConfig)
             {
@@ -3290,6 +3316,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(MckMultiplier));
         OnPropertyChanged(nameof(AnySlotIsI2S));
         OnPropertyChanged(nameof(SpdifRxPin));
+        // Input pins/channels/rate are plain fields updated by the bulk parse;
+        // fan out their PropertyChanged so the input settings pages re-sync
+        // instead of showing stale values after a (re)connect or preset load.
+        OnPropertyChanged(nameof(I2sRxPin));
+        OnPropertyChanged(nameof(I2sInputChannels));
+        OnPropertyChanged(nameof(I2sInputRateHz));
         OnPropertyChanged(nameof(SampleRateHz));
     }
 
