@@ -23,6 +23,7 @@ public sealed partial class TestSignalsWindow : Window
     {
         public SiggenTypeDesc Desc { get; init; } = null!;
         public string Name { get; init; } = "";
+        public Microsoft.UI.Xaml.Media.Geometry Waveform { get; init; } = null!;
     }
 
     private readonly MainViewModel _viewModel;
@@ -43,7 +44,7 @@ public sealed partial class TestSignalsWindow : Window
         var windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
         var appWindow = AppWindow.GetFromWindowId(windowId);
         double dpiScale = GetDpiForWindow(hWnd) / 96.0;
-        appWindow?.Resize(new Windows.Graphics.SizeInt32((int)(420 * dpiScale), (int)(720 * dpiScale)));
+        appWindow?.Resize(new Windows.Graphics.SizeInt32((int)(460 * dpiScale), (int)(720 * dpiScale)));
         appWindow!.Title = "Test Signal Generator";
 
         if (appWindow.TitleBar is { } titleBar)
@@ -85,7 +86,7 @@ public sealed partial class TestSignalsWindow : Window
         // Type grid
         var items = new List<TypeItem>();
         foreach (var d in _viewModel.SiggenTypeDescs)
-            items.Add(new TypeItem { Desc = d, Name = FriendlyName(d) });
+            items.Add(new TypeItem { Desc = d, Name = FriendlyName(d), Waveform = SiggenIcons.Get(d.Id) });
         TypeGrid.ItemsSource = items;
 
         // Level
@@ -110,32 +111,48 @@ public sealed partial class TestSignalsWindow : Window
         if (items.Count > 0)
             BuildTypeSpecific(items[sel].Desc);
 
+        // ItemsPanelRoot may not exist until the grid is realized; retry on load.
+        LayoutTypeGrid();
+        TypeGrid.Loaded += (_, _) => LayoutTypeGrid();
+
         UpdateStatus(_viewModel.SiggenStatus);
     }
 
-    private static string FriendlyName(SiggenTypeDesc d)
+    // The firmware reports terse lowercase short names (e.g. "sine", "swp_log");
+    // always show a proper display name keyed on the type instead.
+    // Divide the grid's width into equal cells so the cards fill the row evenly
+    // rather than leaving a ragged gap on the right.
+    private void OnTypeGridSizeChanged(object sender, SizeChangedEventArgs e) => LayoutTypeGrid();
+
+    private void LayoutTypeGrid()
     {
-        if (!string.IsNullOrWhiteSpace(d.Name)) return d.Name;
-        return d.Id switch
-        {
-            SiggenType.Sine => "Sine",
-            SiggenType.Square => "Square",
-            SiggenType.White => "White Noise",
-            SiggenType.Pink => "Pink Noise",
-            SiggenType.SweepLog => "Log Sweep",
-            SiggenType.SweepLin => "Lin Sweep",
-            SiggenType.SweepStep => "Step Sweep",
-            SiggenType.Impulse => "Impulse",
-            SiggenType.ClicksAlt => "Clicks",
-            SiggenType.Polarity => "Polarity",
-            SiggenType.ToneBurst => "Tone Burst",
-            SiggenType.TonePair => "Tone Pair",
-            SiggenType.Multitone => "Multitone",
-            SiggenType.Isp => "ISP",
-            SiggenType.ChannelId => "Channel ID",
-            _ => d.Id.ToString()
-        };
+        if (TypeGrid.ItemsPanelRoot is not ItemsWrapGrid wg) return;
+        double w = TypeGrid.ActualWidth;
+        if (w <= 0) return;
+        const int cols = 3;
+        wg.ItemWidth = Math.Floor(w / cols);
+        wg.ItemHeight = 74;
     }
+
+    private static string FriendlyName(SiggenTypeDesc d) => d.Id switch
+    {
+        SiggenType.Sine => "Sine",
+        SiggenType.Square => "Square",
+        SiggenType.White => "White Noise",
+        SiggenType.Pink => "Pink Noise",
+        SiggenType.SweepLog => "Log Sweep",
+        SiggenType.SweepLin => "Linear Sweep",
+        SiggenType.SweepStep => "Stepped Sweep",
+        SiggenType.Impulse => "Impulse",
+        SiggenType.ClicksAlt => "Alternating Clicks",
+        SiggenType.Polarity => "Polarity Test",
+        SiggenType.ToneBurst => "Tone Burst",
+        SiggenType.TonePair => "Tone Pair",
+        SiggenType.Multitone => "Multitone",
+        SiggenType.Isp => "Inter-Sample Peak",
+        SiggenType.ChannelId => "Channel ID",
+        _ => d.Id.ToString()
+    };
 
     // ── Channel mask ──
 

@@ -36,30 +36,65 @@
                 <StackPanel x:Name="BodyPanel" Spacing="16">
 
                     <!-- Signal type grid -->
-                    <StackPanel Spacing="6">
-                        <TextBlock Text="Signal" FontWeight="Medium"/>
+                    <StackPanel Margin="0,-8,0,0">
                         <GridView x:Name="TypeGrid" SelectionMode="Single"
                                   IsItemClickEnabled="False"
                                   SelectionChanged="OnTypeSelectionChanged"
-                                  Padding="0" Margin="-4,0,0,0">
+                                  SizeChanged="OnTypeGridSizeChanged"
+                                  HorizontalAlignment="Stretch"
+                                  Padding="0" Margin="0">
+                            <GridView.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <ItemsWrapGrid Orientation="Horizontal"/>
+                                </ItemsPanelTemplate>
+                            </GridView.ItemsPanel>
                             <GridView.ItemContainerStyle>
                                 <Style TargetType="GridViewItem">
-                                    <Setter Property="Margin" Value="4"/>
+                                    <Setter Property="Margin" Value="0"/>
                                     <Setter Property="Padding" Value="0"/>
                                     <Setter Property="MinWidth" Value="0"/>
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                                 </Style>
                             </GridView.ItemContainerStyle>
                             <GridView.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Width="88" Height="44" CornerRadius="6"
+                                    <Border Height="66" CornerRadius="6" Margin="4"
+                                            HorizontalAlignment="Stretch"
                                             Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
-                                        <TextBlock Text="{Binding Name}" FontSize="12"
-                                                   TextWrapping="Wrap" TextAlignment="Center"
-                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        <StackPanel VerticalAlignment="Center" Spacing="4">
+                                            <Path Data="{Binding Waveform}"
+                                                  Stroke="{ThemeResource TextFillColorPrimaryBrush}"
+                                                  StrokeThickness="1.5" Stretch="None"
+                                                  Width="60" Height="28"
+                                                  HorizontalAlignment="Center"
+                                                  StrokeLineJoin="Round"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                            <TextBlock Text="{Binding Name}" FontSize="11"
+                                                       TextWrapping="Wrap" TextAlignment="Center"
+                                                       LineHeight="13" MaxWidth="108"
+                                                       HorizontalAlignment="Center"/>
+                                        </StackPanel>
                                     </Border>
                                 </DataTemplate>
                             </GridView.ItemTemplate>
                         </GridView>
+                    </StackPanel>
+
+                    <!-- Output channels -->
+                    <StackPanel Spacing="6">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Channels" FontWeight="Medium" VerticalAlignment="Center"/>
+                            <DropDownButton x:Name="ChannelPresets" Grid.Column="1" Content="Presets"
+                                            Padding="8,2,8,2" FontSize="12"/>
+                        </Grid>
+                        <TextBlock Text="Route the generated signal to one or more outputs."
+                                   FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap"/>
+                        <StackPanel x:Name="ChannelHost" Margin="0,4,0,0"/>
                     </StackPanel>
 
                     <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
@@ -89,23 +124,6 @@
                     <StackPanel x:Name="TimingHost" Spacing="10"/>
 
                     <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
-
-                    <!-- Output channels -->
-                    <StackPanel Spacing="6">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="Channels" FontWeight="Medium" VerticalAlignment="Center"/>
-                            <DropDownButton x:Name="ChannelPresets" Grid.Column="1" Content="Presets"
-                                            Padding="8,2,8,2" FontSize="12"/>
-                        </Grid>
-                        <TextBlock Text="Route the generated signal to one or more outputs."
-                                   FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   TextWrapping="Wrap"/>
-                        <StackPanel x:Name="ChannelHost" Margin="0,4,0,0"/>
-                    </StackPanel>
 
                     <!-- Options -->
                     <StackPanel x:Name="OptionsPanel" Spacing="4">
