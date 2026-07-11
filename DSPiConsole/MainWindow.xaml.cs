@@ -54,6 +54,7 @@ public sealed partial class MainWindow : Window
     private CrossfeedWindow? _crossfeedWindow;
     private VolumeLevellerWindow? _levellerWindow;
     private MatrixMixerWindow? _matrixMixerWindow;
+    private TestSignalsWindow? _testSignalsWindow;
     private Settings.SettingsWindow? _settingsWindow;
 
     // Track output controls for live updates
@@ -4272,6 +4273,35 @@ public sealed partial class MainWindow : Window
         _matrixMixerWindow.Closed += (s, e) => { _matrixMixerWindow = null; UpdateShortcutIconStates(); };
         _matrixMixerWindow.Activate();
         UpdateShortcutIconStates();
+    }
+
+    private async void OnTestSignalsClick(object sender, RoutedEventArgs e)
+    {
+        if (_testSignalsWindow != null)
+        {
+            _testSignalsWindow.Activate();
+            return;
+        }
+
+        if (!ViewModel.IsDeviceConnected)
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "Device Not Connected",
+                Content = "Please connect a DSPi device first.",
+                CloseButtonText = "OK",
+                XamlRoot = Content.XamlRoot
+            };
+            await dialog.ShowAsync();
+            return;
+        }
+
+        // Probe caps + descriptors before opening so the window builds fully populated.
+        await ViewModel.FetchSiggenAsync();
+
+        _testSignalsWindow = new TestSignalsWindow(ViewModel);
+        _testSignalsWindow.Closed += (s, e) => _testSignalsWindow = null;
+        _testSignalsWindow.Activate();
     }
 
     private void OnStatsClick(object sender, RoutedEventArgs e)

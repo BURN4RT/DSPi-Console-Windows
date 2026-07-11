@@ -68,6 +68,15 @@ public static class VendorCommands
     public const byte GetAllParamsChunk = 0xA2; // chunked GET (WinUSB 4 KB control cap)
     public const byte SetAllParamsChunk = 0xA3; // chunked SET
 
+    // Onboard test-signal generator (siggen). Own struct version (1), independent
+    // of the bulk wire version. CONTROL is issued as an IN transfer ("write as
+    // read") with the action in wValue.
+    public const byte SiggenSetConfig = 0xA4; // OUT, 36-byte SiggenConfig
+    public const byte SiggenGetConfig = 0xA5; // IN, 36 bytes
+    public const byte SiggenControl   = 0xA6; // IN, wValue=SiggenControl.*, 1-byte status
+    public const byte SiggenGetStatus = 0xA7; // IN, 16 bytes
+    public const byte SiggenGetCaps   = 0xA8; // IN, wValue=0xFFFF (header 8B) or type idx (desc 62B)
+
     // Buffer statistics (firmware v3+)
     public const byte GetBufferStats  = 0xB0;
     public const byte ResetBufferStats = 0xB1;
@@ -2251,6 +2260,50 @@ public partial class DspDevice : ObservableObject, IDisposable
 
             return buffer;
         }
+    }
+
+    // ── Test signal generator (0xA4–0xA8) ──
+
+    /// <summary>Probe siggen support + read caps (0xA8, wValue 0xFFFF). Null if the
+    /// firmware STALLs (feature unsupported).</summary>
+    public SiggenCaps? GetSiggenCaps()
+    {
+        var r = ControlTransferIn(VendorCommands.SiggenGetCaps, 0xFFFF, SiggenCaps.WireSize);
+        return r == null ? null : SiggenCaps.FromBytes(r);
+    }
+
+    /// <summary>Read one signal type's descriptor (0xA8, wValue = type index).</summary>
+    public SiggenTypeDesc? GetSiggenTypeDesc(int index)
+    {
+        var r = ControlTransferIn(VendorCommands.SiggenGetCaps, (ushort)(index & 0xFF), SiggenTypeDesc.WireSize);
+        return r == null ? null : SiggenTypeDesc.FromBytes(r);
+    }
+
+    /// <summary>Read the applied siggen config (0xA5).</summary>
+    public SiggenConfig? GetSiggenConfig()
+    {
+        var r = ControlTransferIn(VendorCommands.SiggenGetConfig, 0, SiggenConfig.WireSize);
+        return r == null ? null : SiggenConfig.FromBytes(r);
+    }
+
+    /// <summary>Stage a siggen config (0xA4). Does NOT start playback — follow with
+    /// SiggenControl(Start). Returns false if the firmware rejects (STALL).</summary>
+    public bool SetSiggenConfig(SiggenConfig config) =>
+        ControlTransferOut(VendorCommands.SiggenSetConfig, 0, config.ToBytes());
+
+    /// <summary>Start/stop the generator (0xA6). action = SiggenControl.Start/Stop/StopNow.
+    /// Issued as an IN transfer per the firmware "write as read" contract.</summary>
+    public bool SiggenControl(byte action)
+    {
+        var r = ControlTransferIn(VendorCommands.SiggenControl, action, 1);
+        return r != null && r.Length >= 1 && r[0] == 1;
+    }
+
+    /// <summary>Read live generator status (0xA7). Null on STALL/failure.</summary>
+    public SiggenStatus? GetSiggenStatus()
+    {
+        var r = ControlTransferIn(VendorCommands.SiggenGetStatus, 0, SiggenStatus.WireSize);
+        return r == null ? null : SiggenStatus.FromBytes(r);
     }
 
     #region Input Source (V7+)

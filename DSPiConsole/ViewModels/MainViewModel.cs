@@ -264,6 +264,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _multiSpdifSupported;
 
+    // Onboard test-signal generator. SiggenSupported is set true when the caps
+    // probe (0xA8) answers; older firmware STALLs. SiggenStatus mirrors the live
+    // generator state for the Test Signals window's transport/status UI.
+    [ObservableProperty]
+    private bool _siggenSupported;
+
+    [ObservableProperty]
+    private SiggenStatus? _siggenStatus;
+
     // Per-band bypass (firmware 1.1.4+). Mirrors the InputSource pattern: probe
     // once at connect via REQ_GET_BAND_BYPASS (0xD9); older firmware STALLs and
     // the UI hides the bypass toggle. See band_bypass_spec.md §8.
@@ -2423,6 +2432,90 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>Number of firmware output channels (drives the loudness/crossfeed chip counts).</summary>
     public int NumOutputChannels => _device.NumOutputChannels;
+
+    // ── Test signal generator ──
+    // The Test Signals window edits _siggenConfig (the draft) in place; caps and
+    // per-type descriptors drive its type list, param ranges and channel count.
+    private readonly SiggenConfig _siggenConfig = new();
+    private SiggenCaps? _siggenCaps;
+    private SiggenTypeDesc[] _siggenTypeDescs = Array.Empty<SiggenTypeDesc>();
+
+    public SiggenConfig SiggenConfig => _siggenConfig;
+    public SiggenCaps? SiggenCaps => _siggenCaps;
+    public IReadOnlyList<SiggenTypeDesc> SiggenTypeDescs => _siggenTypeDescs;
+
+    /// <summary>Probe siggen support and read caps, per-type descriptors, the applied
+    /// config, and initial status. Sets SiggenSupported (false if the firmware STALLs).</summary>
+    public async Task FetchSiggenAsync()
+    {
+        await Task.Run(() =>
+        {
+            var caps = _device.GetSiggenCaps();
+            if (caps == null || caps.TypeCount == 0)
+            {
+                _dispatcher.TryEnqueue(() => SiggenSupported = false);
+                return;
+            }
+            _siggenCaps = caps;
+            var descs = new List<SiggenTypeDesc>();
+            for (int i = 0; i < caps.TypeCount; i++)
+            {
+                var d = _device.GetSiggenTypeDesc(i);
+                if (d != null) descs.Add(d);
+            }
+            _siggenTypeDescs = descs.ToArray();
+            var cfg = _device.GetSiggenConfig();
+            if (cfg != null) cfg.CopyTo(_siggenConfig);
+            var status = _device.GetSiggenStatus();
+            _dispatcher.TryEnqueue(() =>
+            {
+                SiggenSupported = true;
+                SiggenStatus = status;
+            });
+        });
+    }
+
+    /// <summary>Stage the current draft config to the device (SET 0xA4). Does not start.</summary>
+    public Task<bool> ApplySiggenConfigAsync()
+    {
+        var cfg = _siggenConfig.Clone();
+        return Task.Run(() => _device.SetSiggenConfig(cfg));
+    }
+
+    /// <summary>Apply the draft then start playback. False if SET or START is rejected.</summary>
+    public async Task<bool> StartSiggenAsync()
+    {
+        var cfg = _siggenConfig.Clone();
+        return await Task.Run(() =>
+        {
+            if (!_device.SetSiggenConfig(cfg)) return false;
+            bool ok = _device.SiggenControl(SiggenControl.Start);
+            if (ok)
+            {
+                var status = _device.GetSiggenStatus();
+                _dispatcher.TryEnqueue(() => SiggenStatus = status);
+            }
+            return ok;
+        });
+    }
+
+    /// <summary>Stop playback (faded, or immediate when now=true).</summary>
+    public async Task StopSiggenAsync(bool now = false)
+    {
+        await Task.Run(() =>
+        {
+            _device.SiggenControl(now ? SiggenControl.StopNow : SiggenControl.Stop);
+            var status = _device.GetSiggenStatus();
+            _dispatcher.TryEnqueue(() => SiggenStatus = status);
+        });
+    }
+
+    /// <summary>Poll live status (0xA7) into SiggenStatus.</summary>
+    public async Task PollSiggenStatusAsync()
+    {
+        var status = await Task.Run(() => _device.GetSiggenStatus());
+        if (status != null) SiggenStatus = status;
+    }
 
     partial void OnInputPreampLDbChanged(float value)
     {
