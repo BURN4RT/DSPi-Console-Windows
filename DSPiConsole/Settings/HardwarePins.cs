@@ -102,7 +102,9 @@ internal static class HardwarePins
         bool excludeMckSelf = false,
         bool excludeSpdifRxSelf = false,
         bool excludeDacMuteSelf = false,
-        bool excludeI2sRxSelf = false)
+        bool excludeI2sRxSelf = false,
+        int excludeSpdifRxIndex = -1,
+        int excludeI2sRxPair = -1)
     {
         var owners = new Dictionary<byte, string>();
 
@@ -131,13 +133,39 @@ internal static class HardwarePins
         if (vm.MckEnabled && !excludeMckSelf)
             owners[vm.MckPin] = "MCK";
 
-        if (vm.InputSourceSupported && !excludeSpdifRxSelf)
-            owners[vm.SpdifRxPin] = "SPDIF RX";
+        // S/PDIF RX input pins. With multiple selectable inputs, only the
+        // ENABLED inputs actually claim a GPIO (a disabled input's pin is just a
+        // stored preference). excludeSpdifRxIndex keeps a row's own pin pickable.
+        if (vm.InputSourceSupported)
+        {
+            if (vm.MultiSpdifSupported)
+            {
+                for (int i = 0; i < MainViewModel.SpdifRxNumInputs; i++)
+                {
+                    if (i == excludeSpdifRxIndex) continue;
+                    if (excludeSpdifRxSelf && i == 0) continue;
+                    if (!vm.SpdifInputEnabled(i)) continue;
+                    owners[vm.SpdifRxPinAt(i)] = $"SPDIF {i + 1}";
+                }
+            }
+            else if (!excludeSpdifRxSelf)
+            {
+                owners[vm.SpdifRxPin] = "SPDIF RX";
+            }
+        }
 
-        // I2S input data pin (V12+). Only claim when the firmware exposes I2S
-        // input, so older firmware's pin map is unaffected.
-        if (vm.InputI2sSupported && !excludeI2sRxSelf)
-            owners[vm.I2sRxPin] = "I2S RX";
+        // I2S input data pins (V12+). One pin per ACTIVE stereo pair; higher
+        // pairs reserve no GPIO until the channel count grows to reach them.
+        if (vm.InputI2sSupported)
+        {
+            int pairs = vm.I2sActivePairs;
+            for (int p = 0; p < pairs; p++)
+            {
+                if (p == excludeI2sRxPair) continue;
+                if (excludeI2sRxSelf && p == 0) continue;
+                owners[vm.I2sRxPinAt(p)] = pairs > 1 ? $"I2S RX {p + 1}" : "I2S RX";
+            }
+        }
 
         // External DAC mute pin (V10+): only claim when supported AND
         // configured with a real pin. The "No Pin" sentinel disables

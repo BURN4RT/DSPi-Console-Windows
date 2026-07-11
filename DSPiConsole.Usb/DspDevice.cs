@@ -152,16 +152,21 @@ public static class VendorCommands
     public const byte GetInputSource       = 0xE1;
     public const byte GetSpdifRxStatus     = 0xE2;
     public const byte GetSpdifRxChStatus   = 0xE3;
-    public const byte SetSpdifRxPin        = 0xE4;
-    public const byte GetSpdifRxPin        = 0xE5;
+    public const byte SetSpdifRxPin        = 0xE4; // IN, wValue=(index<<8)|gpio, status byte
+    public const byte GetSpdifRxPin        = 0xE5; // IN, wValue=index, 1 byte (GPIO)
+    // Multiple selectable SPDIF inputs (always 3 inputs; index 0 always enabled).
+    public const byte SetSpdifInputEnable  = 0xE9; // IN, wValue=(index<<8)|enable, status byte
+    public const byte GetSpdifInputConfig  = 0xEF; // IN, 5 bytes: count, mask, pin0, pin1, pin2
 
     // I2S input (V12+). The device is the I2S clock master, so the host picks
     // the sample rate (44.1/48/96 kHz) the device drives. BCK/LRCK/MCK clock
     // pins are shared with the I2S output path (REQ_SET_I2S_BCK_PIN etc.).
     public const byte SetInputRate         = 0xED; // OUT, uint32 Hz (44100/48000/96000)
     public const byte GetInputRate         = 0xEE; // IN, 8 bytes: current Hz + selected I2S Hz
-    public const byte SetI2sRxPin          = 0xF1; // IN, wValue=pin, returns status byte
-    public const byte GetI2sRxPin          = 0xF2; // IN, 1 byte (GPIO)
+    public const byte SetI2sRxPin          = 0xF1; // IN, wValue=(pair<<8)|gpio, status byte
+    public const byte GetI2sRxPin          = 0xF2; // IN, wValue=pair, 1 byte (GPIO)
+    public const byte SetI2sInputChannels  = 0xF3; // IN, wValue=count (2/4/6/8), status byte
+    public const byte GetI2sInputChannels  = 0xF4; // IN, 1 byte (channel count)
 
     // External DAC hardware mute (V10+). Fire-and-forget SET — validation and
     // flash persistence happen in the firmware's main loop; the USB response
@@ -2300,13 +2305,38 @@ public partial class DspDevice : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Get the GPIO pin currently configured for S/PDIF receive input.
+    /// Get the GPIO pin configured for a S/PDIF receive input (index 0..2;
+    /// there are always 3 selectable inputs sharing one receiver).
     /// </summary>
-    public byte? GetSpdifRxPin()
+    public byte? GetSpdifRxPin(int index = 0)
     {
-        var response = ControlTransferIn(VendorCommands.GetSpdifRxPin, 0, 1);
+        var response = ControlTransferIn(VendorCommands.GetSpdifRxPin, (ushort)(index & 0xFF), 1);
         if (response == null || response.Length < 1) return null;
         return response[0];
+    }
+
+    /// <summary>
+    /// Get the 5-byte multi-SPDIF input config (0xEF): input count, an enable
+    /// mask (bit0=input1 always on, bit1=SPDIF2, bit2=SPDIF3), and the three
+    /// input GPIO pins. Null if the firmware STALLs (single-input firmware).
+    /// </summary>
+    public (byte count, byte enableMask, byte[] pins)? GetSpdifInputConfig()
+    {
+        var r = ControlTransferIn(VendorCommands.GetSpdifInputConfig, 0, 5);
+        if (r == null || r.Length < 5) return null;
+        return (r[0], r[1], new[] { r[2], r[3], r[4] });
+    }
+
+    /// <summary>
+    /// Enable or disable an optional S/PDIF input (index 1..2; input 0 is always
+    /// enabled). Encodes (index&lt;&lt;8)|enable in wValue; returns a
+    /// <see cref="PinConfigResult"/> status byte (0xFF on transfer failure).
+    /// </summary>
+    public byte SetSpdifInputEnable(int index, bool enable)
+    {
+        ushort wValue = (ushort)(((index & 0xFF) << 8) | (enable ? 1 : 0));
+        var response = ControlTransferIn(VendorCommands.SetSpdifInputEnable, wValue, 1);
+        return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
     }
 
     /// <summary>
@@ -2315,31 +2345,55 @@ public partial class DspDevice : ObservableObject, IDisposable
     /// 2 = pin in use, 3 = output active — must switch to USB first).
     /// Returns 0xFF on transfer failure.
     /// </summary>
-    public byte SetSpdifRxPin(byte pin)
+    public byte SetSpdifRxPin(byte pin, int index = 0)
     {
-        var response = ControlTransferIn(VendorCommands.SetSpdifRxPin, pin, 1);
+        ushort wValue = (ushort)(((index & 0xFF) << 8) | pin);
+        var response = ControlTransferIn(VendorCommands.SetSpdifRxPin, wValue, 1);
         return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
     }
 
     /// <summary>
-    /// Get the GPIO pin currently configured for the I2S input data line (V12+).
+    /// Get the GPIO pin for an I2S input data line / stereo pair (V12+; pair
+    /// 0..3 on RP2350, 0 on RP2040).
     /// </summary>
-    public byte? GetI2sRxPin()
+    public byte? GetI2sRxPin(int pair = 0)
     {
-        var response = ControlTransferIn(VendorCommands.GetI2sRxPin, 0, 1);
+        var response = ControlTransferIn(VendorCommands.GetI2sRxPin, (ushort)(pair & 0xFF), 1);
         if (response == null || response.Length < 1) return null;
         return response[0];
     }
 
     /// <summary>
-    /// Change the I2S input data GPIO pin (V12+). Pin in wValue, firmware returns
-    /// a 1-byte <see cref="PinConfigResult"/> status (0=success, 1=invalid,
-    /// 2=in use). Same immediate-response shape as <see cref="SetSpdifRxPin"/>.
-    /// Returns 0xFF on transfer failure.
+    /// Change the I2S input data GPIO pin for a stereo pair (V12+). Encodes
+    /// (pair&lt;&lt;8)|gpio in wValue; firmware returns a 1-byte
+    /// <see cref="PinConfigResult"/> status. Returns 0xFF on transfer failure.
     /// </summary>
-    public byte SetI2sRxPin(byte pin)
+    public byte SetI2sRxPin(byte pin, int pair = 0)
     {
-        var response = ControlTransferIn(VendorCommands.SetI2sRxPin, pin, 1);
+        ushort wValue = (ushort)(((pair & 0xFF) << 8) | pin);
+        var response = ControlTransferIn(VendorCommands.SetI2sRxPin, wValue, 1);
+        return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
+    }
+
+    /// <summary>
+    /// Get the active I2S input channel count (2/4/6/8). Null on STALL/failure.
+    /// </summary>
+    public byte? GetI2sInputChannels()
+    {
+        var response = ControlTransferIn(VendorCommands.GetI2sInputChannels, 0, 1);
+        if (response == null || response.Length < 1) return null;
+        return response[0];
+    }
+
+    /// <summary>
+    /// Set the active I2S input channel count (2/4/6/8; count/2 stereo pairs).
+    /// Count in wValue; firmware returns a <see cref="PinConfigResult"/> status
+    /// (INVALID_PIN for an odd/out-of-range count, INVALID_OUTPUT if the platform
+    /// has too few pairs). Returns 0xFF on transfer failure.
+    /// </summary>
+    public byte SetI2sInputChannels(int count)
+    {
+        var response = ControlTransferIn(VendorCommands.SetI2sInputChannels, (ushort)(count & 0xFF), 1);
         return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
     }
 

@@ -61,9 +61,16 @@ public sealed partial class SettingsShell : UserControl
             BuildNavMenu();
             Nav.SelectionChanged += OnNavSelectionChanged;
             _tracker.Changed += OnTrackerChanged;
+            _vm.PropertyChanged += OnVmPropertyChanged;
+            _vm.OutputConfigStateChanged += OnOutputConfigStateChanged;
 
             Loaded += OnShellLoaded;
-            Unloaded += (_, _) => _tracker.Changed -= OnTrackerChanged;
+            Unloaded += (_, _) =>
+            {
+                _tracker.Changed -= OnTrackerChanged;
+                _vm.PropertyChanged -= OnVmPropertyChanged;
+                _vm.OutputConfigStateChanged -= OnOutputConfigStateChanged;
+            };
         }
         catch (Exception ex)
         {
@@ -76,6 +83,7 @@ public sealed partial class SettingsShell : UserControl
     {
         if (_initialSelectionDone) return;
         _initialSelectionDone = true;
+        SyncOutputConfigStaged();
         try
         {
             // Default landing page is Hardware › Output Assignment — it's the
@@ -247,15 +255,77 @@ public sealed partial class SettingsShell : UserControl
             : $"{n} pending device changes";
     }
 
-    private void OnDiscardClick(object sender, RoutedEventArgs e)
+    private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        _tracker.DiscardAll();
-        // The Refresh path on each visible page needs to repaint to
-        // reflect the un-staging — controls that show pending state
-        // (inline (was X) chips) clear. Cheap: just re-Refresh the
-        // currently-visible page; cached but-not-visible pages will
-        // refresh on next navigation.
-        RefreshVisiblePage();
+        if (e.PropertyName == nameof(MainViewModel.IsDeviceConnected))
+            DispatcherQueue.TryEnqueue(SyncOutputConfigStaged);
+    }
+
+    private void OnOutputConfigStateChanged(object? sender, EventArgs e) =>
+        DispatcherQueue.TryEnqueue(SyncOutputConfigStaged);
+
+    /// <summary>
+    /// Reflect the VM's unsaved independent-mode IO-block changes as staged
+    /// entries in the shared tracker — one per changed field, so the pending-
+    /// changes InfoBar shows an accurate device-level count. The edits are already
+    /// live-applied to RAM; each entry's Apply persists the whole block via "Save
+    /// Output Config" (0x52), guarded so only one flash write happens per batch.
+    /// </summary>
+    private void SyncOutputConfigStaged()
+    {
+        var desired = _vm.IsDeviceConnected
+            ? _vm.GetOutputConfigChanges()
+            : System.Array.Empty<PresetDiff.IoChange>();
+
+        var desiredKeys = new HashSet<string>();
+        foreach (var c in desired) desiredKeys.Add(c.Key);
+
+        // Drop io.* entries no longer changed (e.g. reverted to the saved value).
+        foreach (var pc in _tracker.Pending.Where(p => p.Key.StartsWith("io.")).ToList())
+            if (!desiredKeys.Contains(pc.Key))
+                _tracker.Discard(pc.Key);
+
+        // Stage new / changed entries; skip identical re-stages to avoid churn.
+        var existing = _tracker.Pending.ToDictionary(p => p.Key);
+        foreach (var c in desired)
+        {
+            if (existing.TryGetValue(c.Key, out var ex) && ex.NewDisplay == c.New)
+                continue;
+            _tracker.Stage(new PendingChange(
+                Key: c.Key,
+                PageId: "hardware.output-assignment",
+                FieldLabel: c.Label,
+                OldDisplay: c.Old,
+                NewDisplay: c.New,
+                Apply: async () => await _vm.SaveOutputConfig()));
+        }
+    }
+
+    private async void OnDiscardClick(object sender, RoutedEventArgs e)
+    {
+        DiscardButton.IsEnabled = false;
+        try
+        {
+            _tracker.DiscardAll();
+            // Output-config edits are already live-applied to RAM, so dropping the
+            // staged entries isn't enough — revert them to the last saved values.
+            // (The other staged pages were never applied, so DiscardAll IS their
+            // revert.) On completion OutputConfigDirty clears and the entries stay
+            // gone via OnOutputConfigStateChanged → SyncOutputConfigStaged.
+            await _vm.RevertOutputConfig();
+            HardwarePins.RaisePinAssignmentsChanged();
+        }
+        catch (Exception ex)
+        {
+            SettingsWindow.WriteCrashLog("SettingsShell.OnDiscardClick", ex);
+        }
+        finally
+        {
+            DiscardButton.IsEnabled = true;
+            // Repaint the visible page so it reflects the reverted values (its
+            // combos re-sync from VM state; other pages refresh on next nav).
+            RefreshVisiblePage();
+        }
     }
 
     private async void OnApplyClick(object sender, RoutedEventArgs e)

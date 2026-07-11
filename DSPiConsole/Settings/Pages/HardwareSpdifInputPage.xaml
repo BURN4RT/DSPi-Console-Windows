@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <settings:SettingsModule
     x:Class="DSPiConsole.Settings.Pages.HardwareSpdifInputPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -7,21 +7,42 @@
     xmlns:controls="using:CommunityToolkit.WinUI.Controls">
 
     <!--
-        S/PDIF Input page. Two cards:
-          1. RX pin — hot-swappable while active; brief output mute on re-lock.
-          2. LG Sound Sync — V8+ firmware. Decodes the TV's TOSLINK volume /
-             mute messages and applies them through the user-volume path.
-             Card visibility tracks LgSoundSyncSupported; hidden on older
-             firmware so the section doesn't show a stuck toggle.
-        Page only registered when firmware V7+ exposes SPDIF input capability
-        (see IsAvailable).
+        S/PDIF Input page.
+          - Instances: number of selectable S/PDIF inputs (1..3) sharing one
+            receiver (firmware v1.1.5+; hidden on older firmware). Driving the
+            count enables/disables the optional inputs.
+          - One RX pin card per active input; hot-swappable while active.
+          - LG Sound Sync — V8+ firmware.
+        Page only registered when firmware V7+ exposes SPDIF input capability.
     -->
     <StackPanel Spacing="4">
 
-        <controls:SettingsCard Header="RX pin"
-                                Description="GPIO pin for the S/PDIF input receiver (default 11). Hot-swappable while active — output briefly mutes during re-lock.">
-                        <ComboBox x:Name="SpdifRxPinCombo" MinWidth="140"
-                      SelectionChanged="OnSpdifRxPinChanged"/>
+        <controls:SettingsCard x:Name="InstancesCard"
+                               Header="Instances"
+                               Description="Number of selectable S/PDIF inputs sharing one receiver. Each needs its own GPIO."
+                               Visibility="Collapsed">
+            <ComboBox x:Name="InstancesCombo" MinWidth="80" SelectionChanged="OnInstancesChanged">
+                <ComboBoxItem Content="1" Tag="1"/>
+                <ComboBoxItem Content="2" Tag="2"/>
+                <ComboBoxItem Content="3" Tag="3"/>
+            </ComboBox>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="RxPinCard0" Header="RX pin"
+                               Description="GPIO pin for the S/PDIF input receiver. Hot-swappable while active — output briefly mutes during re-lock.">
+            <ComboBox x:Name="RxPinCombo0" MinWidth="140" SelectionChanged="OnSpdifRxPinChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="RxPinCard1" Header="S/PDIF 2 RX pin"
+                               Description="GPIO pin for the second S/PDIF input."
+                               Visibility="Collapsed">
+            <ComboBox x:Name="RxPinCombo1" MinWidth="140" SelectionChanged="OnSpdifRxPinChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="RxPinCard2" Header="S/PDIF 3 RX pin"
+                               Description="GPIO pin for the third S/PDIF input."
+                               Visibility="Collapsed">
+            <ComboBox x:Name="RxPinCombo2" MinWidth="140" SelectionChanged="OnSpdifRxPinChanged"/>
         </controls:SettingsCard>
 
         <controls:SettingsCard x:Name="LgSoundSyncCard"

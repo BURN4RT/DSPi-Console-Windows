@@ -78,6 +78,14 @@ public class PresetSnapshot
     public byte I2sRxPin;
     public uint I2sInputRateHz;
 
+    // Multiple SPDIF inputs + multichannel I2S input (IO block). Ext SPDIF pins
+    // for inputs 1/2, the 2-bit SPDIF enable mask, I2S channel count, and the
+    // per-pair I2S data pins for pairs 1..3.
+    public byte[] SpdifRxPinsExt = new byte[2];
+    public byte SpdifEnabledExt;
+    public int I2sInputChannels;
+    public byte[] I2sRxPinsExt = new byte[3];
+
     // LG Sound Sync enable (V8+ preset slot field). Only the user-writable
     // `enabled` flag is preset state; runtime fields (present, volume, muted)
     // are diagnostic and not captured. Tracks via REQ_SET/GET_LG_SOUND_SYNC
@@ -190,10 +198,41 @@ public class PresetSnapshot
         snap.I2sRxPin = vm.I2sRxPin;
         snap.I2sInputRateHz = vm.I2sInputRateHz;
 
+        // Multiple SPDIF inputs + multichannel I2S input (IO block)
+        snap.SpdifRxPinsExt[0] = vm.SpdifRxPinAt(1);
+        snap.SpdifRxPinsExt[1] = vm.SpdifRxPinAt(2);
+        snap.SpdifEnabledExt = (byte)((vm.SpdifInputEnabled(1) ? 1 : 0) | (vm.SpdifInputEnabled(2) ? 2 : 0));
+        snap.I2sInputChannels = vm.I2sInputChannels;
+        snap.I2sRxPinsExt[0] = vm.I2sRxPinAt(1);
+        snap.I2sRxPinsExt[1] = vm.I2sRxPinAt(2);
+        snap.I2sRxPinsExt[2] = vm.I2sRxPinAt(3);
+
         // LG Sound Sync enable flag (V8+ preset slot field)
         snap.LgSoundSyncEnabled = vm.LgSoundSyncEnabled;
 
         return snap;
+    }
+
+    /// <summary>
+    /// Copy just the physical IO-block fields from <paramref name="src"/> into
+    /// this snapshot. Used to advance the output-config baseline after a
+    /// "Save Output Config" without disturbing the preset (non-IO) baseline.
+    /// </summary>
+    public void CopyIoBlockFrom(PresetSnapshot src)
+    {
+        OutputPins = new Dictionary<int, byte>(src.OutputPins);
+        OutputSlotTypes = (byte[])src.OutputSlotTypes.Clone();
+        I2SBckPin = src.I2SBckPin;
+        MckEnabled = src.MckEnabled;
+        MckPin = src.MckPin;
+        MckMultiplier = src.MckMultiplier;
+        SpdifRxPin = src.SpdifRxPin;
+        I2sRxPin = src.I2sRxPin;
+        I2sInputRateHz = src.I2sInputRateHz;
+        SpdifRxPinsExt = (byte[])src.SpdifRxPinsExt.Clone();
+        SpdifEnabledExt = src.SpdifEnabledExt;
+        I2sInputChannels = src.I2sInputChannels;
+        I2sRxPinsExt = (byte[])src.I2sRxPinsExt.Clone();
     }
 }
 
@@ -208,6 +247,11 @@ public static class PresetDiff
 
     private static string FormatVal(float v) =>
         v == (int)v && Math.Abs(v) < 100000 ? $"{(int)v}" : $"{v:F1}";
+
+    // Number of enabled S/PDIF inputs from the 2-bit ext enable mask (input 0
+    // is always enabled).
+    private static int SpdifInputCount(byte extMask) =>
+        1 + ((extMask & 1) != 0 ? 1 : 0) + ((extMask & 2) != 0 ? 1 : 0);
 
     // Renders a channel/pair bitmask as a 1-based comma list, e.g. "1,2,5".
     private static string MaskList(int mask)
@@ -374,51 +418,12 @@ public static class PresetDiff
                 changes.Add($"{oldName} \u2192 {curName}");
         }
 
-        // Physical IO block (output pins/types, I2S MCK/BCK, SPDIF RX pin)
-        // participates in preset dirty only when the firmware is configured
-        // to store it with each preset. In independent mode, the wiring is
-        // device-global and managed separately via "Save Output Config".
+        // Physical IO block (output pins/types, I2S MCK/BCK, SPDIF/I2S RX pins,
+        // SPDIF instances, I2S channel count). Participates in preset dirty only
+        // in with-preset mode; in independent mode it's device-global and saved
+        // via "Save Output Config" (surfaced separately as OutputConfigDirty).
         if (vm.OutputConfigMode == 1)
-        {
-            // Pin assignments
-            int pinChanges = 0;
-            foreach (var key in old.OutputPins.Keys)
-            {
-                byte oldPin = old.OutputPins[key];
-                byte curPin = cur.OutputPins.TryGetValue(key, out var cp) ? cp : (byte)0;
-                if (oldPin != curPin) pinChanges++;
-            }
-            if (pinChanges > 0)
-                changes.Add($"{pinChanges} pin assignment{(pinChanges == 1 ? "" : "s")} changed");
-
-            // Output slot types (SPDIF/I2S)
-            int slotChanges = 0;
-            for (int s = 0; s < old.OutputSlotTypes.Length; s++)
-                if (old.OutputSlotTypes[s] != cur.OutputSlotTypes[s]) slotChanges++;
-            if (slotChanges > 0)
-                changes.Add($"{slotChanges} output slot type{(slotChanges == 1 ? "" : "s")} changed");
-
-            // I2S hardware config
-            if (old.I2SBckPin != cur.I2SBckPin)
-                changes.Add($"I2S BCK pin: {old.I2SBckPin} → {cur.I2SBckPin}");
-            if (old.MckEnabled != cur.MckEnabled)
-                changes.Add($"MCK: {(cur.MckEnabled ? "enabled" : "disabled")}");
-            if (old.MckPin != cur.MckPin)
-                changes.Add($"MCK pin: {old.MckPin} → {cur.MckPin}");
-            if (old.MckMultiplier != cur.MckMultiplier)
-                changes.Add($"MCK multiplier: {old.MckMultiplier}x → {cur.MckMultiplier}x");
-
-            // SPDIF RX pin (part of the IO block per the spec — input *source*
-            // is a separate per-preset listening choice, handled below).
-            if (old.SpdifRxPin != cur.SpdifRxPin)
-                changes.Add($"S/PDIF RX pin: GPIO {old.SpdifRxPin} → GPIO {cur.SpdifRxPin}");
-
-            // I2S input data pin + master rate — part of the IO block.
-            if (old.I2sRxPin != cur.I2sRxPin)
-                changes.Add($"I2S RX pin: GPIO {old.I2sRxPin} → GPIO {cur.I2sRxPin}");
-            if (old.I2sInputRateHz != cur.I2sInputRateHz)
-                changes.Add($"I2S sample rate: {old.I2sInputRateHz / 1000.0:0.#} → {cur.I2sInputRateHz / 1000.0:0.#} kHz");
-        }
+            changes.AddRange(IoBlockDiff(old, cur, vm));
 
         // Input source (USB / SPDIF / I2S) is NOT part of the IO block — it stays
         // per-preset in both modes, as it's a listening choice not wiring.
@@ -439,6 +444,74 @@ public static class PresetDiff
 
         return changes;
     }
+
+    /// <summary>One changed physical-IO field: a stable key (for tracker
+    /// dedup), a human label, and the before/after display strings.</summary>
+    public readonly record struct IoChange(string Key, string Label, string Old, string New);
+
+    /// <summary>
+    /// Per-field diff of the physical IO block — the fields whose persistence
+    /// follows output_config_mode. One entry per changed field (not aggregated)
+    /// so callers can surface an accurate device-level change count. Keys are
+    /// prefixed "io." and are stable per field.
+    /// </summary>
+    public static List<IoChange> IoBlockChanges(PresetSnapshot old, PresetSnapshot cur, MainViewModel vm)
+    {
+        var changes = new List<IoChange>();
+
+        // Output GPIO pin assignments (one entry per pin-output slot)
+        foreach (var key in old.OutputPins.Keys)
+        {
+            byte oldPin = old.OutputPins[key];
+            byte curPin = cur.OutputPins.TryGetValue(key, out var cp) ? cp : (byte)0;
+            if (oldPin != curPin)
+                changes.Add(new($"io.pin.{key}", $"Output {key + 1} GPIO", $"GPIO {oldPin}", $"GPIO {curPin}"));
+        }
+
+        // Output slot types (SPDIF/I2S)
+        for (int s = 0; s < old.OutputSlotTypes.Length; s++)
+            if (old.OutputSlotTypes[s] != cur.OutputSlotTypes[s])
+                changes.Add(new($"io.slot.{s}", $"Output {s + 1} type",
+                    old.OutputSlotTypes[s] == 1 ? "I2S" : "S/PDIF",
+                    cur.OutputSlotTypes[s] == 1 ? "I2S" : "S/PDIF"));
+
+        // I2S output clock config
+        if (old.I2SBckPin != cur.I2SBckPin)
+            changes.Add(new("io.bck", "I2S BCK pin", $"GPIO {old.I2SBckPin}", $"GPIO {cur.I2SBckPin}"));
+        if (old.MckEnabled != cur.MckEnabled)
+            changes.Add(new("io.mck-en", "MCK", old.MckEnabled ? "enabled" : "disabled", cur.MckEnabled ? "enabled" : "disabled"));
+        if (old.MckPin != cur.MckPin)
+            changes.Add(new("io.mck-pin", "MCK pin", $"GPIO {old.MckPin}", $"GPIO {cur.MckPin}"));
+        if (old.MckMultiplier != cur.MckMultiplier)
+            changes.Add(new("io.mck-mult", "MCK multiplier", $"{old.MckMultiplier}x", $"{cur.MckMultiplier}x"));
+
+        // S/PDIF RX pins + instance enable
+        if (old.SpdifRxPin != cur.SpdifRxPin)
+            changes.Add(new("io.spdif-rx.0", "S/PDIF RX pin", $"GPIO {old.SpdifRxPin}", $"GPIO {cur.SpdifRxPin}"));
+        if (old.SpdifEnabledExt != cur.SpdifEnabledExt)
+            changes.Add(new("io.spdif-inst", "S/PDIF inputs", $"{SpdifInputCount(old.SpdifEnabledExt)}", $"{SpdifInputCount(cur.SpdifEnabledExt)}"));
+        for (int i = 0; i < 2; i++)
+            if (old.SpdifRxPinsExt[i] != cur.SpdifRxPinsExt[i])
+                changes.Add(new($"io.spdif-rx.{i + 1}", $"S/PDIF {i + 2} RX pin", $"GPIO {old.SpdifRxPinsExt[i]}", $"GPIO {cur.SpdifRxPinsExt[i]}"));
+
+        // I2S input: data pins, channel count, master rate
+        if (old.I2sRxPin != cur.I2sRxPin)
+            changes.Add(new("io.i2s-rx.0", "I2S RX pin", $"GPIO {old.I2sRxPin}", $"GPIO {cur.I2sRxPin}"));
+        if (old.I2sInputChannels != cur.I2sInputChannels)
+            changes.Add(new("io.i2s-ch", "I2S input channels", $"{old.I2sInputChannels}", $"{cur.I2sInputChannels}"));
+        for (int i = 0; i < 3; i++)
+            if (old.I2sRxPinsExt[i] != cur.I2sRxPinsExt[i])
+                changes.Add(new($"io.i2s-rx.{i + 1}", $"I2S Serial Data {i + 2} pin", $"GPIO {old.I2sRxPinsExt[i]}", $"GPIO {cur.I2sRxPinsExt[i]}"));
+        if (old.I2sInputRateHz != cur.I2sInputRateHz)
+            changes.Add(new("io.i2s-rate", "I2S sample rate", $"{old.I2sInputRateHz / 1000.0:0.#} kHz", $"{cur.I2sInputRateHz / 1000.0:0.#} kHz"));
+
+        return changes;
+    }
+
+    /// <summary>IO-block diff as human-readable summary lines (for the preset
+    /// change summary). Derived from <see cref="IoBlockChanges"/>.</summary>
+    public static List<string> IoBlockDiff(PresetSnapshot old, PresetSnapshot cur, MainViewModel vm) =>
+        IoBlockChanges(old, cur, vm).ConvertAll(c => $"{c.Label}: {c.Old} → {c.New}");
 
     /// <summary>
     /// Format a list of changes as a bullet-point summary string.

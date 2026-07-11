@@ -7,22 +7,49 @@
     xmlns:controls="using:CommunityToolkit.WinUI.Controls">
 
     <!--
-        I2S Input page. Two cards:
-          1. RX data pin — the GPIO carrying the external I2S data line.
-             Conflict-aware (greys out pins claimed by outputs, clocks, SPDIF RX).
-          2. Sample rate — DSPi is the I2S clock master, so the host selects the
-             rate the device drives (44.1 / 48 / 96 kHz). Applied when I2S is the
-             active source; stored as a preference otherwise.
+        I2S Input page.
+          - Channels: input channel count (2/4/6/8) on RP2350; hidden on RP2040
+            (stereo only). N channels use N/2 stereo pairs.
+          - One "Serial Data" GPIO pin card per active stereo pair.
+          - Sample rate — DSPi is the I2S clock master; the host picks the rate
+            it drives (44.1 / 48 / 96 kHz).
         The BCK/LRCK/MCK clock pins are shared with the I2S *output* path and are
-        configured on the Hardware › I2S page. Page only registered on V12+
-        firmware that exposes I2S input (see IsAvailable).
+        configured on the Hardware › I2S page. Registered on V12+ firmware only.
     -->
     <StackPanel Spacing="4">
 
-        <controls:SettingsCard Header="RX data pin"
+        <controls:SettingsCard x:Name="ChannelsCard" Header="Channels"
+                               Description="Number of input channels. Each stereo pair uses its own serial-data GPIO sharing one bit clock."
+                               Visibility="Collapsed">
+            <ComboBox x:Name="ChannelsCombo" MinWidth="80" SelectionChanged="OnChannelsChanged">
+                <ComboBoxItem Content="2" Tag="2"/>
+                <ComboBoxItem Content="4" Tag="4"/>
+                <ComboBoxItem Content="6" Tag="6"/>
+                <ComboBoxItem Content="8" Tag="8"/>
+            </ComboBox>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="RxPinCard0" Header="RX data pin"
                                Description="GPIO pin for the I2S input data line (default 4). The BCK/LRCK clock pins are shared with I2S output — set them on the I2S page.">
-            <ComboBox x:Name="I2sRxPinCombo" MinWidth="140"
-                      SelectionChanged="OnI2sRxPinChanged"/>
+            <ComboBox x:Name="RxPinCombo0" MinWidth="140" SelectionChanged="OnI2sRxPinChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="RxPinCard1" Header="Serial Data 2"
+                               Description="GPIO data pin for input channels 3-4."
+                               Visibility="Collapsed">
+            <ComboBox x:Name="RxPinCombo1" MinWidth="140" SelectionChanged="OnI2sRxPinChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="RxPinCard2" Header="Serial Data 3"
+                               Description="GPIO data pin for input channels 5-6."
+                               Visibility="Collapsed">
+            <ComboBox x:Name="RxPinCombo2" MinWidth="140" SelectionChanged="OnI2sRxPinChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="RxPinCard3" Header="Serial Data 4"
+                               Description="GPIO data pin for input channels 7-8."
+                               Visibility="Collapsed">
+            <ComboBox x:Name="RxPinCombo3" MinWidth="140" SelectionChanged="OnI2sRxPinChanged"/>
         </controls:SettingsCard>
 
         <controls:SettingsCard Header="Sample rate"

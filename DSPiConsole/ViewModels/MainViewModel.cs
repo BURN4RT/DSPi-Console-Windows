@@ -69,6 +69,19 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private byte _i2sRxPin = 4;       // firmware default (PICO_I2S_RX_PIN_DEFAULT)
     private uint _i2sInputRateHz = 48000; // selected I2S-input master rate
 
+    // Multiple SPDIF inputs (firmware v1.1.5+). Always 3 selectable inputs sharing
+    // one receiver; input 0 (_spdifRxPin) is always enabled. Ext arrays cover
+    // inputs 1 (SPDIF2) and 2 (SPDIF3). _spdifEnabledExt is the 2-bit enable mask
+    // (bit0 = SPDIF2, bit1 = SPDIF3).
+    private readonly byte[] _spdifRxPinsExt = { 20, 21 }; // SPDIF2, SPDIF3 pin defaults
+    private byte _spdifEnabledExt;                        // bit0=SPDIF2, bit1=SPDIF3
+    public const int SpdifRxNumInputs = 3;
+
+    // Multichannel I2S input (RP2350). N channels use N/2 stereo pairs; pair 0
+    // uses _i2sRxPin, pairs 1..3 use the ext pins.
+    private byte _i2sInputChannels = 2;
+    private readonly byte[] _i2sRxPinsExt = { 2, 3, 4 };  // pair 1,2,3 pin defaults
+
     // Clip tracking
     private ushort _clipLatched;
     private DateTime? _clipTimestamp;
@@ -220,6 +233,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _presetsDirty;
 
+    // True when the physical IO block has unsaved changes in INDEPENDENT output-
+    // config mode — i.e. edits that won't ride with a preset and need an explicit
+    // "Save Output Config" (0x52) to persist. Drives the in-window save prompt.
+    // Always false in with-preset mode (those edits mark PresetsDirty instead).
+    [ObservableProperty]
+    private bool _outputConfigDirty;
+
     [ObservableProperty]
     private bool _masterPeqLinked;
 
@@ -236,6 +256,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // and the I2S Input settings page.
     [ObservableProperty]
     private bool _inputI2sSupported;
+
+    // Multiple selectable SPDIF inputs (firmware v1.1.5+). True when the device
+    // answers REQ_GET_SPDIF_INPUT_CONFIG (0xEF) / the bulk enable-mask field is
+    // present. Gates the SPDIF "Instances" selector; when false the S/PDIF Input
+    // page shows a single RX pin as before.
+    [ObservableProperty]
+    private bool _multiSpdifSupported;
 
     // Per-band bypass (firmware 1.1.4+). Mirrors the InputSource pattern: probe
     // once at connect via REQ_GET_BAND_BYPASS (0xD9); older firmware STALLs and
@@ -579,7 +606,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
                         _presetsChecked = false;
                         ActivePreset = -1;
                         PresetsDirty = false;
+                        OutputConfigDirty = false;
                         _savedSnapshot = null;
+                        ClearIoUndoLog();
                     }
                 });
             }
@@ -851,6 +880,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
 
         _savedSnapshot = null;
+        ClearIoUndoLog();
         _ = Task.Run(() => _device.SelectDevice(device));
     }
 
@@ -1022,10 +1052,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public byte SetOutputPinValue(int pinOutputId, byte pin)
     {
+        byte before = GetOutputPinValue(pinOutputId);
         var status = _device.SetOutputPin(pinOutputId, pin);
         if (status == Usb.PinConfigResult.Success)
         {
             _outputPins[pinOutputId] = pin;
+            if (before != pin) RecordIoUndo(() => SetOutputPinValue(pinOutputId, before));
             CheckDirty();
         }
         return status;
@@ -1064,23 +1096,126 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (mult.HasValue) _mckMultiplier = mult.Value;
     }
 
+    // ── Multiple SPDIF inputs ──
+    // Accessors are index-based (0..2); input 0 is always enabled. PropertyChanged
+    // for SpdifRxPin doubles as the "SPDIF input config changed" signal — pages
+    // re-read the pins/enables through these accessors on it.
+
+    /// <summary>GPIO pin for SPDIF input <paramref name="index"/> (0..2).</summary>
+    public byte SpdifRxPinAt(int index) =>
+        index <= 0 ? _spdifRxPin
+        : index - 1 < _spdifRxPinsExt.Length ? _spdifRxPinsExt[index - 1]
+        : (byte)0;
+
+    /// <summary>Whether SPDIF input <paramref name="index"/> is enabled (input 0 always is).</summary>
+    public bool SpdifInputEnabled(int index) =>
+        index <= 0 || (index - 1 < 2 && (_spdifEnabledExt & (1 << (index - 1))) != 0);
+
+    /// <summary>Contiguously-enabled SPDIF input count (1..3) — the "Instances" value.</summary>
+    public int SpdifEnabledCount
+    {
+        get
+        {
+            int count = 1; // input 0 always on
+            for (int i = 1; i < SpdifRxNumInputs; i++)
+                if (SpdifInputEnabled(i)) count = i + 1;
+            return count;
+        }
+    }
+
     public void FetchSpdifRxPin()
     {
         var pin = _device.GetSpdifRxPin();
         if (pin.HasValue) _spdifRxPin = pin.Value;
     }
 
-    public byte SetSpdifRxPin(byte pin)
+    /// <summary>Read the full multi-SPDIF config (0xEF). Falls back to the single
+    /// RX pin and clears MultiSpdifSupported if the firmware STALLs.</summary>
+    public void FetchSpdifInputConfig()
     {
-        var status = _device.SetSpdifRxPin(pin);
+        var cfg = _device.GetSpdifInputConfig();
+        if (cfg == null)
+        {
+            _dispatcher.TryEnqueue(() => MultiSpdifSupported = false);
+            FetchSpdifRxPin();
+            return;
+        }
+        var (_, mask, pins) = cfg.Value;
+        _spdifRxPin = pins[0];
+        _spdifRxPinsExt[0] = pins[1];
+        _spdifRxPinsExt[1] = pins[2];
+        // 0xEF byte1 mask is (ext<<1)|1: bit1=SPDIF2, bit2=SPDIF3.
+        _spdifEnabledExt = (byte)((mask >> 1) & 0x03);
+        _dispatcher.TryEnqueue(() =>
+        {
+            MultiSpdifSupported = true;
+            OnPropertyChanged(nameof(SpdifRxPin));
+        });
+    }
+
+    /// <summary>Set the GPIO pin for SPDIF input <paramref name="index"/> (0..2).</summary>
+    public byte SetSpdifRxPin(byte pin, int index = 0)
+    {
+        byte before = SpdifRxPinAt(index);
+        var status = _device.SetSpdifRxPin(pin, index);
         if (status == PinConfigResult.Success)
         {
-            _spdifRxPin = pin;
+            if (index <= 0) _spdifRxPin = pin;
+            else if (index - 1 < _spdifRxPinsExt.Length) _spdifRxPinsExt[index - 1] = pin;
+            if (before != pin) RecordIoUndo(() => SetSpdifRxPin(before, index));
             _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(SpdifRxPin)));
             CheckDirty();
         }
         return status;
     }
+
+    /// <summary>Enable/disable optional SPDIF input <paramref name="index"/> (1..2).</summary>
+    public byte SetSpdifInputEnable(int index, bool enable)
+    {
+        bool before = SpdifInputEnabled(index);
+        var status = _device.SetSpdifInputEnable(index, enable);
+        if (status == PinConfigResult.Success && index >= 1)
+        {
+            if (enable) _spdifEnabledExt |= (byte)(1 << (index - 1));
+            else _spdifEnabledExt &= (byte)~(1 << (index - 1));
+            if (before != enable) RecordIoUndo(() => SetSpdifInputEnable(index, before));
+            _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(SpdifRxPin)));
+            CheckDirty();
+        }
+        return status;
+    }
+
+    /// <summary>Set the number of active SPDIF inputs (1..3): enable inputs
+    /// 1..target-1, disable inputs &gt;= target. Returns the first failing status
+    /// (or Success), then re-syncs from the device.</summary>
+    public byte SetSpdifInputCount(int target)
+    {
+        byte result = PinConfigResult.Success;
+        for (int i = 1; i < target && i < SpdifRxNumInputs; i++)
+        {
+            var s = SetSpdifInputEnable(i, true);
+            if (s != PinConfigResult.Success && result == PinConfigResult.Success) result = s;
+        }
+        for (int i = SpdifRxNumInputs - 1; i >= target; i--)
+        {
+            var s = SetSpdifInputEnable(i, false);
+            if (s != PinConfigResult.Success && result == PinConfigResult.Success) result = s;
+        }
+        FetchSpdifInputConfig();
+        return result;
+    }
+
+    // ── Multichannel I2S input ──
+    public int I2sInputChannels => _i2sInputChannels;
+    public int I2sMaxPairs => Platform == "RP2350" ? 4 : 1;
+    public int I2sMaxInputChannels => I2sMaxPairs * 2;
+    public int I2sActivePairs => Math.Max(1, _i2sInputChannels / 2);
+
+    /// <summary>GPIO pin for I2S stereo pair <paramref name="pair"/> (0..3).</summary>
+    public byte I2sRxPinAt(int pair) =>
+        pair <= 0 ? _i2sRxPin
+        : pair - 1 < _i2sRxPinsExt.Length ? _i2sRxPinsExt[pair - 1]
+        : (byte)0;
 
     public void FetchI2sRxPin()
     {
@@ -1088,16 +1223,54 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (pin.HasValue) _i2sRxPin = pin.Value;
     }
 
-    /// <summary>Set the I2S input data pin. Returns a <see cref="PinConfigResult"/>
-    /// status byte; updates the cache and raises PropertyChanged only on success.</summary>
-    public byte SetI2sRxPin(byte pin)
+    /// <summary>Read the channel count + per-pair data pins for multichannel I2S input.</summary>
+    public void FetchI2sInputConfig()
     {
-        var status = _device.SetI2sRxPin(pin);
+        var ch = _device.GetI2sInputChannels();
+        if (ch.HasValue && ch.Value is 2 or 4 or 6 or 8) _i2sInputChannels = ch.Value;
+        var p0 = _device.GetI2sRxPin(0);
+        if (p0.HasValue) _i2sRxPin = p0.Value;
+        for (int pair = 1; pair < I2sMaxPairs && pair - 1 < _i2sRxPinsExt.Length; pair++)
+        {
+            var p = _device.GetI2sRxPin(pair);
+            if (p.HasValue && p.Value != 0) _i2sRxPinsExt[pair - 1] = p.Value;
+        }
+        _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(I2sRxPin)));
+    }
+
+    /// <summary>Set the I2S input data pin for stereo pair <paramref name="pair"/>.</summary>
+    public byte SetI2sRxPin(byte pin, int pair = 0)
+    {
+        byte before = I2sRxPinAt(pair);
+        var status = _device.SetI2sRxPin(pin, pair);
         if (status == PinConfigResult.Success)
         {
-            _i2sRxPin = pin;
+            if (pair <= 0) _i2sRxPin = pin;
+            else if (pair - 1 < _i2sRxPinsExt.Length) _i2sRxPinsExt[pair - 1] = pin;
+            if (before != pin) RecordIoUndo(() => SetI2sRxPin(before, pair));
             _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(I2sRxPin)));
             CheckDirty();
+        }
+        return status;
+    }
+
+    /// <summary>Set the I2S input channel count (2/4/6/8). Returns a
+    /// <see cref="PinConfigResult"/> status byte.</summary>
+    public byte SetI2sInputChannels(int count)
+    {
+        int before = _i2sInputChannels;
+        var status = _device.SetI2sInputChannels(count);
+        if (status == PinConfigResult.Success)
+        {
+            _i2sInputChannels = (byte)count;
+            if (before != count) RecordIoUndo(() => SetI2sInputChannels(before));
+            _dispatcher.TryEnqueue(() =>
+            {
+                OnPropertyChanged(nameof(I2sInputChannels));
+                OnPropertyChanged(nameof(I2sActivePairs));
+                OnPropertyChanged(nameof(I2sRxPin));
+                CheckDirty();
+            });
         }
         return status;
     }
@@ -1115,10 +1288,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public bool SetI2sInputRate(uint hz)
     {
         if (!IsDeviceConnected) return false;
+        uint before = _i2sInputRateHz;
         var ok = _device.SetInputRate(hz);
         if (ok)
         {
             _i2sInputRateHz = hz;
+            if (before != hz) RecordIoUndo(() => SetI2sInputRate(before));
             _dispatcher.TryEnqueue(() =>
             {
                 OnPropertyChanged(nameof(I2sInputRateHz));
@@ -1130,10 +1305,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public byte SetOutputSlotType(int slot, OutputSlotType type)
     {
+        var before = GetOutputSlotType(slot);
         var status = _device.SetOutputType(slot, type);
         if (status == PinConfigResult.Success)
         {
             _outputSlotTypes[slot] = type;
+            if (before != type) RecordIoUndo(() => SetOutputSlotType(slot, before));
             UpdateDynamicChannelNames();
             // AnySlotIsI2S is a computed property that depends on the
             // slot-type array; settings UI subscribers (Hardware pages)
@@ -1146,10 +1323,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public byte SetI2SBckPin(byte pin)
     {
+        byte before = _i2sBckPin;
         var status = _device.SetI2SBckPin(pin);
         if (status == PinConfigResult.Success)
         {
             _i2sBckPin = pin;
+            if (before != pin) RecordIoUndo(() => SetI2SBckPin(before));
             _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(I2SBckPin)));
             CheckDirty();
         }
@@ -1158,10 +1337,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public byte SetMckEnable(bool enabled)
     {
+        bool before = _mckEnabled;
         var status = _device.SetMckEnable(enabled);
         if (status == PinConfigResult.Success)
         {
             _mckEnabled = enabled;
+            if (before != enabled) RecordIoUndo(() => SetMckEnable(before));
             _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(MckEnabled)));
             CheckDirty();
         }
@@ -1170,10 +1351,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public byte SetMckPin(byte pin)
     {
+        byte before = _mckPin;
         var status = _device.SetMckPin(pin);
         if (status == PinConfigResult.Success)
         {
             _mckPin = pin;
+            if (before != pin) RecordIoUndo(() => SetMckPin(before));
             _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(MckPin)));
             CheckDirty();
         }
@@ -1182,10 +1365,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public byte SetMckMultiplier(int multiplier)
     {
+        int before = _mckMultiplier;
         var status = _device.SetMckMultiplier(multiplier);
         if (status == PinConfigResult.Success)
         {
             _mckMultiplier = multiplier;
+            if (before != multiplier) RecordIoUndo(() => SetMckMultiplier(before));
             _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(MckMultiplier)));
             CheckDirty();
         }
@@ -1369,12 +1554,27 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         // Input source / SPDIF RX pin (V7+ wire format)
         if (bp.HasInputConfig)
+        {
             _spdifRxPin = bp.SpdifRxPin;
+            // Multiple SPDIF inputs — bulk carries the ext pins + enable mask.
+            if (bp.HasSpdifExtInputs)
+            {
+                _spdifRxPinsExt[0] = bp.SpdifRxPinExt[0];
+                _spdifRxPinsExt[1] = bp.SpdifRxPinExt[1];
+                _spdifEnabledExt = bp.SpdifRxEnabledExt;
+            }
+        }
         // I2S input data pin + master rate (V12+ wire format)
         if (bp.HasI2sInputConfig)
         {
             _i2sRxPin = bp.I2sRxPin;
             _i2sInputRateHz = DecodeI2sRate(bp.I2sInputRateEncoded);
+            // Multichannel I2S input — per-pair ext pins + channel count.
+            _i2sRxPinsExt[0] = bp.I2sRxPinExt[0];
+            _i2sRxPinsExt[1] = bp.I2sRxPinExt[1];
+            _i2sRxPinsExt[2] = bp.I2sRxPinExt[2];
+            if (bp.I2sInputChannels is 2 or 4 or 6 or 8)
+                _i2sInputChannels = bp.I2sInputChannels;
         }
         // Capture input source for the dispatcher block below — ActiveInputSource
         // is an ObservableProperty that fires on the UI thread. The firmware may
@@ -1418,6 +1618,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 MasterVolumeDb = bp.MasterVolumeDb;
             CrossoverSupported = bp.HasCrossover;
             InputI2sSupported = bp.HasI2sInputConfig;
+            MultiSpdifSupported = bp.HasSpdifExtInputs;
 
             // Multichannel masks (V18/V19/V20). Gate each selector on the wire
             // version; the leveller mask is additionally hidden for ≤2 inputs
@@ -2967,7 +3168,64 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public async Task<byte> SaveOutputConfig()
     {
         if (!IsDeviceConnected) return 0xFF;
-        return await Task.Run(() => _device.SaveOutputConfig());
+        // Nothing changed since the last save → no-op. This also makes redundant
+        // batched "Save to flash" calls (one per staged IO entry) cheap: only the
+        // first actually writes flash; the rest see a clean baseline and return.
+        if (_savedSnapshot != null &&
+            PresetDiff.IoBlockChanges(_savedSnapshot, PresetSnapshot.Capture(this), this).Count == 0)
+            return 0;
+
+        var status = await Task.Run(() => _device.SaveOutputConfig());
+        if (status == 0)
+        {
+            // Advance the output-config baseline (synchronously on the awaiting
+            // context) so the prompt clears and follow-up batch saves are no-ops.
+            _savedSnapshot?.CopyIoBlockFrom(PresetSnapshot.Capture(this));
+            ClearIoUndoLog(); // saved state is the new baseline — nothing to undo
+            CheckDirty();
+        }
+        return status;
+    }
+
+    /// <summary>
+    /// Revert the live physical-IO block to the last-saved baseline (independent
+    /// mode). IO edits are applied to RAM immediately, so "discarding" them means
+    /// undoing each recorded edit — in REVERSE order, so a GPIO shuffle unwinds
+    /// through the same valid intermediate states the forward edits passed through
+    /// (no transient pin conflicts). Best-effort: a field the firmware rejects on
+    /// undo simply stays changed and re-appears in the prompt.
+    /// </summary>
+    public async Task RevertOutputConfig()
+    {
+        if (!IsDeviceConnected) return;
+
+        List<Action> log;
+        lock (_ioUndoLock)
+        {
+            if (_ioUndoLog.Count == 0) return;
+            log = new List<Action>(_ioUndoLog);
+            _ioUndoLog.Clear();
+        }
+
+        bool prevDirty = _suppressDirtyCheck;
+        bool prevUndo = _suppressUndoRecording;
+        _suppressDirtyCheck = true;       // one dirty re-check at the end
+        _suppressUndoRecording = true;    // undo SETs must not re-record
+        try
+        {
+            await Task.Run(() =>
+            {
+                for (int i = log.Count - 1; i >= 0; i--)
+                    log[i](); // restore that edit's pre-change value
+            });
+        }
+        finally
+        {
+            _suppressDirtyCheck = prevDirty;
+            _suppressUndoRecording = prevUndo;
+        }
+
+        CheckDirty(); // IO now back at baseline — prompt clears
     }
 
     /// <summary>
@@ -3014,6 +3272,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public void UpdateSavedSnapshot()
     {
         _savedSnapshot = PresetSnapshot.Capture(this);
+        ClearIoUndoLog(); // new baseline — prior IO edits are no longer undoable
     }
 
     /// <summary>
@@ -3037,6 +3296,37 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>
     /// Recompute PresetsDirty by comparing current state against the saved snapshot.
     /// </summary>
+    private IReadOnlyList<PresetDiff.IoChange> _outputConfigChanges = Array.Empty<PresetDiff.IoChange>();
+    private string _ioSignature = "";
+
+    // Ordered undo log of individual IO-block edits since the last save/baseline.
+    // Discard replays it in REVERSE (newest edit undone first) so a GPIO shuffle
+    // between IO functions unwinds through the same valid intermediate states the
+    // forward edits passed through — avoiding transient pin conflicts a fixed-order
+    // baseline restore could hit. Each entry re-applies its field's pre-edit value.
+    private readonly List<Action> _ioUndoLog = new();
+    private readonly object _ioUndoLock = new();
+    private bool _suppressUndoRecording;
+
+    private void RecordIoUndo(Action revert)
+    {
+        if (_suppressUndoRecording) return;
+        lock (_ioUndoLock) _ioUndoLog.Add(revert);
+    }
+
+    private void ClearIoUndoLog()
+    {
+        lock (_ioUndoLock) _ioUndoLog.Clear();
+    }
+
+    /// <summary>Raised when the set of unsaved output-config (IO block) changes
+    /// may have changed — the settings window re-syncs its pending entries on it.</summary>
+    public event EventHandler? OutputConfigStateChanged;
+
+    /// <summary>Current unsaved IO-block changes (empty unless in independent
+    /// mode). One entry per changed field; cached from the last CheckDirty.</summary>
+    public IReadOnlyList<PresetDiff.IoChange> GetOutputConfigChanges() => _outputConfigChanges;
+
     private void CheckDirty()
     {
         if (_suppressDirtyCheck) return;
@@ -3044,6 +3334,22 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var current = PresetSnapshot.Capture(this);
         var changes = PresetDiff.Diff(_savedSnapshot, current, this);
         PresetsDirty = changes.Count > 0;
+
+        // Independent-mode IO edits persist via "Save Output Config", not with the
+        // preset. Track them per-field so the settings window shows an accurate
+        // device-level change count; fire the event only when the set changes.
+        var io = OutputConfigMode == 0
+            ? (IReadOnlyList<PresetDiff.IoChange>)PresetDiff.IoBlockChanges(_savedSnapshot, current, this)
+            : Array.Empty<PresetDiff.IoChange>();
+        _outputConfigChanges = io;
+        OutputConfigDirty = io.Count > 0;
+
+        var sig = string.Join("|", io.Select(c => c.Key + "=" + c.New));
+        if (sig != _ioSignature)
+        {
+            _ioSignature = sig;
+            OutputConfigStateChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     /// <summary>
