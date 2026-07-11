@@ -4,6 +4,7 @@ using System.Linq;
 using DSPiConsole.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media.Animation;
 
 namespace DSPiConsole.Settings;
 
@@ -249,10 +250,47 @@ public sealed partial class SettingsShell : UserControl
         // count. Singular vs plural for the polished "1 pending change"
         // case so we don't read like a beta tool.
         var n = _tracker.Count;
-        PendingBar.IsOpen = n > 0;
-        PendingBar.Message = n == 1
-            ? "1 pending device change"
-            : $"{n} pending device changes";
+        PendingTitle.Text = n == 1 ? "1 pending device change" : $"{n} pending device changes";
+        AnimatePendingOverlay(n > 0);
+    }
+
+    private bool _overlayShown;
+
+    /// <summary>Slide the pending-changes overlay up from (show) / down to (hide)
+    /// the bottom of the window.</summary>
+    private void AnimatePendingOverlay(bool show)
+    {
+        _overlayShown = show;
+        const double hiddenY = 200; // safely past the card height so it clears the edge
+        if (show)
+        {
+            PendingOverlay.Visibility = Visibility.Visible;
+            AnimateOverlayY(0, null);
+        }
+        else
+        {
+            if (PendingOverlay.Visibility != Visibility.Visible) return; // already down
+            AnimateOverlayY(hiddenY, () =>
+            {
+                if (!_overlayShown) PendingOverlay.Visibility = Visibility.Collapsed;
+            });
+        }
+    }
+
+    private void AnimateOverlayY(double to, Action? onCompleted)
+    {
+        var anim = new DoubleAnimation
+        {
+            To = to,
+            Duration = new Duration(TimeSpan.FromMilliseconds(260)),
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+        };
+        Storyboard.SetTarget(anim, PendingTransform);
+        Storyboard.SetTargetProperty(anim, "Y");
+        var sb = new Storyboard();
+        sb.Children.Add(anim);
+        if (onCompleted != null) sb.Completed += (_, _) => onCompleted();
+        sb.Begin();
     }
 
     private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -335,28 +373,18 @@ public sealed partial class SettingsShell : UserControl
         try
         {
             var report = await _tracker.ApplyAllAsync();
-            // If anything failed, leave the InfoBar visible (Changed
-            // will fire again with the remaining count); on full
-            // success the InfoBar closes itself. Failures are listed
-            // in the InfoBar's Message via a Severity bump.
+            // On full success the tracker empties → Changed fires → the overlay
+            // slides away. On partial failure it stays up with the remaining
+            // count; surface the failure in the title line.
             if (report.Failed > 0)
-            {
-                PendingBar.Severity = InfoBarSeverity.Error;
-                PendingBar.Message = report.Applied > 0
+                PendingTitle.Text = report.Applied > 0
                     ? $"{report.Applied} applied, {report.Failed} failed"
-                    : $"{report.Failed} failed";
-            }
-            else
-            {
-                // Restore default warning severity for the next batch.
-                PendingBar.Severity = InfoBarSeverity.Warning;
-            }
+                    : $"{report.Failed} failed — retry?";
         }
         catch (Exception ex)
         {
             SettingsWindow.WriteCrashLog("SettingsShell.OnApplyClick", ex);
-            PendingBar.Severity = InfoBarSeverity.Error;
-            PendingBar.Message = $"Apply failed: {ex.Message}";
+            PendingTitle.Text = $"Save failed: {ex.Message}";
         }
         finally
         {
