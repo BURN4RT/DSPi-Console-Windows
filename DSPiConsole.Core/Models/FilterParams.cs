@@ -23,7 +23,12 @@ public enum FilterType
     LowShelf1 = 9,     // 1st-order low shelf (V14+): frequency + gain, no Q
     HighShelf1 = 10,   // 1st-order high shelf (V14+): frequency + gain, no Q
 
-    // 11-31 reserved
+    // Linkwitz Transform (V22+): pole/zero bass-extension biquad that replaces a
+    // sealed-box woofer's (f0, Q0) rolloff with a target (fp, Qp). Reuses the wire
+    // fields — Frequency = f0, Q = Q0, Gain = fp (Hz, NOT dB) — plus the Qp sidecar.
+    LinkwitzTransform = 11,
+
+    // 12-31 reserved
 
     // ── Crossover types (FILTER_XOVER_FIRST = 32 .. FILTER_XOVER_LAST = 63) ──
     // Linkwitz-Riley (orders 2/4/6/8)
@@ -61,12 +66,19 @@ public static class FilterTypeExtensions
     {
         FilterType.Flat, FilterType.Peaking, FilterType.LowShelf, FilterType.HighShelf,
         FilterType.LowPass, FilterType.HighPass, FilterType.Notch, FilterType.AllPass,
-        FilterType.AllPass1, FilterType.LowShelf1, FilterType.HighShelf1
+        FilterType.AllPass1, FilterType.LowShelf1, FilterType.HighShelf1,
+        FilterType.LinkwitzTransform
     };
 
     /// <summary>True for the crossover filter types (32-63).</summary>
     public static bool IsCrossover(this FilterType type) =>
         (int)type >= (int)FilterType.Lr2Lp && (int)type <= (int)FilterType.Bes8Hp;
+
+    /// <summary>The Linkwitz Transform reuses the wire fields with bespoke meaning
+    /// (Frequency = f0, Q = Q0, Gain = fp in Hz) plus the Qp sidecar, so it needs a
+    /// dedicated editor row and an 18-byte SET payload.</summary>
+    public static bool IsLinkwitzTransform(this FilterType type) =>
+        type == FilterType.LinkwitzTransform;
 
     public static string GetDisplayName(this FilterType type) => type switch
     {
@@ -81,6 +93,7 @@ public static class FilterTypeExtensions
         FilterType.AllPass1 => "All Pass (6dB)",
         FilterType.LowShelf1 => "Low Shelf (6dB)",
         FilterType.HighShelf1 => "High Shelf (6dB)",
+        FilterType.LinkwitzTransform => "Linkwitz Transform",
         _ => "Unknown"
     };
 
@@ -97,6 +110,7 @@ public static class FilterTypeExtensions
         FilterType.AllPass1 => "AP1",
         FilterType.LowShelf1 => "LS1",
         FilterType.HighShelf1 => "HS1",
+        FilterType.LinkwitzTransform => "LT",
         _ => "?"
     };
 
@@ -145,6 +159,15 @@ public class FilterParams : IEquatable<FilterParams>
 
     /// <summary>Target Q used when the wire <c>qp_x512</c> is 0 (firmware default).</summary>
     public const float DefaultQp = 0.707f;
+
+    /// <summary>Wire encoding of the LT target Q: round(Qp×512) clamped to the
+    /// firmware's [0.1, 20] Q range. 0 for non-LT bands (reserved bytes stay 0).</summary>
+    public ushort QpEncoded => Type == FilterType.LinkwitzTransform
+        ? (ushort)Math.Round(Math.Clamp(Qp, 0.1f, 20f) * 512f)
+        : (ushort)0;
+
+    /// <summary>Decode a wire <c>qp_x512</c> to Qp; 0 selects the 0.707 default.</summary>
+    public static float DecodeQp(ushort raw) => raw == 0 ? DefaultQp : raw / 512.0f;
 
     public FilterParams() { }
 

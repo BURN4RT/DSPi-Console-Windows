@@ -1945,7 +1945,7 @@ public sealed partial class MainWindow : Window
         // entries labelled by slope (6 vs 12 dB). The crossover types (32-63)
         // share the FilterType enum but are edited on the XO page; a stray
         // crossover type round-tripped into a PEQ slot falls back to "Off".
-        var typeItems = new (string label, FilterType type)[]
+        var typeItems = new List<(string label, FilterType type)>
         {
             ("Off", FilterType.Flat),
             ("Peaking", FilterType.Peaking),
@@ -1959,9 +1959,13 @@ public sealed partial class MainWindow : Window
             ("All Pass 6dB", FilterType.AllPass1),
             ("All Pass 12dB", FilterType.AllPass),
         };
+        // Linkwitz Transform (V22+): output channels only — it's a driver/sealed-box
+        // bass-extension tool that only makes sense on outputs feeding speakers.
+        if (channel.IsOutput && ViewModel.LinkwitzTransformSupported)
+            typeItems.Add(("Linkwitz Transform", FilterType.LinkwitzTransform));
         var typeCombo = new ComboBox { Width = 150, Tag = (channel, bandIndex), Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] };
         int selectedTypeIndex = 0; // fall back to "Off" for stray crossover types
-        for (int i = 0; i < typeItems.Length; i++)
+        for (int i = 0; i < typeItems.Count; i++)
         {
             typeCombo.Items.Add(new ComboBoxItem { Content = typeItems[i].label, Tag = typeItems[i].type });
             if (typeItems[i].type == p.Type) selectedTypeIndex = i;
@@ -1973,33 +1977,48 @@ public sealed partial class MainWindow : Window
         grid.Children.Add(typeCombo);
         col++;
 
-        // Frequency
-        if (p.Type != FilterType.Flat)
+        if (p.Type.IsLinkwitzTransform())
         {
-            var freqPanel = CreateValueField("Hz", p.Frequency, 58, (channel, bandIndex, "freq"));
-            freqPanel.Opacity = p.Bypass ? 0.4 : 1.0;
-            Grid.SetColumn(freqPanel, col);
-            grid.Children.Add(freqPanel);
+            // LT reuses freq=f0, Q=Q0, gain=fp (Hz) plus the Qp sidecar — four
+            // fields don't fit the three value columns, so a compact "Edit…" button
+            // opens a flyout with all four (matching the macOS popover).
+            var ltButton = BuildLinkwitzEditorButton(channel, bandIndex, p);
+            ltButton.Opacity = p.Bypass ? 0.4 : 1.0;
+            Grid.SetColumn(ltButton, col);   // freq column
+            Grid.SetColumnSpan(ltButton, 3); // span freq/Q/gain
+            grid.Children.Add(ltButton);
+            col += 3;
         }
-        col++;
-
-        // Q
-        if (p.Type.HasQ())
+        else
         {
-            var qPanel = CreateValueField("Q", p.Q, 44, (channel, bandIndex, "q"), decimals: 3);
-            qPanel.Opacity = p.Bypass ? 0.4 : 1.0;
-            Grid.SetColumn(qPanel, col);
-            grid.Children.Add(qPanel);
-        }
-        col++;
+            // Frequency
+            if (p.Type != FilterType.Flat)
+            {
+                var freqPanel = CreateValueField("Hz", p.Frequency, 58, (channel, bandIndex, "freq"));
+                freqPanel.Opacity = p.Bypass ? 0.4 : 1.0;
+                Grid.SetColumn(freqPanel, col);
+                grid.Children.Add(freqPanel);
+            }
+            col++;
 
-        // Gain (for peaking, low shelf, high shelf)
-        if (p.Type.HasGain())
-        {
-            var gainPanel = CreateValueField("dB", p.Gain, 40, (channel, bandIndex, "gain"));
-            gainPanel.Opacity = p.Bypass ? 0.4 : 1.0;
-            Grid.SetColumn(gainPanel, col);
-            grid.Children.Add(gainPanel);
+            // Q
+            if (p.Type.HasQ())
+            {
+                var qPanel = CreateValueField("Q", p.Q, 44, (channel, bandIndex, "q"), decimals: 3);
+                qPanel.Opacity = p.Bypass ? 0.4 : 1.0;
+                Grid.SetColumn(qPanel, col);
+                grid.Children.Add(qPanel);
+            }
+            col++;
+
+            // Gain (for peaking, low shelf, high shelf)
+            if (p.Type.HasGain())
+            {
+                var gainPanel = CreateValueField("dB", p.Gain, 40, (channel, bandIndex, "gain"));
+                gainPanel.Opacity = p.Bypass ? 0.4 : 1.0;
+                Grid.SetColumn(gainPanel, col);
+                grid.Children.Add(gainPanel);
+            }
         }
 
         row.Child = grid;
@@ -2346,6 +2365,69 @@ public sealed partial class MainWindow : Window
 
     private static string FormatFilterValueSigned(float value) =>
         (value >= 0 ? "+" : "") + FormatFilterValue(value);
+
+    /// <summary>A compact button that opens a flyout to edit the four Linkwitz
+    /// Transform parameters (driver f0/Q0, target fp/Qp) plus a DC-boost readout.
+    /// The four fields don't fit the three inline value columns, so they live in a
+    /// popover (matching the macOS reference).</summary>
+    private Button BuildLinkwitzEditorButton(Channel channel, int bandIndex, FilterParams p)
+    {
+        var button = new Button
+        {
+            Content = $"f0 {p.Frequency:F0} · fp {p.Gain:F0} Hz",
+            FontSize = 11,
+            FontFamily = new FontFamily("Cascadia Code, Consolas"),
+            Padding = new Thickness(8, 2, 8, 2),
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+
+        var content = new StackPanel { Spacing = 10, MinWidth = 260 };
+        content.Children.Add(new TextBlock
+        {
+            Text = "Linkwitz Transform",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = "Replace the driver's sealed-box roll-off (f0, Q0) with a target (fp, Qp).",
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+        });
+
+        content.Children.Add(LtRow("Driver",
+            CreateValueField("Hz", p.Frequency, 66, (channel, bandIndex, "freq")),
+            CreateValueField("Q0", p.Q, 56, (channel, bandIndex, "q"), decimals: 3)));
+        content.Children.Add(LtRow("Target",
+            CreateValueField("Hz", p.Gain, 66, (channel, bandIndex, "fp")),
+            CreateValueField("Qp", p.Qp, 56, (channel, bandIndex, "qp"), decimals: 3)));
+
+        double dcBoost = (p.Gain > 0 && p.Frequency > 0) ? 40.0 * Math.Log10(p.Frequency / p.Gain) : 0.0;
+        content.Children.Add(new TextBlock
+        {
+            Text = $"DC boost ≈ {dcBoost:+0.0;-0.0;0.0} dB",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(dcBoost > 15
+                ? Color.FromArgb(255, 240, 180, 90)
+                : ((SolidColorBrush)Application.Current.Resources["TextFillColorSecondaryBrush"]).Color)
+        });
+
+        button.Flyout = new Flyout { Content = content };
+        return button;
+    }
+
+    private static Grid LtRow(string label, FrameworkElement a, FrameworkElement b)
+    {
+        var g = new Grid { ColumnSpacing = 10 };
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(52) });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var lbl = new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
+        Grid.SetColumn(lbl, 0); g.Children.Add(lbl);
+        Grid.SetColumn(a, 1); g.Children.Add(a);
+        Grid.SetColumn(b, 2); g.Children.Add(b);
+        return g;
+    }
 
     private StackPanel CreateValueField(string label, float value, double width, (Channel channel, int band, string param) tag, int decimals = 2)
     {
@@ -3314,6 +3396,12 @@ public sealed partial class MainWindow : Window
                             break;
                         case "gain":
                             p.Gain = Math.Clamp(value, -20, 20);
+                            break;
+                        case "fp":   // Linkwitz Transform target freq (Hz, carried in Gain)
+                            p.Gain = Math.Clamp(value, 10, 20000);
+                            break;
+                        case "qp":   // Linkwitz Transform target Q
+                            p.Qp = Math.Clamp(value, 0.1f, 20);
                             break;
                     }
 

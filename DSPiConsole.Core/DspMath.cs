@@ -35,6 +35,28 @@ public static class DspMath
         if (p.Type == FilterType.Flat)
             return Coefficients.Unity;
 
+        // Linkwitz Transform: zeros at the driver corner (f0, Q0), poles at the
+        // target (fp, Qp). fp is carried in Gain (Hz); fp <= 0 => flat. Both corners
+        // are tan-prewarped so the digital response is exact at f0 & fp, matching the
+        // firmware coefficient path (peq_filters.md §6).
+        if (p.Type == FilterType.LinkwitzTransform)
+        {
+            double f0 = p.Frequency;
+            double fp = p.Gain;          // fp (Hz) carried in the gain field
+            if (fp <= 0.0 || f0 <= 0.0) return Coefficients.Unity;
+            double q0lt = Math.Max(p.Q, 0.1);
+            double qplt = Math.Max(p.Qp, 0.1);
+            double g0 = Math.Tan(Math.PI * f0 / sampleRate);   // prewarped zero corner
+            double gp = Math.Tan(Math.PI * fp / sampleRate);   // prewarped pole corner
+            double nb0 = 1 + g0 / q0lt + g0 * g0;
+            double nb1 = 2 * (g0 * g0 - 1);
+            double nb2 = 1 - g0 / q0lt + g0 * g0;
+            double na0 = 1 + gp / qplt + gp * gp;
+            double na1 = 2 * (gp * gp - 1);
+            double na2 = 1 - gp / qplt + gp * gp;
+            return new Coefficients(nb0 / na0, nb1 / na0, nb2 / na0, na1 / na0, na2 / na0);
+        }
+
         double omega = 2.0 * Math.PI * p.Frequency / sampleRate;
         double sn = Math.Sin(omega);
         double cs = Math.Cos(omega);

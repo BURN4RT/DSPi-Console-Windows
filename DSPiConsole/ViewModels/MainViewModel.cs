@@ -291,6 +291,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _crossoverSupported;
 
+    // Linkwitz Transform PEQ type (filter type 11, wire V22+). Gates the LT entry
+    // in the PEQ type picker (output channels only — it's a driver/sealed-box
+    // bass-extension tool that only makes sense on outputs feeding speakers).
+    [ObservableProperty]
+    private bool _linkwitzTransformSupported;
+
     // External DAC hardware mute (firmware V10+). One typed config object as
     // the unit of read/write — avoids parameter-order bugs and lets future
     // fields land via DacHwMuteConfig.With(...) without touching every caller.
@@ -1731,6 +1737,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             CrossfeedMaskSupported = bp.FormatVersion >= 20;
             if (CrossfeedMaskSupported)
                 CrossfeedOutputPairMask = bp.CrossfeedOutputPairMask;
+            LinkwitzTransformSupported = bp.FormatVersion >= 22;
             LevellerMasksSupported = bp.FormatVersion >= 18 && bp.NumInputChannels > 2;
             if (LevellerMasksSupported)
             {

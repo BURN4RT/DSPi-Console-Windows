@@ -1099,6 +1099,7 @@ public partial class DspDevice : ObservableObject, IDisposable
     private const int EqParamFreq = 1;
     private const int EqParamQ = 2;
     private const int EqParamGain = 3;
+    private const int EqParamQp = 5;   // Linkwitz Transform target Q (qp×512), V22+
 
     /// <summary>
     /// Encode wValue for REQ_GET_EQ_PARAM access. The band-field width depends
@@ -1125,7 +1126,12 @@ public partial class DspDevice : ObservableObject, IDisposable
     /// </summary>
     public bool SetFilter(int channel, int band, FilterParams p)
     {
-        var data = new byte[16];
+        // Linkwitz Transform (type 11) appends a 2-byte qp sidecar (Qp×512) → an
+        // 18-byte payload; the firmware then latches the target Q. The 16-byte form
+        // preserves the stored qp, so always send the long form for LT bands
+        // (peq_filters.md §4.1).
+        bool isLt = p.Type == FilterType.LinkwitzTransform;
+        var data = new byte[isLt ? 18 : 16];
         data[0] = (byte)ChannelMap.AppToWire(channel, NumInputChannels);
         data[1] = (byte)band;
         data[2] = (byte)p.Type;
@@ -1133,6 +1139,8 @@ public partial class DspDevice : ObservableObject, IDisposable
         BitConverter.GetBytes(p.Frequency).CopyTo(data, 4);
         BitConverter.GetBytes(p.Q).CopyTo(data, 8);
         BitConverter.GetBytes(p.Gain).CopyTo(data, 12);
+        if (isLt)
+            BitConverter.GetBytes(p.QpEncoded).CopyTo(data, 16);
 
         return ControlTransferOut(VendorCommands.SetEqParam, 0, data);
     }
@@ -1165,13 +1173,24 @@ public partial class DspDevice : ObservableObject, IDisposable
         if (gainData == null || gainData.Length < 4) return null;
         var gain = BitConverter.ToSingle(gainData, 0);
 
-        return new FilterParams
+        var fp = new FilterParams
         {
             Type = (FilterType)type,
             Frequency = freq,
             Q = q,
             Gain = gain
         };
+
+        // Linkwitz Transform (V22+): read the target Q from param 5 (qp×512 in the
+        // low 16 bits); 0 decodes to the 0.707 default.
+        if ((FilterType)type == FilterType.LinkwitzTransform)
+        {
+            var qpData = ControlTransferIn(VendorCommands.GetEqParam, EncodeEqValue(wireCh, band, EqParamQp), 4);
+            if (qpData != null && qpData.Length >= 4)
+                fp.Qp = FilterParams.DecodeQp((ushort)(BitConverter.ToUInt32(qpData, 0) & 0xFFFF));
+        }
+
+        return fp;
     }
 
     /// <summary>
