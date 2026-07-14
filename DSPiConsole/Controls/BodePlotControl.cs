@@ -113,7 +113,8 @@ public sealed class BodePlotControl : UserControl
     private double LeftMargin => AppSettings.Instance.ShowDbUnits ? 36 : 22;
     private const double BottomMargin = 16;
     private const double TopMargin = 9;
-    private const double RightMargin = 8;
+    // Right gutter grows to hold the phase (degree) axis labels when phase is shown.
+    private double RightMargin => AppSettings.Instance.ShowPhase ? 34 : 8;
 
     // Settings-derived properties
     private float MinFreq => (float)AppSettings.Instance.GraphMinFrequency;
@@ -129,6 +130,10 @@ public sealed class BodePlotControl : UserControl
     // Animation state
     private readonly Dictionary<int, float[]> _currentMagnitudes = new();
     private readonly Dictionary<int, float[]> _targetMagnitudes = new();
+    // Phase curves (degrees), same 201-point grid; animated the same way.
+    private readonly Dictionary<int, float[]> _currentPhases = new();
+    private readonly Dictionary<int, float[]> _targetPhases = new();
+    private readonly Dictionary<int, Polyline> _phaseLines = new();
     private readonly DispatcherTimer _animTimer;
     private bool _isAnimating;
 
@@ -183,6 +188,8 @@ public sealed class BodePlotControl : UserControl
                 var id = (int)channel.Id;
                 _currentMagnitudes[id] = new float[NumPoints];
                 _targetMagnitudes[id] = new float[NumPoints];
+                _currentPhases[id] = new float[NumPoints];
+                _targetPhases[id] = new float[NumPoints];
             }
 
             UpdateTargets();
@@ -190,6 +197,7 @@ public sealed class BodePlotControl : UserControl
             {
                 var id = (int)channel.Id;
                 Array.Copy(_targetMagnitudes[id], _currentMagnitudes[id], NumPoints);
+                Array.Copy(_targetPhases[id], _currentPhases[id], NumPoints);
             }
             Redraw(gridChanged: true);
         }
@@ -220,7 +228,25 @@ public sealed class BodePlotControl : UserControl
         if (_dbScaleHitArea != null)
             _dbScaleHitArea.Width = LeftMargin;
         _dottedInactiveEnabled = AppSettings.Instance.DottedInactiveChannels;
+        // Phase data depends on the unwrap setting; recompute and snap so toggling
+        // Show Phase / Unwrap applies immediately (magnitude targets are unchanged).
+        UpdateTargets();
+        SnapToTargets();
         Redraw(gridChanged: true);
+    }
+
+    /// <summary>Copy every channel's target buffers into its current buffers
+    /// (no animation) — used when a settings change should apply instantly.</summary>
+    private void SnapToTargets()
+    {
+        foreach (var channel in Channel.All)
+        {
+            var id = (int)channel.Id;
+            if (_targetMagnitudes.TryGetValue(id, out var tm) && _currentMagnitudes.TryGetValue(id, out var cm))
+                Array.Copy(tm, cm, NumPoints);
+            if (_targetPhases.TryGetValue(id, out var tp) && _currentPhases.TryGetValue(id, out var cp))
+                Array.Copy(tp, cp, NumPoints);
+        }
     }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -259,27 +285,39 @@ public sealed class BodePlotControl : UserControl
     {
         if (_viewModel == null) return;
 
+        bool unwrap = AppSettings.Instance.PhaseUnwrapped;
         foreach (var channel in Channel.All)
         {
             var id = (int)channel.Id;
             var (_, magnitudes) = _viewModel.GetResponseCurve(channel);
-            if (magnitudes.Length == NumPoints)
+            CopyResampled(magnitudes, _targetMagnitudes[id]);
+
+            var (_, phases) = _viewModel.GetPhaseCurve(channel, unwrap);
+            if (_targetPhases.TryGetValue(id, out var pbuf))
+                CopyResampled(phases, pbuf);
+        }
+    }
+
+    /// <summary>Copy a source curve into a 201-point buffer, nearest-resampling if
+    /// the source length differs and clearing if it is empty.</summary>
+    private static void CopyResampled(float[] src, float[] dst)
+    {
+        if (src.Length == NumPoints)
+        {
+            Array.Copy(src, dst, NumPoints);
+        }
+        else if (src.Length > 0)
+        {
+            for (int i = 0; i < NumPoints; i++)
             {
-                Array.Copy(magnitudes, _targetMagnitudes[id], NumPoints);
+                float pct = i / (float)(NumPoints - 1);
+                int srcIdx = Math.Clamp((int)(pct * (src.Length - 1)), 0, src.Length - 1);
+                dst[i] = src[srcIdx];
             }
-            else if (magnitudes.Length > 0)
-            {
-                for (int i = 0; i < NumPoints; i++)
-                {
-                    float pct = i / (float)(NumPoints - 1);
-                    int srcIdx = Math.Clamp((int)(pct * (magnitudes.Length - 1)), 0, magnitudes.Length - 1);
-                    _targetMagnitudes[id][i] = magnitudes[srcIdx];
-                }
-            }
-            else
-            {
-                Array.Clear(_targetMagnitudes[id]);
-            }
+        }
+        else
+        {
+            Array.Clear(dst);
         }
     }
 
@@ -317,6 +355,23 @@ public sealed class BodePlotControl : UserControl
                     current[i] = target[i];
                 }
             }
+
+            if (_currentPhases.TryGetValue(id, out var curP) && _targetPhases.TryGetValue(id, out var tgtP))
+            {
+                for (int i = 0; i < NumPoints; i++)
+                {
+                    float diff = tgtP[i] - curP[i];
+                    if (MathF.Abs(diff) > 0.05f)
+                    {
+                        curP[i] += diff * lerpFactor;
+                        allDone = false;
+                    }
+                    else
+                    {
+                        curP[i] = tgtP[i];
+                    }
+                }
+            }
         }
 
         Redraw(gridChanged: false);
@@ -342,6 +397,40 @@ public sealed class BodePlotControl : UserControl
         return TopMargin + plotHeight - (normalized * plotHeight);
     }
 
+    // Phase axis is centered at 0° and scales with the dB zoom (±180° at the
+    // default 50 dB range), so magnitude (left, dB) and phase (right, degrees)
+    // zoom together — matching the macOS reference.
+    private double PhaseTop
+    {
+        get { double t = 180.0 * DbSpan / 50.0; return t > 0 ? t : 180.0; }
+    }
+
+    private double YPosPhase(float deg, double plotHeight)
+    {
+        double top = PhaseTop;
+        double normalized = (deg + top) / (2.0 * top);
+        return TopMargin + plotHeight - (normalized * plotHeight);
+    }
+
+    /// <summary>Whether a channel's curve should be drawn, honoring popout
+    /// local-visibility / output-enabled state.</summary>
+    private bool IsChannelVisible(Channel channel)
+    {
+        if (_viewModel == null) return false;
+        var id = (int)channel.Id;
+        if (_ignoreVisibility)
+        {
+            if (!GetLocalVisibility(id)) return false;
+            if (channel.IsOutput)
+            {
+                int outputIndex = _viewModel.GetOutputIndex(id);
+                if (outputIndex < 0 || !_viewModel.IsOutputEnabled(outputIndex)) return false;
+            }
+            return true;
+        }
+        return _viewModel.GetChannelVisibility(channel);
+    }
+
     public void Invalidate()
     {
         UpdateTargets();
@@ -358,6 +447,8 @@ public sealed class BodePlotControl : UserControl
             foreach (var p in polylines)
                 p.Opacity = _curveOpacity;
         }
+        foreach (var line in _phaseLines.Values)
+            line.Opacity = _curveOpacity;
     }
 
     /// <summary>
@@ -388,6 +479,7 @@ public sealed class BodePlotControl : UserControl
             _plotCanvas.Children.Clear();
             _labelCanvas.Children.Clear();
             _channelPolylines.Clear();
+            _phaseLines.Clear();
 
             DrawGrid(plotWidth, plotHeight);
             DrawLabels(plotWidth, plotHeight);
@@ -534,6 +626,32 @@ public sealed class BodePlotControl : UserControl
                 _labelCanvas!.Children.Add(tb);
             }
         }
+
+        // Phase axis labels (degrees, right edge) when the phase overlay is on.
+        if (settings.ShowPhase)
+        {
+            var phaseLabelColor = new SolidColorBrush(Color.FromArgb(150, 235, 235, 235));
+            double top = PhaseTop;
+            double[] ticks = { top, top / 2, 0, -top / 2, -top };
+            double rightEdge = ActualWidth - RightMargin;
+            foreach (var p in ticks)
+            {
+                double normalized = (p + top) / (2.0 * top);
+                double y = TopMargin + plotHeight - normalized * plotHeight;
+                string label = Math.Abs(p) < 0.01 ? "0°" : $"{(p > 0 ? "+" : "")}{(int)Math.Round(p)}°";
+                var tb = new TextBlock
+                {
+                    Text = label,
+                    FontSize = 9,
+                    FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+                    Foreground = phaseLabelColor
+                };
+                tb.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+                Canvas.SetLeft(tb, rightEdge + 3);
+                Canvas.SetTop(tb, y - tb.DesiredSize.Height / 2);
+                _labelCanvas!.Children.Add(tb);
+            }
+        }
     }
 
     private void DrawCurves(double plotWidth, double plotHeight)
@@ -635,6 +753,41 @@ public sealed class BodePlotControl : UserControl
                 p.Opacity = _curveOpacity;
             _channelPolylines[id] = polylines;
         }
+
+        if (AppSettings.Instance.ShowPhase)
+            DrawPhaseCurves(plotWidth, plotHeight);
+    }
+
+    // Phase overlay: dotted curve on the right-side degree axis. Draws the selected
+    // channel's phase (light gray, like the macOS ref); if no channel is selected
+    // (e.g. an un-followed popout), draws each visible channel's phase in its own
+    // color so it stays associable with its magnitude curve.
+    private void DrawPhaseCurves(double plotWidth, double plotHeight)
+    {
+        if (_viewModel == null) return;
+        float lineWidth = (float)AppSettings.Instance.GraphLineWidth;
+        bool haveSelection = _selectedChannelId >= 0;
+        var grayColor = Color.FromArgb(235, 235, 235, 235);
+
+        foreach (var channel in Channel.All)
+        {
+            var id = (int)channel.Id;
+            if (haveSelection && id != _selectedChannelId) continue;
+            if (!IsChannelVisible(channel)) continue;
+            if (!_currentPhases.TryGetValue(id, out var phase)) continue;
+
+            var line = new Polyline
+            {
+                Stroke = new SolidColorBrush(haveSelection ? grayColor : channel.Color),
+                StrokeThickness = lineWidth * 0.9,
+                StrokeLineJoin = PenLineJoin.Round,
+                StrokeDashArray = new DoubleCollection { 1, 3 },
+                Opacity = _curveOpacity * (haveSelection ? 1.0 : 0.6),
+                Points = BuildPhasePoints(phase, plotWidth, plotHeight)
+            };
+            _plotCanvas!.Children.Add(line);
+            _phaseLines[id] = line;
+        }
     }
 
     private void UpdateCurvePoints(double plotWidth, double plotHeight)
@@ -655,6 +808,15 @@ public sealed class BodePlotControl : UserControl
                 polyline.Points = ClonePoints(points);
             }
         }
+
+        if (AppSettings.Instance.ShowPhase)
+        {
+            foreach (var kv in _phaseLines)
+            {
+                if (_currentPhases.TryGetValue(kv.Key, out var phase))
+                    kv.Value.Points = BuildPhasePoints(phase, plotWidth, plotHeight);
+            }
+        }
     }
 
     private PointCollection BuildPoints(float[] magnitudes, double plotWidth, double plotHeight)
@@ -665,6 +827,19 @@ public sealed class BodePlotControl : UserControl
             float freq = DataFreqAt(i);
             double x = XPos(freq, plotWidth);
             double y = YPos(magnitudes[i], plotHeight);
+            points.Add(new Windows.Foundation.Point(x, y));
+        }
+        return points;
+    }
+
+    private PointCollection BuildPhasePoints(float[] phases, double plotWidth, double plotHeight)
+    {
+        var points = new PointCollection();
+        for (int i = 0; i < NumPoints; i++)
+        {
+            float freq = DataFreqAt(i);
+            double x = XPos(freq, plotWidth);
+            double y = YPosPhase(phases[i], plotHeight);
             points.Add(new Windows.Foundation.Point(x, y));
         }
         return points;

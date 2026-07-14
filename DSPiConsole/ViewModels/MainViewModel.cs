@@ -3624,6 +3624,38 @@ public partial class MainViewModel : ObservableObject, IDisposable
         return result;
     }
 
+    /// <summary>
+    /// Phase-response curve (degrees) for a channel, matching <see cref="GetResponseCurve"/>'s
+    /// filter set (PEQ + folded crossover on outputs). The output gain offset is a
+    /// real scalar and does not affect phase, so it is not applied here.
+    /// </summary>
+    public (float[] frequencies, float[] phases) GetPhaseCurve(Channel channel, bool unwrap)
+    {
+        if (!_channelData.TryGetValue((int)channel.Id, out var filters))
+            return (Array.Empty<float>(), Array.Empty<float>());
+
+        // Master channels with global EQ bypass → flat (zero) phase.
+        if ((channel.Id == ChannelId.MasterLeft || channel.Id == ChannelId.MasterRight) && Bypass)
+        {
+            var freqs = new float[201];
+            var phase = new float[201];
+            for (int i = 0; i < 201; i++)
+            {
+                float pct = i / 200.0f;
+                freqs[i] = MathF.Pow(10, MathF.Log10(10) + pct * (MathF.Log10(20000) - MathF.Log10(10)));
+                phase[i] = 0;
+            }
+            return (freqs, phase);
+        }
+
+        IEnumerable<FilterParams> curveFilters = filters;
+        if (channel.IsOutput &&
+            _xoverData.TryGetValue((int)channel.Id, out var xbands) && xbands.Count > 0)
+            curveFilters = filters.Concat(xbands);
+
+        return DspMath.GeneratePhaseCurve(curveFilters, unwrap);
+    }
+
     #endregion
 
     public void Dispose()

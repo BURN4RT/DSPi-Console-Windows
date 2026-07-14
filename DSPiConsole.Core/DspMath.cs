@@ -195,6 +195,76 @@ public static class DspMath
         return den > 1e-18 ? num / den : 1.0;
     }
 
+    /// <summary>
+    /// Phase contribution (radians) of one normalized biquad at angular frequency
+    /// <paramref name="w"/>: arg(numerator) − arg(denominator). Cascade phases sum.
+    /// </summary>
+    private static double BiquadPhase(Coefficients c, double w)
+    {
+        double cos_w = Math.Cos(w);
+        double cos_2w = Math.Cos(2.0 * w);
+        double sin_w = Math.Sin(w);
+        double sin_2w = Math.Sin(2.0 * w);
+
+        double num_r = c.B0 + c.B1 * cos_w + c.B2 * cos_2w;
+        double num_i = -(c.B1 * sin_w + c.B2 * sin_2w);
+        double den_r = 1.0 + c.A1 * cos_w + c.A2 * cos_2w;
+        double den_i = -(c.A1 * sin_w + c.A2 * sin_2w);
+
+        return Math.Atan2(num_i, num_r) - Math.Atan2(den_i, den_r);
+    }
+
+    /// <summary>
+    /// Total phase response in degrees, wrapped to [-180, 180], for a filter set at
+    /// a given frequency. Sums the phase of every active, non-bypassed biquad (PEQ
+    /// bands and crossover cascade sections), mirroring <see cref="ResponseAt"/>.
+    /// </summary>
+    public static float PhaseAt(float freq, IEnumerable<FilterParams> filters, float sampleRate = SampleRate)
+    {
+        double phase = 0.0;
+        double w = 2.0 * Math.PI * freq / sampleRate;
+
+        foreach (var f in filters)
+        {
+            if (f.Type == FilterType.Flat || !f.IsActive || f.Bypass)
+                continue;
+
+            if (f.Type.IsCrossover())
+            {
+                foreach (var c in CrossoverSections(f.Type, f.Frequency, sampleRate))
+                    phase += BiquadPhase(c, w);
+                continue;
+            }
+
+            phase += BiquadPhase(CalculateCoefficients(f, sampleRate), w);
+        }
+
+        double deg = phase * 180.0 / Math.PI;
+        deg %= 360.0;
+        if (deg > 180.0) deg -= 360.0;
+        if (deg < -180.0) deg += 360.0;
+        return (float)deg;
+    }
+
+    /// <summary>
+    /// Remove ±360° discontinuities between adjacent wrapped phase samples,
+    /// producing a continuous curve. Input/output are in degrees.
+    /// </summary>
+    public static float[] UnwrapPhase(float[] wrapped)
+    {
+        if (wrapped == null || wrapped.Length == 0) return wrapped ?? Array.Empty<float>();
+        var outp = new float[wrapped.Length];
+        outp[0] = wrapped[0];
+        for (int i = 1; i < wrapped.Length; i++)
+        {
+            double d = wrapped[i] - wrapped[i - 1];
+            while (d > 180.0) d -= 360.0;
+            while (d <= -180.0) d += 360.0;
+            outp[i] = (float)(outp[i - 1] + d);
+        }
+        return outp;
+    }
+
     // ── Crossover filter design (ported from firmware crossover.c) ──────────
     // Each crossover "band" is a cascade of biquad sections built from an analog
     // prototype via the bilinear transform with frequency prewarping. We only
@@ -358,5 +428,40 @@ public static class DspMath
         }
 
         return (frequencies, magnitudes);
+    }
+
+    /// <summary>
+    /// Generate phase-response curve points (degrees) for plotting, over the same
+    /// log-spaced grid as <see cref="GenerateResponseCurve"/>. Set
+    /// <paramref name="unwrap"/> to produce a continuous curve instead of one
+    /// wrapped at ±180°.
+    /// </summary>
+    public static (float[] frequencies, float[] phases) GeneratePhaseCurve(
+        IEnumerable<FilterParams> filters,
+        bool unwrap = false,
+        int numPoints = 201,
+        float minFreq = 10.0f,
+        float maxFreq = 20000.0f,
+        float sampleRate = SampleRate)
+    {
+        var frequencies = new float[numPoints];
+        var phases = new float[numPoints];
+
+        // Materialize once so PhaseAt doesn't re-enumerate a lazy source per point.
+        var list = filters as IReadOnlyList<FilterParams> ?? new List<FilterParams>(filters);
+
+        double logMin = Math.Log10(minFreq);
+        double logMax = Math.Log10(maxFreq);
+
+        for (int i = 0; i < numPoints; i++)
+        {
+            double pct = i / (double)(numPoints - 1);
+            float freq = (float)Math.Pow(10, logMin + pct * (logMax - logMin));
+            frequencies[i] = freq;
+            phases[i] = PhaseAt(freq, list, sampleRate);
+        }
+
+        if (unwrap) phases = UnwrapPhase(phases);
+        return (frequencies, phases);
     }
 }

@@ -32,6 +32,10 @@ public class AppSettings
     // Dotted lines for non-selected channels
     public bool DottedInactiveChannels { get; set; } = true;
 
+    // Phase-response overlay (dotted curve on a right-side degree axis).
+    public bool ShowPhase { get; set; } = false;
+    public bool PhaseUnwrapped { get; set; } = false;
+
     // Whether the popout graph follows the selected channel editor page
     public bool PopoutFollowsSelectedChannel { get; set; } = true;
 

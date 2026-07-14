@@ -43,5 +43,17 @@
                         <ToggleSwitch x:Name="PopoutFollowsToggle" OnContent="On" OffContent="Off"
                           Toggled="OnPopoutFollowsToggled"/>
         </controls:SettingsCard>
+
+        <controls:SettingsCard Header="Show phase response"
+                                Description="Overlay the selected channel's phase (degrees) as a dotted line on a right-side axis.">
+                        <ToggleSwitch x:Name="ShowPhaseToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnShowPhaseToggled"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="PhaseUnwrapCard" Header="Unwrap phase"
+                                Description="Show continuous phase instead of wrapping at ±180°.">
+                        <ToggleSwitch x:Name="PhaseUnwrapToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnPhaseUnwrapToggled"/>
+        </controls:SettingsCard>
     </StackPanel>
 </settings:SettingsModule>

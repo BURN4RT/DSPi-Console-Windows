@@ -35,6 +35,9 @@ public sealed partial class GraphingStylePage : SettingsModule, ISettingsPage
             AnimSpeedSlider.Value = s.GraphAnimationSpeed;
             DottedInactiveToggle.IsOn = s.DottedInactiveChannels;
             PopoutFollowsToggle.IsOn = s.PopoutFollowsSelectedChannel;
+            ShowPhaseToggle.IsOn = s.ShowPhase;
+            PhaseUnwrapToggle.IsOn = s.PhaseUnwrapped;
+            PhaseUnwrapCard.IsEnabled = s.ShowPhase;
             UpdateLineWidthDescription(s.GraphLineWidth);
             UpdateAnimSpeedDescription(s.GraphAnimationSpeed);
         }
@@ -70,6 +73,15 @@ public sealed partial class GraphingStylePage : SettingsModule, ISettingsPage
 
     private void OnPopoutFollowsToggled(object sender, RoutedEventArgs e) =>
         CommitBool(PopoutFollowsToggle.IsOn, b => AppSettings.Instance.PopoutFollowsSelectedChannel = b);
+
+    private void OnShowPhaseToggled(object sender, RoutedEventArgs e)
+    {
+        PhaseUnwrapCard.IsEnabled = ShowPhaseToggle.IsOn;
+        CommitBool(ShowPhaseToggle.IsOn, b => AppSettings.Instance.ShowPhase = b);
+    }
+
+    private void OnPhaseUnwrapToggled(object sender, RoutedEventArgs e) =>
+        CommitBool(PhaseUnwrapToggle.IsOn, b => AppSettings.Instance.PhaseUnwrapped = b);
 
     // Shared commit helpers — every Live-apply control on this page
     // funnels through one of these. Centralises the suppress-guard,
