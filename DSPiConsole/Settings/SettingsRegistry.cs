@@ -54,6 +54,7 @@ internal static class SettingsRegistry
         TryAdd<HardwareSpdifInputPage>(pages);
         TryAdd<HardwareI2SInputPage>(pages);
         TryAdd<HardwareDacMutePage>(pages);
+        TryAdd<HardwareControlInterfacesPage>(pages);
 
         // ── Presets ────────────────────────────────────────────────
         // Startup + output-config (Inclusion) moved to General › Globals.

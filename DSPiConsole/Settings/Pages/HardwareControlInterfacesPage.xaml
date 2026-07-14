@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.HardwareControlInterfacesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <!--
+        UART / I2C control interfaces. The device can speak the vendor command set
+        over an external 3.3 V UART link (8N1) or as an I2C target, so a host MCU
+        can drive the DSP without USB. Each section edits a whole config that is
+        applied + flash-persisted in one write (Apply). "Active/Inactive/Disabled"
+        reflects the live status: Inactive means the stored config is enabled but
+        its pins collided at boot. Registered only when the firmware reports support.
+    -->
+    <StackPanel Spacing="4">
+
+        <!-- ── UART ─────────────────────────────────────────────────────── -->
+        <Grid Margin="0,4,0,2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="UART" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <TextBlock x:Name="UartPill" Grid.Column="1" FontSize="11"
+                       VerticalAlignment="Center"/>
+        </Grid>
+
+        <controls:SettingsCard Header="Enable UART"
+                               Description="Asynchronous 3.3 V serial link, fixed 8N1 framing.">
+            <ToggleSwitch x:Name="UartEnableToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnUartFieldChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="TX pin" Description="GPIO with UART TX mux (pin mod 4 = 0).">
+            <ComboBox x:Name="UartTxCombo" MinWidth="140" SelectionChanged="OnUartFieldChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="RX pin" Description="GPIO with UART RX mux (pin mod 4 = 1), same instance.">
+            <ComboBox x:Name="UartRxCombo" MinWidth="140" SelectionChanged="OnUartFieldChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="Baud rate">
+            <ComboBox x:Name="UartBaudCombo" MinWidth="140" SelectionChanged="OnUartFieldChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="Push notifications"
+                               Description="Stream async parameter-change frames over the UART link.">
+            <ToggleSwitch x:Name="UartNotifyToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnUartFieldChanged"/>
+        </controls:SettingsCard>
+
+        <Grid Margin="0,2,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="UartStatusText" FontSize="11" TextWrapping="Wrap"
+                       VerticalAlignment="Center" Visibility="Collapsed"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                <Button x:Name="UartRevertButton" Content="Revert" Click="OnUartRevert" MinWidth="80"/>
+                <Button x:Name="UartApplyButton" Content="Apply" Click="OnUartApply"
+                        Style="{ThemeResource AccentButtonStyle}" MinWidth="80"/>
+            </StackPanel>
+        </Grid>
+
+        <Border Height="1" Margin="0,10,0,6"
+                Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+        <!-- ── I2C ──────────────────────────────────────────────────────── -->
+        <Grid Margin="0,2,0,2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="I2C Target" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <TextBlock x:Name="I2cPill" Grid.Column="1" FontSize="11"
+                       VerticalAlignment="Center"/>
+        </Grid>
+
+        <controls:SettingsCard Header="Enable I2C target"
+                               Description="Device acts as an I2C slave; the controller is bus master. Poll-only (no async notifications).">
+            <ToggleSwitch x:Name="I2cEnableToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnI2cFieldChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="SDA pin" Description="GPIO with I2C SDA mux (even pin).">
+            <ComboBox x:Name="I2cSdaCombo" MinWidth="140" SelectionChanged="OnI2cFieldChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="SCL pin" Description="GPIO with I2C SCL mux (next odd pin), same instance.">
+            <ComboBox x:Name="I2cSclCombo" MinWidth="140" SelectionChanged="OnI2cFieldChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="Target address" Description="7-bit address, 0x08–0x77.">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock x:Name="I2cAddrHex" VerticalAlignment="Center" FontFamily="Consolas"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                <NumberBox x:Name="I2cAddrBox" Minimum="8" Maximum="119"
+                           SpinButtonPlacementMode="Inline" MinWidth="120"
+                           ValueChanged="OnI2cAddrChanged"/>
+            </StackPanel>
+        </controls:SettingsCard>
+
+        <Grid Margin="0,2,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="I2cStatusText" FontSize="11" TextWrapping="Wrap"
+                       VerticalAlignment="Center" Visibility="Collapsed"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                <Button x:Name="I2cRevertButton" Content="Revert" Click="OnI2cRevert" MinWidth="80"/>
+                <Button x:Name="I2cApplyButton" Content="Apply" Click="OnI2cApply"
+                        Style="{ThemeResource AccentButtonStyle}" MinWidth="80"/>
+            </StackPanel>
+        </Grid>
+    </StackPanel>
+</settings:SettingsModule>

@@ -205,6 +205,17 @@ public static class VendorCommands
     public const byte SetI2sInputChannels  = 0xF3; // IN, wValue=count (2/4/6/8), status byte
     public const byte GetI2sInputChannels  = 0xF4; // IN, 1 byte (channel count)
 
+    // UART / I2C control interfaces (control_interfaces_spec.md). The device speaks
+    // the vendor command set over an external UART or as an I2C target. SETs are
+    // USB-only, carry the whole 8-byte config as an OUT payload, and are deferred:
+    // firmware applies + persists on its main loop, so the authoritative PIN_CONFIG_*
+    // outcome is read back via GetCtrlIfaceStatus (0xF9).
+    public const byte SetUartConfig        = 0xF5; // OUT 8-byte UartCtrlConfig (USB only)
+    public const byte GetUartConfig        = 0xF6; // IN 8-byte UartCtrlConfig
+    public const byte SetI2cConfig         = 0xF7; // OUT 8-byte I2cCtrlConfig (USB only)
+    public const byte GetI2cConfig         = 0xF8; // IN 8-byte I2cCtrlConfig
+    public const byte GetCtrlIfaceStatus   = 0xF9; // IN 8-byte CtrlIfaceStatus
+
     // External DAC hardware mute (V10+). Fire-and-forget SET — validation and
     // flash persistence happen in the firmware's main loop; the USB response
     // returns before the apply lands. Hosts confirm by following up with GET
@@ -2618,6 +2629,54 @@ public partial class DspDevice : ObservableObject, IDisposable
     {
         var r = ControlTransferIn(VendorCommands.CsIrLearn, CsIrLearnAction.Read, CsIrLearnResult.WireSize);
         return r == null ? null : CsIrLearnResult.FromBytes(r);
+    }
+
+    // ── UART / I2C control interfaces (0xF5–0xF9) ────────────────────────────
+
+    /// <summary>Read the persisted UART control-interface config (0xF6). Null if
+    /// the firmware STALLs (older firmware without the feature).</summary>
+    public UartCtrlConfig? GetUartCtrlConfig()
+    {
+        var r = ControlTransferIn(VendorCommands.GetUartConfig, 0, UartCtrlConfig.WireSize);
+        return r == null ? null : UartCtrlConfig.FromBytes(r);
+    }
+
+    /// <summary>Read the persisted I2C control-interface config (0xF8).</summary>
+    public I2cCtrlConfig? GetI2cCtrlConfig()
+    {
+        var r = ControlTransferIn(VendorCommands.GetI2cConfig, 0, I2cCtrlConfig.WireSize);
+        return r == null ? null : I2cCtrlConfig.FromBytes(r);
+    }
+
+    /// <summary>Read the live control-interface status (0xF9). Null on failure.</summary>
+    public CtrlIfaceStatus? GetCtrlIfaceStatus()
+    {
+        var r = ControlTransferIn(VendorCommands.GetCtrlIfaceStatus, 0, CtrlIfaceStatus.WireSize);
+        return r == null ? null : CtrlIfaceStatus.FromBytes(r);
+    }
+
+    /// <summary>Apply a UART control-interface config (0xF5 OUT, USB only). The
+    /// apply is deferred + flash-persisted on the firmware's main loop, so this
+    /// waits then reads the authoritative PIN_CONFIG_* outcome via 0xF9. Returns
+    /// 0xFF on a transfer failure. Blocking — call off the UI thread.</summary>
+    public byte SetUartCtrlConfig(UartCtrlConfig config)
+    {
+        if (!ControlTransferOut(VendorCommands.SetUartConfig, 0, config.ToBytes()))
+            return 0xFF;
+        System.Threading.Thread.Sleep(250); // deferred apply + ~45 ms flash blackout
+        var st = GetCtrlIfaceStatus();
+        return st?.UartLastStatus ?? (byte)0xFF;
+    }
+
+    /// <summary>Apply an I2C control-interface config (0xF7 OUT, USB only). Deferred
+    /// apply; outcome read back via 0xF9 (I2cLastStatus).</summary>
+    public byte SetI2cCtrlConfig(I2cCtrlConfig config)
+    {
+        if (!ControlTransferOut(VendorCommands.SetI2cConfig, 0, config.ToBytes()))
+            return 0xFF;
+        System.Threading.Thread.Sleep(250);
+        var st = GetCtrlIfaceStatus();
+        return st?.I2cLastStatus ?? (byte)0xFF;
     }
 
     /// <summary>

@@ -106,7 +106,9 @@ internal static class HardwarePins
         int excludeSpdifRxIndex = -1,
         int excludeI2sRxPair = -1,
         bool excludeAdatSelf = false,
-        int excludeCsSlot = -1)
+        int excludeCsSlot = -1,
+        bool excludeUartSelf = false,
+        bool excludeI2cSelf = false)
     {
         var owners = new Dictionary<byte, string>();
 
@@ -192,6 +194,23 @@ internal static class HardwarePins
                     : $"Ctrl {s + 1}";
                 owners[b.Gpio0] = label;
                 if (b.Gpio1 != CsLimits.GpioUnused) owners[b.Gpio1] = label;
+            }
+        }
+
+        // UART / I2C control-interface GPIOs: an interface reserves its pins only
+        // while it is actually LIVE (a disabled or boot-collided interface holds
+        // none). excludeUartSelf/excludeI2cSelf keep a section's own pins pickable.
+        if (vm.ControlInterfacesSupported && vm.CtrlIfaceStatus is { } ci)
+        {
+            if (ci.UartLive && !excludeUartSelf)
+            {
+                owners[vm.UartCtrlConfig.TxPin] = "UART TX";
+                owners[vm.UartCtrlConfig.RxPin] = "UART RX";
+            }
+            if (ci.I2cLive && !excludeI2cSelf)
+            {
+                owners[vm.I2cCtrlConfig.SdaPin] = "I2C SDA";
+                owners[vm.I2cCtrlConfig.SclPin] = "I2C SCL";
             }
         }
 
