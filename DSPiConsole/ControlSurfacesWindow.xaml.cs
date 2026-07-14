@@ -1,0 +1,1344 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Globalization;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Threading.Tasks;
+using DSPiConsole.Core.Models;
+using DSPiConsole.Settings;
+using DSPiConsole.ViewModels;
+using Microsoft.UI;
+using Microsoft.UI.Text;
+using Microsoft.UI.Windowing;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
+using Windows.System;
+using Windows.UI;
+using WinRT.Interop;
+
+namespace DSPiConsole;
+
+/// <summary>
+/// Control Surfaces + IR remote editor. A caps-driven window that binds physical
+/// GPIO controls (buttons, switches, pots, encoders, LEDs, PWM LEDs) and an IR
+/// receiver to DSP parameters. Every edit previews live on the device; Save
+/// persists to flash, Revert discards. Mirrors the macOS reference app.
+/// </summary>
+public sealed partial class ControlSurfacesWindow : Window
+{
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    private readonly MainViewModel _vm;
+
+    // Editable drafts (seeded from the VM's live values). A slot is "dirty" when
+    // its draft differs from the applied device state.
+    private readonly CsBinding[] _drafts = new CsBinding[CsLimits.MaxBindings];
+    private readonly IrCommand[] _irDrafts = new IrCommand[CsLimits.MaxIrCommands];
+    private readonly string[] _nameEdits = new string[CsLimits.MaxBindings];
+
+    private readonly HashSet<int> _expanded = new();
+    private readonly HashSet<int> _irExpanded = new();
+
+    private bool _building;
+    private int? _applyingSlot;
+    private bool _savingConfig;
+    private int? _learningSub;
+
+    // Per-slot / per-sub UI handles refreshed without a full rebuild.
+    private readonly Dictionary<int, TextBlock> _slotPills = new();
+    private readonly Dictionary<int, Button> _slotApply = new();
+
+    public ControlSurfacesWindow(MainViewModel vm)
+    {
+        _vm = vm;
+        InitializeComponent();
+
+        var hWnd = WindowNative.GetWindowHandle(this);
+        var windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
+        var appWindow = AppWindow.GetFromWindowId(windowId);
+        double dpiScale = GetDpiForWindow(hWnd) / 96.0;
+        appWindow?.Resize(new Windows.Graphics.SizeInt32((int)(560 * dpiScale), (int)(780 * dpiScale)));
+        if (appWindow != null) appWindow.Title = "Control Surfaces";
+
+        if (appWindow?.TitleBar is { } titleBar)
+        {
+            titleBar.ForegroundColor = Color.FromArgb(255, 220, 220, 220);
+            titleBar.BackgroundColor = Color.FromArgb(255, 32, 32, 32);
+            titleBar.InactiveForegroundColor = Color.FromArgb(255, 140, 140, 140);
+            titleBar.InactiveBackgroundColor = Color.FromArgb(255, 32, 32, 32);
+            titleBar.ButtonForegroundColor = Color.FromArgb(255, 220, 220, 220);
+            titleBar.ButtonBackgroundColor = Color.FromArgb(255, 32, 32, 32);
+            titleBar.ButtonInactiveForegroundColor = Color.FromArgb(255, 140, 140, 140);
+            titleBar.ButtonInactiveBackgroundColor = Color.FromArgb(255, 32, 32, 32);
+            titleBar.ButtonHoverForegroundColor = Color.FromArgb(255, 255, 255, 255);
+            titleBar.ButtonHoverBackgroundColor = Color.FromArgb(255, 50, 50, 50);
+        }
+
+        _vm.PropertyChanged += OnVmPropertyChanged;
+        _vm.ControlSurfacesReloaded += OnReloaded;
+        Closed += OnClosed;
+
+        SeedDrafts();
+        BuildAll();
+    }
+
+    private void OnClosed(object sender, WindowEventArgs e)
+    {
+        _vm.PropertyChanged -= OnVmPropertyChanged;
+        _vm.ControlSurfacesReloaded -= OnReloaded;
+    }
+
+    private void OnReloaded() => DispatcherQueue.TryEnqueue(() => { SeedDrafts(); BuildAll(); });
+
+    private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MainViewModel.CsStatus)
+            || e.PropertyName == nameof(MainViewModel.CsDirty))
+        {
+            DispatcherQueue.TryEnqueue(RefreshStatusIndicators);
+        }
+    }
+
+    private void SeedDrafts()
+    {
+        for (int i = 0; i < CsLimits.MaxBindings; i++)
+        {
+            _drafts[i] = i < _vm.CsBindings.Count ? _vm.CsBindings[i].Clone() : CsBinding.Cleared();
+            _nameEdits[i] = i < _vm.CsNames.Count ? _vm.CsNames[i] : "";
+        }
+        for (int i = 0; i < CsLimits.MaxIrCommands; i++)
+            _irDrafts[i] = i < _vm.CsIrCommands.Count ? _vm.CsIrCommands[i].Clone() : new IrCommand();
+    }
+
+    // ── Top-level build ──────────────────────────────────────────────────────
+
+    private void BuildAll()
+    {
+        if (!_vm.ControlSurfacesSupported || _vm.CsCaps is not { IsValid: true })
+        {
+            UnsupportedBar.IsOpen = true;
+            BodyPanel.Visibility = Visibility.Collapsed;
+            SaveBar.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        UnsupportedBar.IsOpen = false;
+        BodyPanel.Visibility = Visibility.Visible;
+        BuildAddMenu();
+        RebuildCards();
+        RefreshStatusIndicators();
+    }
+
+    private void BuildAddMenu()
+    {
+        AddFlyout.Items.Clear();
+        var caps = _vm.CsCaps!;
+        foreach (CsType t in Enum.GetValues<CsType>())
+        {
+            if (t == CsType.None) continue;
+            if ((int)t >= caps.TypeCount) continue;
+            // One IR receiver max — hide once configured.
+            if (t == CsType.Ir && (!_vm.CsIrSupported || AnyIrReceiver())) continue;
+            var item = new MenuFlyoutItem { Text = TypeName(t), Tag = t };
+            item.Click += (_, _) => AddControl(t);
+            AddFlyout.Items.Add(item);
+        }
+        AddButton.IsEnabled = FirstFreeSlot() >= 0 && AddFlyout.Items.Count > 0;
+    }
+
+    private void RebuildCards()
+    {
+        _building = true;
+        try
+        {
+            CardsPanel.Children.Clear();
+            _slotPills.Clear();
+            _slotApply.Clear();
+
+            int shown = 0;
+            for (int slot = 0; slot < _vm.CsSlotCount; slot++)
+            {
+                if (!_drafts[slot].IsConfigured) continue;
+                CardsPanel.Children.Add(BuildSlotCard(slot));
+                shown++;
+            }
+            EmptyHint.Visibility = shown == 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        finally { _building = false; }
+        RefreshStatusIndicators();
+    }
+
+    // ── One slot card ────────────────────────────────────────────────────────
+
+    private FrameworkElement BuildSlotCard(int slot)
+    {
+        var draft = _drafts[slot];
+        var expander = new Expander
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            IsExpanded = _expanded.Contains(slot),
+        };
+        expander.Expanding += (_, _) => _expanded.Add(slot);
+        expander.Collapsed += (_, _) => _expanded.Remove(slot);
+
+        expander.Header = BuildCardHeader(slot);
+        expander.Content = BuildCardBody(slot);
+        return expander;
+    }
+
+    private FrameworkElement BuildCardHeader(int slot)
+    {
+        var draft = _drafts[slot];
+        var grid = new Grid { ColumnSpacing = 8, Padding = new Thickness(0, 2, 0, 2) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        // Type badge — click to change component type.
+        var typeBtn = new DropDownButton { Content = TypeName(draft.Type), MinWidth = 96 };
+        var typeFlyout = new MenuFlyout();
+        var caps = _vm.CsCaps!;
+        foreach (CsType t in Enum.GetValues<CsType>())
+        {
+            if (t == CsType.None || (int)t >= caps.TypeCount) continue;
+            if (t == CsType.Ir && t != draft.Type && (!_vm.CsIrSupported || AnyIrReceiver())) continue;
+            var mi = new MenuFlyoutItem { Text = TypeName(t), Tag = t };
+            mi.Click += (_, _) => ChangeType(slot, t);
+            typeFlyout.Items.Add(mi);
+        }
+        typeBtn.Flyout = typeFlyout;
+        Grid.SetColumn(typeBtn, 0);
+        grid.Children.Add(typeBtn);
+
+        // Name editor.
+        var nameBox = new TextBox
+        {
+            PlaceholderText = "Name (optional)",
+            Text = _nameEdits[slot],
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        nameBox.LostFocus += (_, _) => CommitName(slot, nameBox.Text);
+        nameBox.KeyDown += (_, e) => { if (e.Key == VirtualKey.Enter) CommitName(slot, nameBox.Text); };
+        Grid.SetColumn(nameBox, 1);
+        grid.Children.Add(nameBox);
+
+        // Status pill.
+        var pill = new TextBlock
+        {
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(4, 0, 4, 0),
+        };
+        _slotPills[slot] = pill;
+        Grid.SetColumn(pill, 2);
+        grid.Children.Add(pill);
+
+        // Delete.
+        var del = new Button
+        {
+            Content = new FontIcon { Glyph = "", FontSize = 14 },
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6),
+        };
+        ToolTipService.SetToolTip(del, "Remove this control");
+        del.Click += (_, _) => RemoveControl(slot);
+        Grid.SetColumn(del, 3);
+        grid.Children.Add(del);
+
+        return grid;
+    }
+
+    private FrameworkElement BuildCardBody(int slot)
+    {
+        var draft = _drafts[slot];
+        var panel = new StackPanel { Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
+
+        if (draft.Type == CsType.Ir)
+        {
+            // IR receiver: pin + invert, then the remote-button table.
+            panel.Children.Add(BuildPinRows(slot));
+            panel.Children.Add(FlagToggle(slot, CsFlags.Invert, "Active-low input (pull-up)"));
+            panel.Children.Add(BuildApplyRow(slot));
+            panel.Children.Add(BuildIrCommandsSection(slot));
+            return panel;
+        }
+
+        var nd = _vm.CsNounDescFor(draft.Noun);
+
+        panel.Children.Add(BuildNounRow(slot));
+        if (nd != null)
+        {
+            var actions = ValidActions(draft.Type, nd);
+            if (actions.Count > 1) panel.Children.Add(BuildActionRow(slot, actions));
+            if (nd.IsTargeted) panel.Children.Add(BuildTargetRows(slot, nd));
+            if (draft.Type == CsType.Button) panel.Children.Add(BuildEventRow(slot));
+            panel.Children.Add(BuildPinRows(slot));
+            var operand = BuildOperandRows(slot, nd);
+            if (operand != null) panel.Children.Add(operand);
+            panel.Children.Add(BuildFlagRows(slot, nd));
+        }
+        panel.Children.Add(BuildApplyRow(slot));
+        return panel;
+    }
+
+    // ── Editor rows ──────────────────────────────────────────────────────────
+
+    private FrameworkElement BuildNounRow(int slot)
+    {
+        var draft = _drafts[slot];
+        var combo = new ComboBox { MinWidth = 220 };
+        var caps = _vm.CsCaps!;
+        int selectedIndex = -1, idx = 0;
+        foreach (var (noun, nd) in AvailableNouns(draft.Type))
+        {
+            var item = new ComboBoxItem { Content = CsNounInfo.Name(noun), Tag = noun };
+            combo.Items.Add(item);
+            if (noun == draft.Noun) selectedIndex = idx;
+            idx++;
+        }
+        combo.SelectedIndex = selectedIndex;
+        combo.SelectionChanged += (_, _) =>
+        {
+            if (_building) return;
+            if (combo.SelectedItem is ComboBoxItem it && it.Tag is int noun)
+                ChangeNoun(slot, noun);
+        };
+        return Row("Controls", combo);
+    }
+
+    private FrameworkElement BuildActionRow(int slot, List<CsAction> actions)
+    {
+        var draft = _drafts[slot];
+        var combo = new ComboBox { MinWidth = 180 };
+        int sel = -1;
+        for (int i = 0; i < actions.Count; i++)
+        {
+            combo.Items.Add(new ComboBoxItem { Content = ActionName(actions[i]), Tag = actions[i] });
+            if ((byte)actions[i] == draft.Action) sel = i;
+        }
+        if (sel < 0) sel = 0;
+        combo.SelectedIndex = sel;
+        combo.SelectionChanged += (_, _) =>
+        {
+            if (_building) return;
+            if (combo.SelectedItem is ComboBoxItem it && it.Tag is CsAction a)
+                ChangeAction(slot, a);
+        };
+        return Row("Action", combo);
+    }
+
+    private FrameworkElement BuildTargetRows(int slot, CsNounDesc nd)
+    {
+        var draft = _drafts[slot];
+        var panel = new StackPanel { Spacing = 8 };
+
+        var chCombo = new ComboBox { MinWidth = 180 };
+        for (int i = 0; i < nd.TargetCount; i++)
+            chCombo.Items.Add(new ComboBoxItem { Content = ChannelLabel(nd.TargetKind, i), Tag = i });
+        chCombo.SelectedIndex = draft.Target < nd.TargetCount ? draft.Target : 0;
+        chCombo.SelectionChanged += (_, _) =>
+        {
+            if (_building) return;
+            if (chCombo.SelectedItem is ComboBoxItem it && it.Tag is int ch)
+            { _drafts[slot].Target = (byte)ch; RefreshStatusIndicators(); }
+        };
+        panel.Children.Add(Row("Channel", chCombo));
+
+        if (nd.HasBand)
+        {
+            var bandCombo = new ComboBox { MinWidth = 180 };
+            var opts = BandOptions(draft.Noun).ToList();
+            int sel = 0;
+            for (int i = 0; i < opts.Count; i++)
+            {
+                bandCombo.Items.Add(new ComboBoxItem { Content = opts[i].label, Tag = opts[i].band });
+                if (opts[i].band == draft.Index) sel = i;
+            }
+            bandCombo.SelectedIndex = sel;
+            bandCombo.SelectionChanged += (_, _) =>
+            {
+                if (_building) return;
+                if (bandCombo.SelectedItem is ComboBoxItem it && it.Tag is int band)
+                { _drafts[slot].Index = (byte)band; RefreshStatusIndicators(); }
+            };
+            panel.Children.Add(Row("Band", bandCombo));
+        }
+        return panel;
+    }
+
+    private FrameworkElement BuildEventRow(int slot)
+    {
+        var draft = _drafts[slot];
+        var combo = new ComboBox { MinWidth = 180 };
+        combo.Items.Add(new ComboBoxItem { Content = "Press", Tag = CsEvent.Press });
+        combo.Items.Add(new ComboBoxItem { Content = "Long press", Tag = CsEvent.Long });
+        combo.Items.Add(new ComboBoxItem { Content = "Double press", Tag = CsEvent.Double });
+        combo.SelectedIndex = Math.Clamp((int)draft.Event, 0, 2);
+        combo.SelectionChanged += (_, _) =>
+        {
+            if (_building) return;
+            if (combo.SelectedItem is ComboBoxItem it && it.Tag is CsEvent ev)
+            { _drafts[slot].Event = (byte)ev; RefreshStatusIndicators(); }
+        };
+        return Row("Button event", combo);
+    }
+
+    private FrameworkElement BuildPinRows(int slot)
+    {
+        var draft = _drafts[slot];
+        var caps = _vm.CsCaps!;
+        var typeDesc = caps.DescFor(draft.Type);
+        bool twoPins = typeDesc?.PinCount == 2;
+        bool adcOnly = typeDesc?.PinClass == CsPinClass.Adc;
+
+        var panel = new StackPanel { Spacing = 8 };
+        panel.Children.Add(Row(twoPins ? "GPIO A" : "GPIO",
+            PinCombo(slot, adcOnly, isSecond: false)));
+        if (twoPins)
+            panel.Children.Add(Row("GPIO B", PinCombo(slot, adcOnly, isSecond: true)));
+        return panel;
+    }
+
+    private ComboBox PinCombo(int slot, bool adcOnly, bool isSecond)
+    {
+        var draft = _drafts[slot];
+        byte current = isSecond ? draft.Gpio1 : draft.Gpio0;
+        var combo = new ComboBox { MinWidth = 160 };
+
+        var candidates = FreePins(slot, adcOnly).ToList();
+        if (current != CsLimits.GpioUnused && !candidates.Contains(current)) candidates.Add(current);
+        candidates.Sort();
+
+        int sel = -1;
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            combo.Items.Add(new ComboBoxItem { Content = $"GPIO {candidates[i]}", Tag = candidates[i] });
+            if (candidates[i] == current) sel = i;
+        }
+        combo.SelectedIndex = sel;
+        combo.SelectionChanged += (_, _) =>
+        {
+            if (_building) return;
+            if (combo.SelectedItem is ComboBoxItem it && it.Tag is byte pin)
+            {
+                if (isSecond) _drafts[slot].Gpio1 = pin; else _drafts[slot].Gpio0 = pin;
+                RefreshStatusIndicators();
+            }
+        };
+        return combo;
+    }
+
+    private FrameworkElement? BuildOperandRows(int slot, CsNounDesc nd)
+    {
+        var draft = _drafts[slot];
+        var action = (CsAction)draft.Action;
+
+        // Span (pot ADJUST / PWM IND_LEVEL): rangeMin/rangeMax over the noun range.
+        if (action is CsAction.Adjust or CsAction.IndLevel && nd.Kind == CsKind.Continuous)
+            return BuildSpanRows(slot, nd);
+
+        // Step (encoder STEP, button INC/DEC).
+        if (action is CsAction.Step or CsAction.Inc or CsAction.Dec)
+            return BuildStepRow(slot, nd);
+
+        // Value (SET / MOMENTARY / IND_EQUALS / IND_ABOVE).
+        if (action is CsAction.Set or CsAction.Momentary or CsAction.IndEquals or CsAction.IndAbove)
+            return BuildValueRow(slot, nd);
+
+        // Toggle / Follow / Trigger have no operand.
+        return null;
+    }
+
+    private FrameworkElement BuildSpanRows(int slot, CsNounDesc nd)
+    {
+        var draft = _drafts[slot];
+        var panel = new StackPanel { Spacing = 8 };
+        bool custom = !(draft.RangeMin == 0 && draft.RangeMax == 0);
+
+        var toggle = new CheckBox { Content = "Limit to a custom range", IsChecked = custom };
+        panel.Children.Add(toggle);
+
+        var minBox = NumberField(CsWire.DecodeValue(draft.RangeMin, nd.Unit), nd.Unit, v =>
+        { _drafts[slot].RangeMin = CsWire.EncodeValue(v, nd.Unit); RefreshStatusIndicators(); });
+        var maxBox = NumberField(CsWire.DecodeValue(draft.RangeMax, nd.Unit), nd.Unit, v =>
+        { _drafts[slot].RangeMax = CsWire.EncodeValue(v, nd.Unit); RefreshStatusIndicators(); });
+
+        var minRow = Row("Minimum", minBox);
+        var maxRow = Row("Maximum", maxBox);
+        minRow.Visibility = maxRow.Visibility = custom ? Visibility.Visible : Visibility.Collapsed;
+        panel.Children.Add(minRow);
+        panel.Children.Add(maxRow);
+
+        toggle.Checked += (_, _) =>
+        {
+            minRow.Visibility = maxRow.Visibility = Visibility.Visible;
+            // Seed a sensible span from the noun's full range.
+            _drafts[slot].RangeMin = nd.MinQ; _drafts[slot].RangeMax = nd.MaxQ;
+            RebuildCards();
+        };
+        toggle.Unchecked += (_, _) =>
+        {
+            _drafts[slot].RangeMin = 0; _drafts[slot].RangeMax = 0;
+            RebuildCards();
+        };
+        return panel;
+    }
+
+    private FrameworkElement BuildStepRow(int slot, CsNounDesc nd)
+    {
+        var draft = _drafts[slot];
+        if (nd.Kind == CsKind.Enum || nd.Unit == CsUnit.None)
+        {
+            var box = NumberField(draft.Step == 0 ? 1 : CsWire.DecodeStep(draft.Step, nd.Unit), CsUnit.None, v =>
+            { _drafts[slot].Step = CsWire.EncodeStep(v, nd.Unit); RefreshStatusIndicators(); });
+            return Row("Step (positions)", box);
+        }
+        // Hz/Q step is in octaves; dB/% linear.
+        string label = nd.Unit is CsUnit.Hz or CsUnit.Q ? "Step (octaves)" : $"Step ({CsWire.UnitSymbol(nd.Unit)})";
+        var stepBox = NumberField(CsWire.DecodeStep(draft.Step, nd.Unit), CsUnit.None, v =>
+        { _drafts[slot].Step = CsWire.EncodeStep(v, nd.Unit); RefreshStatusIndicators(); });
+        return Row(label, stepBox);
+    }
+
+    private FrameworkElement BuildValueRow(int slot, CsNounDesc nd)
+    {
+        var draft = _drafts[slot];
+        if (nd.Kind == CsKind.Bool)
+        {
+            var combo = new ComboBox { MinWidth = 120 };
+            combo.Items.Add(new ComboBoxItem { Content = "Off", Tag = (short)0 });
+            combo.Items.Add(new ComboBoxItem { Content = "On", Tag = (short)1 });
+            combo.SelectedIndex = draft.Value != 0 ? 1 : 0;
+            combo.SelectionChanged += (_, _) =>
+            {
+                if (_building) return;
+                if (combo.SelectedItem is ComboBoxItem it && it.Tag is short v)
+                { _drafts[slot].Value = v; RefreshStatusIndicators(); }
+            };
+            return Row("Value", combo);
+        }
+        if (nd.Kind == CsKind.Enum)
+        {
+            var combo = new ComboBox { MinWidth = 120 };
+            for (int i = 0; i < Math.Max(1, (int)nd.EnumCount); i++)
+                combo.Items.Add(new ComboBoxItem { Content = i.ToString(CultureInfo.InvariantCulture), Tag = (short)i });
+            combo.SelectedIndex = Math.Clamp((int)draft.Value, 0, Math.Max(0, nd.EnumCount - 1));
+            combo.SelectionChanged += (_, _) =>
+            {
+                if (_building) return;
+                if (combo.SelectedItem is ComboBoxItem it && it.Tag is short v)
+                { _drafts[slot].Value = v; RefreshStatusIndicators(); }
+            };
+            return Row("Value", combo);
+        }
+        var box = NumberField(CsWire.DecodeValue(draft.Value, nd.Unit), nd.Unit, v =>
+        { _drafts[slot].Value = CsWire.EncodeValue(v, nd.Unit); RefreshStatusIndicators(); });
+        return Row($"Value ({CsWire.UnitSymbol(nd.Unit)})", box);
+    }
+
+    private FrameworkElement BuildFlagRows(int slot, CsNounDesc nd)
+    {
+        var draft = _drafts[slot];
+        var action = (CsAction)draft.Action;
+        var panel = new StackPanel { Spacing = 2 };
+
+        panel.Children.Add(FlagToggle(slot, CsFlags.Invert,
+            draft.Type is CsType.Led or CsType.LedPwm ? "Active-low output" : "Active-low input (pull-up)"));
+
+        if (draft.Type is CsType.Pot or CsType.Encoder)
+            panel.Children.Add(FlagToggle(slot, CsFlags.Reverse, "Reverse direction"));
+        if (draft.Type == CsType.Encoder)
+            panel.Children.Add(FlagToggle(slot, CsFlags.Accel, "Acceleration (fast rotation = bigger steps)"));
+        if (nd.Kind == CsKind.Enum && action is CsAction.Step or CsAction.Inc or CsAction.Dec)
+            panel.Children.Add(FlagToggle(slot, CsFlags.Wrap, "Wrap around at the ends"));
+        if (draft.Type == CsType.Button && action is CsAction.Inc or CsAction.Dec && draft.Event == (byte)CsEvent.Press)
+            panel.Children.Add(FlagToggle(slot, CsFlags.Repeat, "Auto-repeat while held"));
+
+        return panel;
+    }
+
+    private CheckBox FlagToggle(int slot, CsFlags flag, string label)
+    {
+        var cb = new CheckBox { Content = label, IsChecked = _drafts[slot].Flags.HasFlag(flag) };
+        cb.Checked += (_, _) => { _drafts[slot].Flags |= flag; RefreshStatusIndicators(); };
+        cb.Unchecked += (_, _) => { _drafts[slot].Flags &= ~flag; RefreshStatusIndicators(); };
+        return cb;
+    }
+
+    private FrameworkElement BuildApplyRow(int slot)
+    {
+        var panel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(0, 6, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        if (_drafts[slot].Type == CsType.Ir)
+        {
+            var addBtn = new Button { Content = "Add Remote Button" };
+            addBtn.Click += (_, _) => AddIrCommand(slot);
+            addBtn.IsEnabled = _vm.CsStatus?.IsSlotActive(slot) == true && FirstFreeIrSub() >= 0;
+            panel.Children.Add(addBtn);
+        }
+        var revert = new Button { Content = "Revert" };
+        revert.Click += (_, _) => RevertSlot(slot);
+        var apply = new Button { Content = "Apply", Style = AccentStyle };
+        apply.Click += (_, _) => _ = ApplySlotAsync(slot);
+        _slotApply[slot] = apply;
+        panel.Children.Add(revert);
+        panel.Children.Add(apply);
+        return panel;
+    }
+
+    // ── IR command table ─────────────────────────────────────────────────────
+
+    private FrameworkElement BuildIrCommandsSection(int slot)
+    {
+        var panel = new StackPanel { Spacing = 8, Margin = new Thickness(0, 8, 0, 0) };
+        bool receiverLive = _vm.CsStatus?.IsSlotActive(slot) == true;
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"Remote Buttons ({ConfiguredIrCount()}/{_vm.CsIrMax})",
+            FontWeight = FontWeights.SemiBold,
+        });
+        if (!receiverLive)
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Apply the receiver first, then learn remote buttons.",
+                FontSize = 11, TextWrapping = TextWrapping.Wrap,
+                Foreground = SecondaryBrush,
+            });
+
+        for (int sub = 0; sub < _vm.CsIrMax; sub++)
+            if (_irDrafts[sub].IsConfigured || _irExpanded.Contains(sub))
+                panel.Children.Add(BuildIrCommandCard(sub, receiverLive));
+
+        return panel;
+    }
+
+    private FrameworkElement BuildIrCommandCard(int sub, bool receiverLive)
+    {
+        var draft = _irDrafts[sub];
+        var expander = new Expander
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            IsExpanded = _irExpanded.Contains(sub),
+        };
+        expander.Expanding += (_, _) => _irExpanded.Add(sub);
+        expander.Collapsed += (_, _) => _irExpanded.Remove(sub);
+
+        // Header: learned-code chip + delete.
+        var hgrid = new Grid { ColumnSpacing = 8 };
+        hgrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        hgrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var chip = new TextBlock
+        {
+            Text = draft.CodeLabel, FontSize = 12, VerticalAlignment = VerticalAlignment.Center,
+            Foreground = draft.IsConfigured
+                ? new SolidColorBrush(Color.FromArgb(255, 100, 200, 140))
+                : SecondaryBrush,
+        };
+        Grid.SetColumn(chip, 0);
+        hgrid.Children.Add(chip);
+        var delc = new Button
+        {
+            Content = new FontIcon { Glyph = "", FontSize = 13 },
+            Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0),
+        };
+        delc.Click += (_, _) => RemoveIrCommand(sub);
+        Grid.SetColumn(delc, 1);
+        hgrid.Children.Add(delc);
+        expander.Header = hgrid;
+
+        // Body: learn + operand editor.
+        var body = new StackPanel { Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
+
+        var learnPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        if (_learningSub == sub)
+        {
+            learnPanel.Children.Add(new ProgressRing { IsActive = true, Width = 16, Height = 16 });
+            learnPanel.Children.Add(new TextBlock
+            {
+                Text = "Point the remote at the receiver…", VerticalAlignment = VerticalAlignment.Center, FontSize = 12,
+            });
+            var cancel = new Button { Content = "Cancel" };
+            cancel.Click += (_, _) => CancelLearn();
+            learnPanel.Children.Add(cancel);
+        }
+        else
+        {
+            var learn = new Button { Content = draft.IsConfigured ? "Re-learn" : "Learn Button" };
+            learn.IsEnabled = receiverLive && _learningSub == null && !_savingConfig;
+            learn.Click += (_, _) => StartLearn(sub);
+            learnPanel.Children.Add(learn);
+        }
+        body.Children.Add(learnPanel);
+
+        // Noun / action / target / operand for the IR command (button-shaped).
+        body.Children.Add(BuildIrNounRow(sub));
+        var nd = _vm.CsNounDescFor(draft.Noun);
+        if (nd != null)
+        {
+            var actions = ValidIrActions(nd);
+            if (actions.Count > 1) body.Children.Add(BuildIrActionRow(sub, actions));
+            if (nd.IsTargeted) body.Children.Add(BuildIrTargetRows(sub, nd));
+            var op = BuildIrOperand(sub, nd);
+            if (op != null) body.Children.Add(op);
+        }
+
+        var applyRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal, Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 4, 0, 0),
+        };
+        var apply = new Button { Content = "Apply", Style = AccentStyle };
+        apply.IsEnabled = draft.IsConfigured && receiverLive;
+        apply.Click += (_, _) => _ = ApplyIrCommandAsync(sub);
+        applyRow.Children.Add(apply);
+        body.Children.Add(applyRow);
+
+        expander.Content = body;
+        return expander;
+    }
+
+    private FrameworkElement BuildIrNounRow(int sub)
+    {
+        var draft = _irDrafts[sub];
+        var combo = new ComboBox { MinWidth = 200 };
+        int sel = -1, idx = 0;
+        foreach (var (noun, nd) in AvailableIrNouns())
+        {
+            combo.Items.Add(new ComboBoxItem { Content = CsNounInfo.Name(noun), Tag = noun });
+            if (noun == draft.Noun) sel = idx;
+            idx++;
+        }
+        combo.SelectedIndex = sel;
+        combo.SelectionChanged += (_, _) =>
+        {
+            if (_building) return;
+            if (combo.SelectedItem is ComboBoxItem it && it.Tag is int noun)
+            {
+                _irDrafts[sub].Noun = (byte)noun;
+                var nd = _vm.CsNounDescFor(noun);
+                var acts = nd != null ? ValidIrActions(nd) : new List<CsAction>();
+                _irDrafts[sub].Action = acts.Count > 0 ? (byte)acts[0] : (byte)0;
+                RebuildCards();
+            }
+        };
+        return Row("Controls", combo);
+    }
+
+    private FrameworkElement BuildIrActionRow(int sub, List<CsAction> actions)
+    {
+        var draft = _irDrafts[sub];
+        var combo = new ComboBox { MinWidth = 160 };
+        int sel = 0;
+        for (int i = 0; i < actions.Count; i++)
+        {
+            combo.Items.Add(new ComboBoxItem { Content = ActionName(actions[i]), Tag = actions[i] });
+            if ((byte)actions[i] == draft.Action) sel = i;
+        }
+        combo.SelectedIndex = sel;
+        combo.SelectionChanged += (_, _) =>
+        {
+            if (_building) return;
+            if (combo.SelectedItem is ComboBoxItem it && it.Tag is CsAction a)
+            { _irDrafts[sub].Action = (byte)a; RebuildCards(); }
+        };
+        return Row("Action", combo);
+    }
+
+    private FrameworkElement BuildIrTargetRows(int sub, CsNounDesc nd)
+    {
+        var draft = _irDrafts[sub];
+        var panel = new StackPanel { Spacing = 8 };
+        var chCombo = new ComboBox { MinWidth = 160 };
+        for (int i = 0; i < nd.TargetCount; i++)
+            chCombo.Items.Add(new ComboBoxItem { Content = ChannelLabel(nd.TargetKind, i), Tag = i });
+        chCombo.SelectedIndex = draft.Target < nd.TargetCount ? draft.Target : 0;
+        chCombo.SelectionChanged += (_, _) =>
+        {
+            if (_building) return;
+            if (chCombo.SelectedItem is ComboBoxItem it && it.Tag is int ch)
+                _irDrafts[sub].Target = (byte)ch;
+        };
+        panel.Children.Add(Row("Channel", chCombo));
+
+        if (nd.HasBand)
+        {
+            var bandCombo = new ComboBox { MinWidth = 160 };
+            var opts = BandOptions(draft.Noun).ToList();
+            int sel = 0;
+            for (int i = 0; i < opts.Count; i++)
+            {
+                bandCombo.Items.Add(new ComboBoxItem { Content = opts[i].label, Tag = opts[i].band });
+                if (opts[i].band == draft.Index) sel = i;
+            }
+            bandCombo.SelectedIndex = sel;
+            bandCombo.SelectionChanged += (_, _) =>
+            {
+                if (_building) return;
+                if (bandCombo.SelectedItem is ComboBoxItem it && it.Tag is int band)
+                    _irDrafts[sub].Index = (byte)band;
+            };
+            panel.Children.Add(Row("Band", bandCombo));
+        }
+        return panel;
+    }
+
+    private FrameworkElement? BuildIrOperand(int sub, CsNounDesc nd)
+    {
+        var draft = _irDrafts[sub];
+        var action = (CsAction)draft.Action;
+        if (action is CsAction.Inc or CsAction.Dec)
+        {
+            string label = nd.Unit is CsUnit.Hz or CsUnit.Q ? "Step (octaves)"
+                : nd.Unit == CsUnit.None ? "Step (positions)" : $"Step ({CsWire.UnitSymbol(nd.Unit)})";
+            var box = NumberField(CsWire.DecodeStep(draft.Step, nd.Unit), CsUnit.None, v =>
+                _irDrafts[sub].Step = CsWire.EncodeStep(v, nd.Unit));
+            return Row(label, box);
+        }
+        if (action is CsAction.Set or CsAction.Momentary)
+        {
+            if (nd.Kind == CsKind.Bool)
+            {
+                var combo = new ComboBox { MinWidth = 120 };
+                combo.Items.Add(new ComboBoxItem { Content = "Off", Tag = (short)0 });
+                combo.Items.Add(new ComboBoxItem { Content = "On", Tag = (short)1 });
+                combo.SelectedIndex = draft.Value != 0 ? 1 : 0;
+                combo.SelectionChanged += (_, _) =>
+                {
+                    if (_building) return;
+                    if (combo.SelectedItem is ComboBoxItem it && it.Tag is short v) _irDrafts[sub].Value = v;
+                };
+                return Row("Value", combo);
+            }
+            var box = NumberField(CsWire.DecodeValue(draft.Value, nd.Unit), nd.Unit, v =>
+                _irDrafts[sub].Value = CsWire.EncodeValue(v, nd.Unit));
+            return Row($"Value ({CsWire.UnitSymbol(nd.Unit)})", box);
+        }
+        return null; // Toggle / Trigger
+    }
+
+    // ── Actions: add / remove / change ───────────────────────────────────────
+
+    private async void AddControl(CsType type)
+    {
+        int slot = FirstFreeSlot();
+        if (slot < 0) return;
+        _drafts[slot] = MakeDefaultBinding(type, slot);
+        _nameEdits[slot] = "";
+        _expanded.Add(slot);
+        RebuildCards();
+        BuildAddMenu();
+        // A freshly-added control is seeded valid — apply immediately.
+        await ApplySlotAsync(slot);
+    }
+
+    private void ChangeType(int slot, CsType type)
+    {
+        if (_drafts[slot].Type == type) return;
+        _drafts[slot] = MakeDefaultBinding(type, slot);
+        RebuildCards();
+        BuildAddMenu();
+    }
+
+    private void ChangeNoun(int slot, int noun)
+    {
+        var b = _drafts[slot];
+        b.Noun = (byte)noun;
+        var nd = _vm.CsNounDescFor(noun);
+        if (nd != null)
+        {
+            var acts = ValidActions(b.Type, nd);
+            if (!acts.Contains((CsAction)b.Action))
+                b.Action = acts.Count > 0 ? (byte)acts[0] : (byte)0;
+            if (b.Target >= nd.TargetCount) b.Target = 0;
+        }
+        // Reset operands to defaults for the new noun.
+        b.Value = 0; b.Step = 0; b.RangeMin = 0; b.RangeMax = 0;
+        RebuildCards();
+    }
+
+    private void ChangeAction(int slot, CsAction action)
+    {
+        _drafts[slot].Action = (byte)action;
+        _drafts[slot].Value = 0; _drafts[slot].Step = 0;
+        _drafts[slot].RangeMin = 0; _drafts[slot].RangeMax = 0;
+        RebuildCards();
+    }
+
+    private async void RemoveControl(int slot)
+    {
+        // Unapplied slot → just drop the local draft.
+        if (!_vm.CsBindings[slot].IsConfigured)
+        {
+            _drafts[slot] = CsBinding.Cleared();
+            _nameEdits[slot] = "";
+            _expanded.Remove(slot);
+            RebuildCards();
+            BuildAddMenu();
+            return;
+        }
+        _drafts[slot] = CsBinding.Cleared();
+        _nameEdits[slot] = "";
+        _expanded.Remove(slot);
+        RebuildCards();
+        await Task.Run(() =>
+        {
+            _vm.SetCsBinding(slot, CsBinding.Cleared());
+            if (!string.IsNullOrEmpty(_vm.CsNames[slot])) _vm.SetCsName(slot, "");
+        });
+        HardwarePins.RaisePinAssignmentsChanged();
+        SeedDraftFrom(slot);
+        RebuildCards();
+        BuildAddMenu();
+    }
+
+    private void CommitName(int slot, string text)
+    {
+        _nameEdits[slot] = text ?? "";
+        RefreshStatusIndicators();
+    }
+
+    private void RevertSlot(int slot)
+    {
+        SeedDraftFrom(slot);
+        RebuildCards();
+    }
+
+    private async Task ApplySlotAsync(int slot)
+    {
+        if (_applyingSlot != null) return;
+        _applyingSlot = slot;
+        RefreshStatusIndicators();
+
+        var binding = _drafts[slot].Clone();
+        bool bindingChanged = !binding.WireEquals(_vm.CsBindings[slot]);
+        bool nameChanged = !string.Equals(_nameEdits[slot], _vm.CsNames[slot], StringComparison.Ordinal);
+        string name = _nameEdits[slot];
+
+        byte status = CsStatus.Success;
+        await Task.Run(() =>
+        {
+            if (bindingChanged) status = _vm.SetCsBinding(slot, binding);
+            if (status == CsStatus.Success && nameChanged) status = _vm.SetCsName(slot, name);
+        });
+
+        _applyingSlot = null;
+        HardwarePins.RaisePinAssignmentsChanged();
+        SeedDraftFrom(slot);
+        RebuildCards();
+        BuildAddMenu();
+
+        if (status != CsStatus.Success)
+            ShowToast(CsStatus.Message(status));
+    }
+
+    // ── IR command actions ───────────────────────────────────────────────────
+
+    private void AddIrCommand(int slot)
+    {
+        int sub = FirstFreeIrSub();
+        if (sub < 0) return;
+        var draft = new IrCommand();
+        var noun = AvailableIrNouns().FirstOrDefault();
+        if (noun.nd != null)
+        {
+            draft.Noun = (byte)noun.noun;
+            var acts = ValidIrActions(noun.nd);
+            draft.Action = acts.Count > 0 ? (byte)acts[0] : (byte)0;
+        }
+        _irDrafts[sub] = draft;
+        _irExpanded.Add(sub);
+        RebuildCards();
+    }
+
+    private async void RemoveIrCommand(int sub)
+    {
+        bool wasLive = _vm.CsIrCommands[sub].IsConfigured;
+        _irDrafts[sub] = new IrCommand();
+        _irExpanded.Remove(sub);
+        RebuildCards();
+        if (wasLive)
+        {
+            await Task.Run(() => _vm.SetCsIrCommand(sub, new IrCommand()));
+            _irDrafts[sub] = _vm.CsIrCommands[sub].Clone();
+            RebuildCards();
+        }
+    }
+
+    private async Task ApplyIrCommandAsync(int sub)
+    {
+        var cmd = _irDrafts[sub].Clone();
+        if (!cmd.IsConfigured) { ShowToast("Learn a code before applying this button."); return; }
+        byte status = await Task.Run(() => _vm.SetCsIrCommand(sub, cmd));
+        _irDrafts[sub] = _vm.CsIrCommands[sub].Clone();
+        RebuildCards();
+        if (status != CsStatus.Success) ShowToast(CsStatus.Message(status));
+    }
+
+    private void StartLearn(int sub)
+    {
+        if (_learningSub != null) return;
+        _learningSub = sub;
+        RebuildCards();
+
+        var proto = _irDrafts[sub];
+        _ = Task.Run(async () =>
+        {
+            bool armed = _vm.CsIrLearnArm();
+            if (!armed)
+            {
+                DispatcherQueue.TryEnqueue(() => FinishLearn(sub, null, "No IR receiver is active."));
+                return;
+            }
+            CsIrLearnResult? result = null;
+            for (int i = 0; i < 115 && _learningSub == sub; i++)
+            {
+                await Task.Delay(100);
+                var r = _vm.CsIrLearnRead();
+                if (r != null && r.State != CsIrLearnState.Armed) { result = r; break; }
+            }
+            DispatcherQueue.TryEnqueue(() => FinishLearn(sub, result, null));
+        });
+    }
+
+    private void FinishLearn(int sub, CsIrLearnResult? result, string? error)
+    {
+        if (_learningSub != sub) return;
+        _learningSub = null;
+
+        if (error != null) { ShowToast(error); RebuildCards(); return; }
+        if (result != null && result.IsDone && result.Code != 0)
+        {
+            _irDrafts[sub].Proto = result.Proto;
+            _irDrafts[sub].Code = result.Code;
+            ShowToast($"Learned a {CsWire.IrProtocolName(result.Proto)} code. Apply to keep it.");
+        }
+        else if (result != null && result.IsTimeout)
+        {
+            ShowToast("No remote button was detected.");
+        }
+        else
+        {
+            ShowToast("Learn stopped.");
+        }
+        RebuildCards();
+    }
+
+    private void CancelLearn()
+    {
+        _learningSub = null;
+        _ = Task.Run(() => _vm.CsIrLearnCancel());
+        RebuildCards();
+    }
+
+    // ── Save / revert all ────────────────────────────────────────────────────
+
+    private async void OnSaveAllClick(object sender, RoutedEventArgs e)
+    {
+        if (_savingConfig) return;
+        _savingConfig = true;
+        SaveRing.IsActive = true;
+        SaveAllButton.IsEnabled = RevertAllButton.IsEnabled = false;
+
+        byte status = await Task.Run(() => _vm.CsSave());
+
+        _savingConfig = false;
+        SaveRing.IsActive = false;
+        RefreshStatusIndicators();
+        if (status != CsStatus.Success) ShowToast(CsStatus.Message(status));
+        else ShowToast("Saved to device.");
+    }
+
+    private async void OnRevertAllClick(object sender, RoutedEventArgs e)
+    {
+        if (_savingConfig) return;
+        _savingConfig = true;
+        SaveRing.IsActive = true;
+        SaveAllButton.IsEnabled = RevertAllButton.IsEnabled = false;
+
+        await Task.Run(() => _vm.CsRevert());
+
+        _savingConfig = false;
+        SaveRing.IsActive = false;
+        HardwarePins.RaisePinAssignmentsChanged();
+        // OnReloaded re-seeds drafts and rebuilds.
+    }
+
+    // ── Status refresh ───────────────────────────────────────────────────────
+
+    private void RefreshStatusIndicators()
+    {
+        var status = _vm.CsStatus;
+        foreach (var (slot, pill) in _slotPills)
+        {
+            bool dirty = SlotDirty(slot);
+            if (dirty)
+            {
+                pill.Text = "Pending";
+                pill.Foreground = new SolidColorBrush(Color.FromArgb(255, 240, 180, 90));
+            }
+            else if (status?.IsSlotActive(slot) == true)
+            {
+                pill.Text = "Active";
+                pill.Foreground = new SolidColorBrush(Color.FromArgb(255, 100, 200, 140));
+            }
+            else
+            {
+                pill.Text = "Inactive";
+                pill.Foreground = new SolidColorBrush(Color.FromArgb(255, 240, 180, 90));
+            }
+        }
+        foreach (var (slot, apply) in _slotApply)
+            apply.IsEnabled = SlotDirty(slot) && _applyingSlot == null && !_savingConfig;
+
+        bool dirtyAll = _vm.CsDirty;
+        SaveBar.Visibility = dirtyAll ? Visibility.Visible : Visibility.Collapsed;
+        SaveAllButton.IsEnabled = RevertAllButton.IsEnabled = dirtyAll && !_savingConfig;
+    }
+
+    private bool SlotDirty(int slot)
+    {
+        if (slot >= _vm.CsBindings.Count) return false;
+        if (!_drafts[slot].WireEquals(_vm.CsBindings[slot])) return true;
+        if (!string.Equals(_nameEdits[slot], _vm.CsNames[slot], StringComparison.Ordinal)) return true;
+        return false;
+    }
+
+    private void ShowToast(string msg)
+    {
+        SaveStatusText.Text = msg;
+        if (SaveBar.Visibility != Visibility.Visible)
+        {
+            // Surface the message via the InfoBar when the save bar is hidden.
+            LoadingBar.Title = "";
+            LoadingBar.Message = msg;
+            LoadingBar.Severity = InfoBarSeverity.Informational;
+            LoadingBar.IsOpen = true;
+        }
+    }
+
+    // ── Helpers: seeding, pins, caps queries ─────────────────────────────────
+
+    private void SeedDraftFrom(int slot)
+    {
+        _drafts[slot] = _vm.CsBindings[slot].Clone();
+        _nameEdits[slot] = _vm.CsNames[slot];
+    }
+
+    private int FirstFreeSlot()
+    {
+        for (int i = 0; i < _vm.CsSlotCount; i++)
+            if (!_drafts[i].IsConfigured) return i;
+        return -1;
+    }
+
+    private int FirstFreeIrSub()
+    {
+        for (int i = 0; i < _vm.CsIrMax; i++)
+            if (!_irDrafts[i].IsConfigured) return i;
+        return -1;
+    }
+
+    private int ConfiguredIrCount() => _irDrafts.Take(_vm.CsIrMax).Count(c => c.IsConfigured);
+
+    private bool AnyIrReceiver()
+    {
+        for (int i = 0; i < _vm.CsSlotCount; i++)
+            if (_drafts[i].Type == CsType.Ir) return true;
+        return false;
+    }
+
+    /// <summary>GPIOs not claimed by any other feature (or another CS slot).</summary>
+    private IEnumerable<byte> FreePins(int slot, bool adcOnly)
+    {
+        var owners = HardwarePins.BuildOwnerMap(_vm, excludeCsSlot: slot);
+        var pool = adcOnly ? CsLimits.AdcPins : HardwarePins.ValidPins;
+        foreach (var pin in pool)
+            if (!owners.ContainsKey(pin)) yield return pin;
+    }
+
+    private IEnumerable<(int noun, CsNounDesc nd)> AvailableNouns(CsType type)
+    {
+        var caps = _vm.CsCaps!;
+        var typeDesc = caps.DescFor(type);
+        for (int n = 0; n < _vm.CsNounDescs.Count; n++)
+        {
+            var nd = _vm.CsNounDescs[n];
+            if (nd == null || !nd.IsAvailable) continue;
+            // Only nouns whose action set intersects this component's actions.
+            if (typeDesc != null && (typeDesc.Value.Actions & nd.Actions) == 0) continue;
+            yield return (n, nd);
+        }
+    }
+
+    private IEnumerable<(int noun, CsNounDesc nd)> AvailableIrNouns()
+    {
+        // IR commands are button-shaped; use the button type's action mask.
+        var caps = _vm.CsCaps!;
+        var btn = caps.DescFor(CsType.Button);
+        for (int n = 0; n < _vm.CsNounDescs.Count; n++)
+        {
+            var nd = _vm.CsNounDescs[n];
+            if (nd == null || !nd.IsAvailable) continue;
+            if (btn != null && (btn.Value.Actions & nd.Actions) == 0) continue;
+            yield return (n, nd);
+        }
+    }
+
+    private List<CsAction> ValidActions(CsType type, CsNounDesc nd)
+    {
+        var caps = _vm.CsCaps!;
+        var typeDesc = caps.DescFor(type);
+        var list = new List<CsAction>();
+        foreach (CsAction a in Enum.GetValues<CsAction>())
+            if ((typeDesc?.SupportsAction(a) ?? false) && nd.SupportsAction(a))
+                list.Add(a);
+        return list;
+    }
+
+    private List<CsAction> ValidIrActions(CsNounDesc nd)
+    {
+        // Button subset: INC, DEC, TOGGLE, SET, TRIGGER, MOMENTARY.
+        var subset = new[] { CsAction.Inc, CsAction.Dec, CsAction.Toggle, CsAction.Set, CsAction.Trigger, CsAction.Momentary };
+        return subset.Where(nd.SupportsAction).ToList();
+    }
+
+    private IEnumerable<(int band, string label)> BandOptions(int noun)
+    {
+        for (int b = 0; b < 10; b++) yield return (b, $"PEQ {b + 1}");
+        if (noun == (int)CsNoun.FilterFreq || noun == (int)CsNoun.FilterBypass)
+            for (int b = 20; b < 24; b++) yield return (b, $"Crossover {b - 19}");
+    }
+
+    private CsBinding MakeDefaultBinding(CsType type, int slot)
+    {
+        var b = new CsBinding { Type = type, Gpio1 = CsLimits.GpioUnused };
+        var caps = _vm.CsCaps!;
+        var typeDesc = caps.DescFor(type);
+        bool adcOnly = typeDesc?.PinClass == CsPinClass.Adc;
+        bool twoPins = typeDesc?.PinCount == 2;
+
+        // Pins.
+        var free = FreePins(slot, adcOnly).ToList();
+        if (free.Count > 0) b.Gpio0 = free[0];
+        if (twoPins) b.Gpio1 = free.Count > 1 ? free[1] : CsLimits.GpioUnused;
+
+        if (type == CsType.Button) b.Event = (byte)CsEvent.Press;
+
+        if (type == CsType.Ir)
+        {
+            // Container binding: noun/action must be 0.
+            b.Noun = 0; b.Action = 0;
+            return b;
+        }
+
+        // Default noun/action = first available intersecting the type.
+        var noun = AvailableNouns(type).FirstOrDefault();
+        if (noun.nd != null)
+        {
+            b.Noun = (byte)noun.noun;
+            var acts = ValidActions(type, noun.nd);
+            if (acts.Count > 0) b.Action = (byte)acts[0];
+        }
+        return b;
+    }
+
+    // ── Small view helpers ───────────────────────────────────────────────────
+
+    private static Style? AccentStyle =>
+        Application.Current.Resources.TryGetValue("AccentButtonStyle", out var s) ? s as Style : null;
+
+    private static Brush SecondaryBrush =>
+        Application.Current.Resources.TryGetValue("TextFillColorSecondaryBrush", out var b) && b is Brush br
+            ? br : new SolidColorBrush(Color.FromArgb(255, 150, 150, 150));
+
+    private static Grid Row(string label, FrameworkElement control)
+    {
+        var g = new Grid { ColumnSpacing = 12 };
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var lbl = new TextBlock
+        {
+            Text = label, VerticalAlignment = VerticalAlignment.Center, FontSize = 12,
+        };
+        Grid.SetColumn(lbl, 0);
+        g.Children.Add(lbl);
+        control.HorizontalAlignment = HorizontalAlignment.Left;
+        Grid.SetColumn(control, 1);
+        g.Children.Add(control);
+        return g;
+    }
+
+    /// <summary>A numeric text field that parses on Enter / focus loss and calls
+    /// back with the parsed value. Unit is used only for display formatting.</summary>
+    private static TextBox NumberField(double value, CsUnit unit, Action<double> onChanged)
+    {
+        var box = new TextBox { MinWidth = 100, Text = FormatNumber(value) };
+        void Commit()
+        {
+            if (double.TryParse(box.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var v)
+                || double.TryParse(box.Text, NumberStyles.Float, CultureInfo.CurrentCulture, out v))
+            {
+                onChanged(v);
+                box.Text = FormatNumber(v);
+            }
+        }
+        box.LostFocus += (_, _) => Commit();
+        box.KeyDown += (_, e) => { if (e.Key == VirtualKey.Enter) Commit(); };
+        return box;
+    }
+
+    private static string FormatNumber(double v) =>
+        v == Math.Truncate(v)
+            ? ((long)v).ToString(CultureInfo.InvariantCulture)
+            : v.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private static string TypeName(CsType t) => t switch
+    {
+        CsType.Button => "Button",
+        CsType.Switch => "Switch",
+        CsType.Pot => "Potentiometer",
+        CsType.Encoder => "Rotary Encoder",
+        CsType.Led => "LED",
+        CsType.LedPwm => "LED (dimmable)",
+        CsType.Ir => "IR Remote",
+        _ => "None",
+    };
+
+    private static string ActionName(CsAction a) => a switch
+    {
+        CsAction.Adjust => "Adjust (absolute)",
+        CsAction.Step => "Step per detent",
+        CsAction.Inc => "Increase",
+        CsAction.Dec => "Decrease",
+        CsAction.Toggle => "Toggle",
+        CsAction.Set => "Set value",
+        CsAction.Follow => "Follow switch",
+        CsAction.Trigger => "Trigger",
+        CsAction.IndEquals => "Indicate (equals)",
+        CsAction.Momentary => "Momentary (while held)",
+        CsAction.IndAbove => "Indicate (above)",
+        CsAction.IndLevel => "Indicate level",
+        _ => a.ToString(),
+    };
+
+    private string ChannelLabel(CsTarget kind, int i) => kind switch
+    {
+        CsTarget.InputCh => $"Input {i + 1}",
+        CsTarget.OutputCh => $"Output {i + 1}",
+        _ => $"Channel {i + 1}",
+    };
+}

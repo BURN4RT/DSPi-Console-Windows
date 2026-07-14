@@ -67,6 +67,11 @@
                                 <KeyboardAccelerator Modifiers="Control,Shift" Key="G"/>
                             </MenuFlyoutItem.KeyboardAccelerators>
                         </MenuFlyoutItem>
+                        <MenuFlyoutItem Text="Control Surfaces..." Click="OnControlSurfacesClick">
+                            <MenuFlyoutItem.KeyboardAccelerators>
+                                <KeyboardAccelerator Modifiers="Control,Shift" Key="I"/>
+                            </MenuFlyoutItem.KeyboardAccelerators>
+                        </MenuFlyoutItem>
                         <MenuFlyoutItem Text="Stats for nerbs" Click="OnStatsClick">
                             <MenuFlyoutItem.KeyboardAccelerators>
                                 <KeyboardAccelerator Modifiers="Control,Shift" Key="T"/>

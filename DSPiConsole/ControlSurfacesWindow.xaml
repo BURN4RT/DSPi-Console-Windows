@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="DSPiConsole.ControlSurfacesWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Control Surfaces">
+
+    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" Padding="20,20,0,12">
+            <StackPanel Spacing="14" Padding="0,0,20,0">
+
+                <!-- Header -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE9E9;" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="Control Surfaces" FontSize="16" FontWeight="SemiBold"/>
+                        <TextBlock Text="Bind physical buttons, knobs, switches, LEDs and an IR remote to DSP controls"
+                                   FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Grid>
+
+                <InfoBar x:Name="UnsupportedBar" IsOpen="False" IsClosable="False"
+                         Severity="Informational" Title="Not available"
+                         Message="This firmware does not include control-surface support."/>
+
+                <InfoBar x:Name="LoadingBar" IsOpen="False" IsClosable="False"
+                         Severity="Informational" Title="Reading capabilities…"
+                         Message="Fetching control-surface configuration from the device."/>
+
+                <StackPanel x:Name="BodyPanel" Spacing="12">
+
+                    <!-- Empty-state hint -->
+                    <TextBlock x:Name="EmptyHint"
+                               Text="No controls configured yet. Add a button, knob, switch, encoder, LED or IR receiver to get started."
+                               FontSize="12" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Visibility="Collapsed"/>
+
+                    <!-- Dynamic slot cards -->
+                    <StackPanel x:Name="CardsPanel" Spacing="10"/>
+
+                    <!-- Add control -->
+                    <DropDownButton x:Name="AddButton" Content="Add Control" HorizontalAlignment="Left">
+                        <DropDownButton.Flyout>
+                            <MenuFlyout x:Name="AddFlyout"/>
+                        </DropDownButton.Flyout>
+                    </DropDownButton>
+
+                    <TextBlock
+                        Text="Changes preview live on the device. Use Save to persist them to flash, or Revert to discard."
+                        FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Save / Revert bar -->
+        <Border Grid.Row="1" x:Name="SaveBar"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0"
+                Padding="20,10" Visibility="Collapsed">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Unsaved changes" FontWeight="Medium"/>
+                    <TextBlock x:Name="SaveStatusText" Text="" FontSize="11"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                    <ProgressRing x:Name="SaveRing" IsActive="False" Width="18" Height="18"
+                                  VerticalAlignment="Center"/>
+                    <Button x:Name="RevertAllButton" Content="Revert" Click="OnRevertAllClick" MinWidth="80"/>
+                    <Button x:Name="SaveAllButton" Content="Save" Click="OnSaveAllClick"
+                            Style="{ThemeResource AccentButtonStyle}" MinWidth="80"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

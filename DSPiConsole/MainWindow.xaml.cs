@@ -55,6 +55,7 @@ public sealed partial class MainWindow : Window
     private VolumeLevellerWindow? _levellerWindow;
     private MatrixMixerWindow? _matrixMixerWindow;
     private TestSignalsWindow? _testSignalsWindow;
+    private ControlSurfacesWindow? _controlSurfacesWindow;
     private Settings.SettingsWindow? _settingsWindow;
 
     // Track output controls for live updates
@@ -4302,6 +4303,36 @@ public sealed partial class MainWindow : Window
         _testSignalsWindow = new TestSignalsWindow(ViewModel);
         _testSignalsWindow.Closed += (s, e) => _testSignalsWindow = null;
         _testSignalsWindow.Activate();
+    }
+
+    private async void OnControlSurfacesClick(object sender, RoutedEventArgs e)
+    {
+        if (_controlSurfacesWindow != null)
+        {
+            _controlSurfacesWindow.Activate();
+            return;
+        }
+
+        if (!ViewModel.IsDeviceConnected)
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "Device Not Connected",
+                Content = "Please connect a DSPi device first.",
+                CloseButtonText = "OK",
+                XamlRoot = Content.XamlRoot
+            };
+            await dialog.ShowAsync();
+            return;
+        }
+
+        // Probe caps + read the whole live config before opening so the window
+        // builds fully populated.
+        await Task.Run(() => ViewModel.FetchControlSurfaces());
+
+        _controlSurfacesWindow = new ControlSurfacesWindow(ViewModel);
+        _controlSurfacesWindow.Closed += (s, e) => _controlSurfacesWindow = null;
+        _controlSurfacesWindow.Activate();
     }
 
     private void OnStatsClick(object sender, RoutedEventArgs e)

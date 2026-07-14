@@ -100,6 +100,24 @@ public static class VendorCommands
     public const byte SetChannelName       = 0x9B;
     public const byte GetChannelName       = 0x9C;
 
+    // Control surfaces + IR remote (firmware control_surfaces.h). Physical GPIO
+    // controls and an IR receiver bound to DSP parameters. SET of a binding/name/
+    // IR-command is a live-only preview that applies asynchronously — the OUT
+    // latches, firmware records CS_STATUS_PENDING, and the host polls GetCsStatus
+    // (0x87) until LastSlot matches (0x80|sub for IR, 0xFF for save/revert) and
+    // LastStatus leaves Pending. 0x88-0x8A are reserved (I2S slave-mode branch).
+    public const byte SetCsBinding         = 0x84; // OUT 24-byte CsBinding, wValue=slot (0-15)
+    public const byte GetCsBinding         = 0x85; // IN 24-byte CsBinding, wValue=slot
+    public const byte GetCsCaps            = 0x86; // IN wValue=0xFFFF→header; wValue=noun→12-byte desc
+    public const byte GetCsStatus          = 0x87; // IN 32-byte CsStatusPacket
+    public const byte SetCsName            = 0x8B; // OUT 1-32 byte name, wValue=slot (single NUL clears)
+    public const byte GetCsName            = 0x8C; // IN 32-byte NUL-terminated name, wValue=slot
+    public const byte SetCsIrCmd           = 0x8D; // OUT 16-byte IrCommand, wValue=sub-slot (0-7)
+    public const byte GetCsIrCmd           = 0x8E; // IN 16-byte IrCommand, wValue=sub-slot
+    public const byte CsIrLearn            = 0x8F; // IN wValue 1=arm/0=cancel→1 ack; 2=read→8-byte result
+    public const byte CsSave               = 0x9D; // IN 1 ack byte; persist whole live config (deferred)
+    public const byte CsRevert             = 0x9E; // IN 1 ack byte; discard preview, reload flash (deferred)
+
     // I2S output configuration
     public const byte SetOutputType    = 0xC0;
     public const byte GetOutputType    = 0xC1;
@@ -2454,6 +2472,152 @@ public partial class DspDevice : ObservableObject, IDisposable
     {
         var r = ControlTransferIn(VendorCommands.GetAdatStatus, 0, AdatStatus.WireSize);
         return r == null ? null : AdatStatus.FromBytes(r);
+    }
+
+    // ── Control surfaces + IR remote (0x84–0x8F, 0x9D/0x9E) ──────────────────
+    //
+    // Binding/name/IR-command SETs are deferred: the OUT (or write-as-read GET)
+    // latches into a single-deep pending buffer and firmware immediately records
+    // CS_STATUS_PENDING; the 1 kHz loop runs the apply and overwrites with the
+    // real verdict. The host polls GetCsStatus until LastSlot names the op and
+    // LastStatus leaves Pending. All five deferred ops (binding, name, IR cmd,
+    // save, revert) share one LastStatus/LastSlot channel — serialize them.
+
+    /// <summary>Read the caps header + type table (0x86 wValue 0xFFFF). Null if the
+    /// firmware STALLs (older firmware without the feature). Request generously so a
+    /// larger future type table still fits (parse is length-tolerant).</summary>
+    public CsCapsHeader? GetCsCaps()
+    {
+        var r = ControlTransferIn(VendorCommands.GetCsCaps, CsLimits.CapsAll, 64);
+        return r == null ? null : CsCapsHeader.FromBytes(r);
+    }
+
+    /// <summary>Read one noun's 12-byte descriptor (0x86 wValue = noun index).</summary>
+    public CsNounDesc? GetCsNounDesc(int noun)
+    {
+        var r = ControlTransferIn(VendorCommands.GetCsCaps, (ushort)(noun & 0xFF), CsNounDesc.WireSize);
+        return r == null ? null : CsNounDesc.FromBytes(r);
+    }
+
+    /// <summary>Read the live 24-byte binding for a slot (0x85).</summary>
+    public CsBinding? GetCsBinding(int slot)
+    {
+        var r = ControlTransferIn(VendorCommands.GetCsBinding, (ushort)(slot & 0xFF), CsBinding.WireSize);
+        return r == null ? null : CsBinding.FromBytes(r);
+    }
+
+    /// <summary>Read the live 32-byte status packet (0x87). Null on transfer failure.</summary>
+    public CsStatusPacket? GetCsStatus()
+    {
+        var r = ControlTransferIn(VendorCommands.GetCsStatus, 0, 32);
+        return r == null ? null : CsStatusPacket.FromBytes(r);
+    }
+
+    /// <summary>Read a slot's live name (0x8C), NUL-terminated. "" if unset.</summary>
+    public string GetCsName(int slot)
+    {
+        var r = ControlTransferIn(VendorCommands.GetCsName, (ushort)(slot & 0xFF), CsLimits.NameLen);
+        if (r == null) return "";
+        int len = System.Array.IndexOf(r, (byte)0);
+        if (len < 0) len = r.Length;
+        return System.Text.Encoding.UTF8.GetString(r, 0, len);
+    }
+
+    /// <summary>Read a live 16-byte IR command sub-slot (0x8E).</summary>
+    public IrCommand? GetCsIrCommand(int sub)
+    {
+        var r = ControlTransferIn(VendorCommands.GetCsIrCmd, (ushort)(sub & 0xFF), IrCommand.WireSize);
+        return r == null ? null : IrCommand.FromBytes(r);
+    }
+
+    /// <summary>Poll GetCsStatus until the deferred op for <paramref name="expectedSlot"/>
+    /// resolves (LastSlot matches and LastStatus != Pending), or a ~600 ms budget
+    /// elapses. Returns the resolved CS status byte (or Pending if it never settled,
+    /// 0xFF on a status-read failure). Blocks — call off the UI thread.</summary>
+    public byte PollCsDeferred(byte expectedSlot)
+    {
+        for (int i = 0; i < 30; i++)
+        {
+            var st = GetCsStatus();
+            if (st == null) return 0xFF;
+            if (st.LastSlot == expectedSlot && st.LastStatus != CsStatus.Pending)
+                return st.LastStatus;
+            System.Threading.Thread.Sleep(20);
+        }
+        return CsStatus.Pending;
+    }
+
+    /// <summary>Stage a binding (0x84 OUT) and wait for the deferred apply. Returns
+    /// the CS status byte.</summary>
+    public byte SetCsBinding(int slot, CsBinding binding)
+    {
+        if (!ControlTransferOut(VendorCommands.SetCsBinding, (ushort)(slot & 0xFF), binding.ToBytes()))
+            return 0xFF;
+        return PollCsDeferred((byte)(slot & 0xFF));
+    }
+
+    /// <summary>Stage a slot name (0x8B OUT). Empty clears the name (single NUL —
+    /// an empty payload is rejected). Truncated to 31 UTF-8 bytes + NUL.</summary>
+    public byte SetCsName(int slot, string name)
+    {
+        byte[] payload;
+        if (string.IsNullOrEmpty(name))
+        {
+            payload = new byte[] { 0 };
+        }
+        else
+        {
+            var raw = System.Text.Encoding.UTF8.GetBytes(name);
+            int len = System.Math.Min(raw.Length, CsLimits.NameLen - 1);
+            payload = new byte[len + 1];
+            System.Array.Copy(raw, payload, len);
+            // payload[len] stays 0 (NUL terminator)
+        }
+        if (!ControlTransferOut(VendorCommands.SetCsName, (ushort)(slot & 0xFF), payload))
+            return 0xFF;
+        return PollCsDeferred((byte)(slot & 0xFF));
+    }
+
+    /// <summary>Stage an IR command sub-slot (0x8D OUT) and wait for the apply.
+    /// The poll key is 0x80|sub.</summary>
+    public byte SetCsIrCommand(int sub, IrCommand cmd)
+    {
+        if (!ControlTransferOut(VendorCommands.SetCsIrCmd, (ushort)(sub & 0xFF), cmd.ToBytes()))
+            return 0xFF;
+        return PollCsDeferred((byte)(CsLimits.LastSlotIrFlag | (sub & 0x7F)));
+    }
+
+    /// <summary>Persist the whole live config to flash (0x9D) and wait for the
+    /// deferred write (poll key 0xFF).</summary>
+    public byte CsSave()
+    {
+        var r = ControlTransferIn(VendorCommands.CsSave, 0, 1);
+        if (r == null) return 0xFF;
+        return PollCsDeferred(CsLimits.LastSlotSave);
+    }
+
+    /// <summary>Discard the live preview and re-apply the stored config (0x9E).</summary>
+    public byte CsRevert()
+    {
+        var r = ControlTransferIn(VendorCommands.CsRevert, 0, 1);
+        if (r == null) return 0xFF;
+        return PollCsDeferred(CsLimits.LastSlotSave);
+    }
+
+    /// <summary>Arm IR learn (0x8F wValue=1). False if the firmware STALLs (no live
+    /// IR receiver → CS_STATUS_NO_IR).</summary>
+    public bool CsIrLearnArm() =>
+        ControlTransferIn(VendorCommands.CsIrLearn, CsIrLearnAction.Arm, 1) != null;
+
+    /// <summary>Cancel IR learn (0x8F wValue=0).</summary>
+    public void CsIrLearnCancel() =>
+        ControlTransferIn(VendorCommands.CsIrLearn, CsIrLearnAction.Cancel, 1);
+
+    /// <summary>Read the IR-learn result (0x8F wValue=2). Null on transfer failure.</summary>
+    public CsIrLearnResult? CsIrLearnRead()
+    {
+        var r = ControlTransferIn(VendorCommands.CsIrLearn, CsIrLearnAction.Read, CsIrLearnResult.WireSize);
+        return r == null ? null : CsIrLearnResult.FromBytes(r);
     }
 
     /// <summary>

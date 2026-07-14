@@ -105,7 +105,8 @@ internal static class HardwarePins
         bool excludeI2sRxSelf = false,
         int excludeSpdifRxIndex = -1,
         int excludeI2sRxPair = -1,
-        bool excludeAdatSelf = false)
+        bool excludeAdatSelf = false,
+        int excludeCsSlot = -1)
     {
         var owners = new Dictionary<byte, string>();
 
@@ -173,6 +174,26 @@ internal static class HardwarePins
         // stored preference). excludeAdatSelf keeps it pickable on its own combo.
         if (vm.AdatSupported && vm.AdatEnabled && !excludeAdatSelf)
             owners[vm.AdatPin] = "ADAT";
+
+        // Control-surface GPIOs: only LIVE bindings (CsStatus.IsSlotActive) actually
+        // hold a pin. Encoders claim both gpio0 and gpio1; single-pin types leave
+        // gpio1 = 0xFF. excludeCsSlot keeps a slot's own pins pickable on its card.
+        if (vm.ControlSurfacesSupported && vm.CsStatus is { } csStatus)
+        {
+            int slots = vm.CsSlotCount;
+            for (int s = 0; s < slots; s++)
+            {
+                if (s == excludeCsSlot) continue;
+                if (!csStatus.IsSlotActive(s)) continue;
+                var b = vm.CsBindings[s];
+                if (!b.IsConfigured) continue;
+                string label = !string.IsNullOrWhiteSpace(vm.CsNames[s])
+                    ? vm.CsNames[s]
+                    : $"Ctrl {s + 1}";
+                owners[b.Gpio0] = label;
+                if (b.Gpio1 != CsLimits.GpioUnused) owners[b.Gpio1] = label;
+            }
+        }
 
         // External DAC mute pin (V10+): only claim when supported AND
         // configured with a real pin. The "No Pin" sentinel disables
