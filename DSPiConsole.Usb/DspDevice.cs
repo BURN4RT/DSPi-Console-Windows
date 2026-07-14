@@ -2254,9 +2254,10 @@ public partial class DspDevice : ObservableObject, IDisposable
     #endregion
 
     /// <summary>
-    /// Fetch all DSP parameters (wire-format V20, 5876 bytes). The V16+ payload
+    /// Fetch all DSP parameters (wire-format V24, 5900 bytes). The V16+ payload
     /// exceeds WinUSB's documented 4096-byte control-transfer cap, so it is read
-    /// in ≤2048-byte sequential chunks via REQ_GET_ALL_PARAMS_CHUNK (0xA2).
+    /// in ≤2048-byte sequential chunks via REQ_GET_ALL_PARAMS_CHUNK (0xA2). The
+    /// actual length comes from the header, so this adapts to any wire version.
     ///
     /// Requesting offset 0 makes the device snapshot the whole struct into an
     /// internal buffer, so every chunk comes from one coherent image. The

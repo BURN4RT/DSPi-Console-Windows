@@ -133,6 +133,19 @@ public class FilterParams : IEquatable<FilterParams>
     /// </summary>
     public bool Bypass { get; set; } = false;
 
+    /// <summary>
+    /// Linkwitz Transform target pole Q (Qp). Only meaningful when
+    /// <see cref="Type"/> == <see cref="FilterType.LinkwitzTransform"/>; ignored by
+    /// every other type. For LT, <see cref="Frequency"/> = f0 (driver resonance),
+    /// <see cref="Q"/> = Q0 (driver Q), and <see cref="Gain"/> carries fp in Hz
+    /// (NOT dB). Wire encoding is Qp×512 in the band's reserved bytes; a stored 0
+    /// decodes to this 0.707 (Butterworth) default. Firmware wire V22+.
+    /// </summary>
+    public float Qp { get; set; } = DefaultQp;
+
+    /// <summary>Target Q used when the wire <c>qp_x512</c> is 0 (firmware default).</summary>
+    public const float DefaultQp = 0.707f;
+
     public FilterParams() { }
 
     public FilterParams(FilterType type, float freq, float q, float gain)
@@ -150,7 +163,8 @@ public class FilterParams : IEquatable<FilterParams>
         Q = Q,
         Gain = Gain,
         IsActive = IsActive,
-        Bypass = Bypass
+        Bypass = Bypass,
+        Qp = Qp
     };
 
     public bool Equals(FilterParams? other)
@@ -160,9 +174,10 @@ public class FilterParams : IEquatable<FilterParams>
                Math.Abs(Frequency - other.Frequency) < 0.01f &&
                Math.Abs(Q - other.Q) < 0.001f &&
                Math.Abs(Gain - other.Gain) < 0.01f &&
+               Math.Abs(Qp - other.Qp) < 0.001f &&
                Bypass == other.Bypass;
     }
 
     public override bool Equals(object? obj) => Equals(obj as FilterParams);
-    public override int GetHashCode() => HashCode.Combine(Type, Frequency, Q, Gain, Bypass);
+    public override int GetHashCode() => HashCode.Combine(Type, Frequency, Q, Gain, Bypass, Qp);
 }

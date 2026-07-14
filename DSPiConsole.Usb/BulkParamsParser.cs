@@ -5,14 +5,22 @@ namespace DSPiConsole.Usb;
 
 /// <summary>
 /// Parsed result from a bulk parameter fetch (REQ_GET_ALL_PARAMS, 0xA0 /
-/// chunked 0xA2). Wire format V20 (firmware 1.1.x, unified channel model).
+/// chunked 0xA2). Wire format V24 (firmware 1.1.x+, unified channel model).
 ///
 /// V16 broke bulk-params backward compatibility with no migration: inputs are
 /// now first-class channels (no "master"), and the channel index space is
 /// [ inputs 0..NumInputChannels-1 ][ outputs NumInputChannels..NumChannels-1 ].
-/// The firmware rejects any payload whose format_version != 20 or whose length
-/// != sizeof(WireBulkParams) (5876), so there are no legacy size anchors or
+/// The firmware rejects any payload whose format_version != 24 or whose length
+/// != sizeof(WireBulkParams) (5900), so there are no legacy size anchors or
 /// per-section version gates anymore — every section is always present.
+///
+/// V17..V24 only reinterpreted previously-reserved bytes in place or appended a
+/// tail, so every offset ≤ 5875 is unchanged from V16. The deltas since V20:
+/// V21 = I2S clock master/slave mode (input-config byte), V22 = Linkwitz Transform
+/// target Q in each EQ band's reserved bytes, V23 = 24-byte psybass section
+/// appended (→ 5900), V24 = ADAT input pin/enable/clock (input-config bytes). The
+/// I2S clock-pin unified/split fields live in the I2S-config section and were
+/// claimed from reserved space without a wire bump.
 /// </summary>
 public class BulkParams
 {
@@ -73,6 +81,14 @@ public class BulkParams
     public byte MckMultiplierEncoded; // 0=128x, 1=256x
     public bool HasI2SConfig;
 
+    // I2S clock-pin mode (unified/split BCK+LRCLK pairs). Claimed from I2S-config
+    // reserved bytes without a wire bump: clock_pin_mode_p1 is +1-encoded
+    // (0=absent, 1=unified, 2=split); bck_pin_slave is the slave-pair BCK GPIO
+    // (LRCLK = +1). Present only when clock_pin_mode_p1 != 0.
+    public byte I2sClockPinMode;       // 0=unified, 1=split (decoded)
+    public byte I2sBckPinSlave;        // slave-pair BCK GPIO
+    public bool HasI2sClockPinMode;
+
     // ── Volume leveller (offset 4648, 20 bytes) ──
     public bool LevellerEnabled;
     public byte LevellerSpeed;       // 0=Slow, 1=Medium, 2=Fast
@@ -111,6 +127,17 @@ public class BulkParams
     public byte SpdifRxEnabledExt;                  // decoded enable mask (0 = both disabled)
     public bool HasSpdifExtInputs;
 
+    // I2S clock master/slave mode (input-config byte, V21+). 0=master, 1=slave.
+    public byte I2sClockMode;
+    public bool HasI2sClockMode;
+
+    // ADAT input (input-config bytes, V24+, RP2350). enable/clock are +1-encoded
+    // on the wire (0=absent); decoded here. Pin is the raw RX GPIO (0xFF = unset).
+    public byte AdatInputPin;
+    public bool AdatInputEnabled;
+    public byte AdatInputClockMode;   // 0=master, 1=slave
+    public bool HasAdatInput;
+
     // ── LG Sound Sync (offset 4732, 16 bytes) ──
     public bool LgSoundSyncEnabled;
     public bool HasLgSoundSync;
@@ -135,6 +162,16 @@ public class BulkParams
     public bool AdatEnabled;
     public byte AdatPin;
     public bool HasAdat;
+
+    // ── Psychoacoustic bass (offset 5876, 24 bytes) — appended V23+ ──
+    public bool PsybassEnabled;
+    public ushort PsybassOutputMask;   // bit k = process output channel k
+    public float PsybassCutoffHz;      // 30..300
+    public float PsybassHarmonicsDb;   // -24..+12
+    public float PsybassDriveDb;       // 0..18
+    public float PsybassCharacterPct;  // 0..100
+    public float PsybassOriginalDb;    // -60..0
+    public bool HasPsybass;
 }
 
 /// <summary>
@@ -156,8 +193,13 @@ public static class BulkParamsParser
     internal const int WireBandSize = 16;        // sizeof(WireBandParams)
 
     public const int PacketSizeV20 = 5876;       // sizeof(WireBulkParams) at V20
+    public const int PacketSizeV24 = 5900;       // sizeof(WireBulkParams) at V24 (+psybass)
     public const byte MinFormatVersion = 16;     // unified channel model floor
-    public const byte CurrentFormatVersion = 20;
+    public const byte CurrentFormatVersion = 24;
+
+    // Raw wire value of FILTER_LINKWITZ_TRANSFORM (FilterType.LinkwitzTransform).
+    // Referenced by value here so band decoding is independent of the Core enum.
+    private const byte WireFilterLinkwitzTransform = 11;
 
     // Section offsets (bytes) into WireBulkParams. Derived directly from the
     // struct member order + sizes in firmware bulk_params.h.
@@ -181,6 +223,7 @@ public static class BulkParamsParser
     private const int OffsetDacHwMute = 4764;    // 16
     internal const int OffsetCrossover = 4780;   // 1088 (17 × 4 × 16); exposed for notify dispatch
     private const int OffsetAdat = 5868;         // 8
+    private const int OffsetPsybass = 5876;      // 24 (appended V23+)
 
     public static BulkParams? Parse(byte[] buffer)
     {
@@ -287,6 +330,14 @@ public static class BulkParamsParser
         p.MckPin = buffer[OffsetI2S + 5];
         p.MckEnabled = buffer[OffsetI2S + 6] != 0;
         p.MckMultiplierEncoded = buffer[OffsetI2S + 7];
+        // Clock-pin mode (+1 encoded at +8) and slave-pair BCK GPIO (+9).
+        byte clockPinModeP1 = buffer[OffsetI2S + 8];
+        if (clockPinModeP1 != 0)
+        {
+            p.HasI2sClockPinMode = true;
+            p.I2sClockPinMode = (byte)(clockPinModeP1 - 1); // 0=unified, 1=split
+            p.I2sBckPinSlave = buffer[OffsetI2S + 9];
+        }
 
         // ── Volume leveller (20 bytes) ──
         p.HasLevellerConfig = true;
@@ -336,6 +387,25 @@ public static class BulkParamsParser
             p.SpdifRxEnabledExt = (byte)(spdifEnP1 - 1);
         }
 
+        // I2S clock master/slave mode (V21+, plain 0/1 at +11).
+        if (p.FormatVersion >= 21)
+        {
+            p.HasI2sClockMode = true;
+            p.I2sClockMode = buffer[OffsetInputCfg + 11];
+        }
+
+        // ADAT input (V24+, RP2350). pin @+12 (0xFF = unset), enable @+13 (+1),
+        // clock mode @+14 (+1). enable/clock are +1-encoded so 0 = absent.
+        if (p.FormatVersion >= 24)
+        {
+            p.HasAdatInput = true;
+            p.AdatInputPin = buffer[OffsetInputCfg + 12];
+            byte adatEnP1 = buffer[OffsetInputCfg + 13];
+            p.AdatInputEnabled = adatEnP1 == 2;   // 1=disabled, 2=enabled
+            byte adatClkP1 = buffer[OffsetInputCfg + 14];
+            p.AdatInputClockMode = (byte)(adatClkP1 == 2 ? 1 : 0); // 1=master, 2=slave
+        }
+
         // ── LG Sound Sync (16 bytes) ──
         p.HasLgSoundSync = true;
         p.LgSoundSyncEnabled = buffer[OffsetLgSoundSync + 0] != 0;
@@ -366,6 +436,20 @@ public static class BulkParamsParser
         p.AdatEnabled = buffer[OffsetAdat + 0] != 0;
         p.AdatPin = buffer[OffsetAdat + 1];
 
+        // ── Psychoacoustic bass (24 bytes, appended V23+) ──
+        // Present only when the payload actually carries the tail section.
+        if (buffer.Length >= PacketSizeV24)
+        {
+            p.HasPsybass = true;
+            p.PsybassEnabled = buffer[OffsetPsybass + 0] != 0;
+            p.PsybassOutputMask = BitConverter.ToUInt16(buffer, OffsetPsybass + 2);
+            p.PsybassCutoffHz = BitConverter.ToSingle(buffer, OffsetPsybass + 4);
+            p.PsybassHarmonicsDb = BitConverter.ToSingle(buffer, OffsetPsybass + 8);
+            p.PsybassDriveDb = BitConverter.ToSingle(buffer, OffsetPsybass + 12);
+            p.PsybassCharacterPct = BitConverter.ToSingle(buffer, OffsetPsybass + 16);
+            p.PsybassOriginalDb = BitConverter.ToSingle(buffer, OffsetPsybass + 20);
+        }
+
         return p;
     }
 
@@ -376,13 +460,22 @@ public static class BulkParamsParser
     /// </summary>
     internal static FilterParams ParseBand(byte[] buffer, int offset)
     {
-        return new FilterParams
+        byte typeByte = buffer[offset + 0];
+        var fp = new FilterParams
         {
-            Type = (FilterType)buffer[offset + 0],
+            Type = (FilterType)typeByte,
             Bypass = buffer[offset + 1] == 1,
             Frequency = BitConverter.ToSingle(buffer, offset + 4),
             Q = BitConverter.ToSingle(buffer, offset + 8),
             Gain = BitConverter.ToSingle(buffer, offset + 12)
         };
+        // Linkwitz Transform (type 11, wire V22+): the band's reserved bytes carry
+        // the target Q as qp×512 (LE u16); 0 decodes to the 0.707 default.
+        if (typeByte == WireFilterLinkwitzTransform)
+        {
+            ushort qpRaw = BitConverter.ToUInt16(buffer, offset + 2);
+            fp.Qp = qpRaw == 0 ? FilterParams.DefaultQp : qpRaw / 512.0f;
+        }
+        return fp;
     }
 }
