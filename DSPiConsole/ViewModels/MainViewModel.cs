@@ -264,6 +264,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _multiSpdifSupported;
 
+    // ADAT "bulk" optical output (V17+, RP2350 only). True when the connected
+    // device is an RP2350 and the bulk blob carries the ADAT section. Gates the
+    // Bulk Output settings page.
+    [ObservableProperty]
+    private bool _adatSupported;
+
     // Onboard test-signal generator. SiggenSupported is set true when the caps
     // probe (0xA8) answers; older firmware STALLs. SiggenStatus mirrors the live
     // generator state for the Test Signals window's transport/status UI.
@@ -1226,6 +1232,70 @@ public partial class MainViewModel : ObservableObject, IDisposable
         return result;
     }
 
+    // ── ADAT bulk output (V17+, RP2350 only) ──
+    // AdatSupported is baselined from the bulk blob (platform + HasAdat). Enable
+    // and pin are IO-block state: setters apply live, record an undo, and mark the
+    // output config dirty just like the SPDIF/I2S input pins.
+    public const byte AdatDefaultPin = 12;
+
+    private bool _adatEnabled;
+    private byte _adatPin = AdatDefaultPin;
+
+    public bool AdatEnabled => _adatEnabled;
+    public byte AdatPin => _adatPin;
+
+    /// <summary>Read the ADAT enable + pin from the device. Clears AdatSupported
+    /// if the firmware doesn't answer (older firmware STALLs).</summary>
+    public void FetchAdatConfig()
+    {
+        var en = _device.GetAdatEnable();
+        var pin = _device.GetAdatPin();
+        if (en == null || pin == null)
+        {
+            _dispatcher.TryEnqueue(() => AdatSupported = false);
+            return;
+        }
+        _adatEnabled = en.Value != 0;
+        if (pin.Value != 0) _adatPin = pin.Value;
+        _dispatcher.TryEnqueue(() =>
+        {
+            OnPropertyChanged(nameof(AdatEnabled));
+            OnPropertyChanged(nameof(AdatPin));
+        });
+    }
+
+    /// <summary>Enable/disable the ADAT optical output. Returns the firmware
+    /// <see cref="PinConfigResult"/> status byte.</summary>
+    public byte SetAdatEnable(bool enable)
+    {
+        bool before = _adatEnabled;
+        var status = _device.SetAdatEnable(enable);
+        if (status == PinConfigResult.Success)
+        {
+            _adatEnabled = enable;
+            if (before != enable) RecordIoUndo(() => SetAdatEnable(before));
+            _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(AdatEnabled)));
+            CheckDirty();
+        }
+        return status;
+    }
+
+    /// <summary>Set the ADAT data GPIO. Returns the firmware
+    /// <see cref="PinConfigResult"/> status byte.</summary>
+    public byte SetAdatPin(byte pin)
+    {
+        byte before = _adatPin;
+        var status = _device.SetAdatPin(pin);
+        if (status == PinConfigResult.Success)
+        {
+            _adatPin = pin == 0 ? AdatDefaultPin : pin;
+            if (before != _adatPin) RecordIoUndo(() => SetAdatPin(before));
+            _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(AdatPin)));
+            CheckDirty();
+        }
+        return status;
+    }
+
     // ── Multichannel I2S input ──
     public int I2sInputChannels => _i2sInputChannels;
     public int I2sMaxPairs => Platform == "RP2350" ? 4 : 1;
@@ -1640,6 +1710,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
             CrossoverSupported = bp.HasCrossover;
             InputI2sSupported = bp.HasI2sInputConfig;
             MultiSpdifSupported = bp.HasSpdifExtInputs;
+
+            // ADAT "bulk" optical output (V17+, RP2350 only). Baseline enable/pin
+            // from the bulk blob; the Bulk Output settings page edits them live.
+            AdatSupported = Platform == "RP2350" && bp.HasAdat;
+            if (AdatSupported)
+            {
+                _adatEnabled = bp.AdatEnabled;
+                _adatPin = bp.AdatPin;
+                OnPropertyChanged(nameof(AdatEnabled));
+                OnPropertyChanged(nameof(AdatPin));
+            }
 
             // Multichannel masks (V18/V19/V20). Gate each selector on the wire
             // version; the leveller mask is additionally hidden for ≤2 inputs

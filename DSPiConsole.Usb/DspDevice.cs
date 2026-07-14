@@ -156,6 +156,16 @@ public static class VendorCommands
     public const byte SetCrossfeedOutputs  = 0xFC; // V20: uint8 over output pairs (bit p = outputs 2p/2p+1)
     public const byte GetCrossfeedOutputs  = 0xFD;
 
+    // ADAT "bulk" output (V17+, RP2350 only). Streams all 8 output channels as one
+    // optical ADAT lightpipe (44.1/48 kHz, 24-bit) from a single data GPIO. All are
+    // IN transfers returning a 1-byte status / value; the SETs carry the argument in
+    // wValue. RP2040 returns INVALID_OUTPUT / zeros.
+    public const byte SetAdatEnable        = 0xCA; // IN, wValue=0/1, status byte
+    public const byte GetAdatEnable        = 0xCB; // IN, 1 byte (0/1)
+    public const byte SetAdatPin           = 0xCC; // IN, wValue=GPIO (0 = default), status byte
+    public const byte GetAdatPin           = 0xCD; // IN, 1 byte (GPIO)
+    public const byte GetAdatStatus        = 0xCE; // IN, 8-byte AdatStatus
+
     // Input source switching (V7+)
     public const byte SetInputSource       = 0xE0;
     public const byte GetInputSource       = 0xE1;
@@ -325,6 +335,7 @@ public static class PinConfigResult
     public const byte PinInUse = 0x02;
     public const byte InvalidOutput = 0x03;
     public const byte OutputActive = 0x04;
+    public const byte InvalidParam = 0x05;
 }
 
 /// <summary>
@@ -2403,6 +2414,46 @@ public partial class DspDevice : ObservableObject, IDisposable
         ushort wValue = (ushort)(((index & 0xFF) << 8) | pin);
         var response = ControlTransferIn(VendorCommands.SetSpdifRxPin, wValue, 1);
         return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
+    }
+
+    // ── ADAT bulk output (V17+, RP2350 only) ──
+
+    /// <summary>Enable/disable the ADAT optical output. Returns a
+    /// <see cref="PinConfigResult"/> status byte (0xFF on transfer failure).
+    /// Enabling validates the configured pin; RP2040 returns InvalidOutput.</summary>
+    public byte SetAdatEnable(bool enable)
+    {
+        var r = ControlTransferIn(VendorCommands.SetAdatEnable, (ushort)(enable ? 1 : 0), 1);
+        return r != null && r.Length >= 1 ? r[0] : (byte)0xFF;
+    }
+
+    /// <summary>Configured ADAT enable flag (0/1). Null on transfer failure.</summary>
+    public byte? GetAdatEnable()
+    {
+        var r = ControlTransferIn(VendorCommands.GetAdatEnable, 0, 1);
+        return r != null && r.Length >= 1 ? r[0] : (byte?)null;
+    }
+
+    /// <summary>Set the ADAT data GPIO (0 resets to the platform default, GPIO 12).
+    /// Returns a <see cref="PinConfigResult"/> status byte (0xFF on failure).</summary>
+    public byte SetAdatPin(byte pin)
+    {
+        var r = ControlTransferIn(VendorCommands.SetAdatPin, pin, 1);
+        return r != null && r.Length >= 1 ? r[0] : (byte)0xFF;
+    }
+
+    /// <summary>Configured ADAT data GPIO. Null on transfer failure.</summary>
+    public byte? GetAdatPin()
+    {
+        var r = ControlTransferIn(VendorCommands.GetAdatPin, 0, 1);
+        return r != null && r.Length >= 1 ? r[0] : (byte?)null;
+    }
+
+    /// <summary>Read the 8-byte live ADAT status (0xCE). Null on transfer failure.</summary>
+    public AdatStatus? GetAdatStatus()
+    {
+        var r = ControlTransferIn(VendorCommands.GetAdatStatus, 0, AdatStatus.WireSize);
+        return r == null ? null : AdatStatus.FromBytes(r);
     }
 
     /// <summary>

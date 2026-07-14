@@ -86,6 +86,11 @@ public class PresetSnapshot
     public int I2sInputChannels;
     public byte[] I2sRxPinsExt = new byte[3];
 
+    // ADAT bulk optical output (V17+, RP2350). Enable + data pin — IO block,
+    // same output_config_mode gating as the SPDIF/I2S input pins.
+    public bool AdatEnabled;
+    public byte AdatPin;
+
     // LG Sound Sync enable (V8+ preset slot field). Only the user-writable
     // `enabled` flag is preset state; runtime fields (present, volume, muted)
     // are diagnostic and not captured. Tracks via REQ_SET/GET_LG_SOUND_SYNC
@@ -207,6 +212,10 @@ public class PresetSnapshot
         snap.I2sRxPinsExt[1] = vm.I2sRxPinAt(2);
         snap.I2sRxPinsExt[2] = vm.I2sRxPinAt(3);
 
+        // ADAT bulk output (V17+ slot data — IO block)
+        snap.AdatEnabled = vm.AdatEnabled;
+        snap.AdatPin = vm.AdatPin;
+
         // LG Sound Sync enable flag (V8+ preset slot field)
         snap.LgSoundSyncEnabled = vm.LgSoundSyncEnabled;
 
@@ -233,6 +242,8 @@ public class PresetSnapshot
         SpdifEnabledExt = src.SpdifEnabledExt;
         I2sInputChannels = src.I2sInputChannels;
         I2sRxPinsExt = (byte[])src.I2sRxPinsExt.Clone();
+        AdatEnabled = src.AdatEnabled;
+        AdatPin = src.AdatPin;
     }
 }
 
@@ -504,6 +515,12 @@ public static class PresetDiff
                 changes.Add(new($"io.i2s-rx.{i + 1}", $"I2S Serial Data {i + 2} pin", $"GPIO {old.I2sRxPinsExt[i]}", $"GPIO {cur.I2sRxPinsExt[i]}"));
         if (old.I2sInputRateHz != cur.I2sInputRateHz)
             changes.Add(new("io.i2s-rate", "I2S sample rate", $"{old.I2sInputRateHz / 1000.0:0.#} kHz", $"{cur.I2sInputRateHz / 1000.0:0.#} kHz"));
+
+        // ADAT bulk output
+        if (old.AdatEnabled != cur.AdatEnabled)
+            changes.Add(new("io.adat-en", "ADAT output", old.AdatEnabled ? "enabled" : "disabled", cur.AdatEnabled ? "enabled" : "disabled"));
+        if (old.AdatPin != cur.AdatPin)
+            changes.Add(new("io.adat-pin", "ADAT pin", $"GPIO {old.AdatPin}", $"GPIO {cur.AdatPin}"));
 
         return changes;
     }

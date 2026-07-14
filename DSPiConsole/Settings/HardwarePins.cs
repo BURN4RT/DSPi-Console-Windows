@@ -104,7 +104,8 @@ internal static class HardwarePins
         bool excludeDacMuteSelf = false,
         bool excludeI2sRxSelf = false,
         int excludeSpdifRxIndex = -1,
-        int excludeI2sRxPair = -1)
+        int excludeI2sRxPair = -1,
+        bool excludeAdatSelf = false)
     {
         var owners = new Dictionary<byte, string>();
 
@@ -166,6 +167,12 @@ internal static class HardwarePins
                 owners[vm.I2sRxPinAt(p)] = pairs > 1 ? $"I2S RX {p + 1}" : "I2S RX";
             }
         }
+
+        // ADAT bulk output pin (V17+, RP2350): only claims a GPIO while the
+        // optical output is actually enabled (a disabled ADAT's pin is just a
+        // stored preference). excludeAdatSelf keeps it pickable on its own combo.
+        if (vm.AdatSupported && vm.AdatEnabled && !excludeAdatSelf)
+            owners[vm.AdatPin] = "ADAT";
 
         // External DAC mute pin (V10+): only claim when supported AND
         // configured with a real pin. The "No Pin" sentinel disables

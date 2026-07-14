@@ -346,6 +346,7 @@ public sealed partial class SettingsShell : UserControl
         key.StartsWith("io.spdif") ? "hardware.spdif-input"
         : key.StartsWith("io.i2s-") ? "hardware.i2s-input"   // io.i2s-rx / io.i2s-ch / io.i2s-rate
         : key.StartsWith("io.bck") || key.StartsWith("io.mck") ? "hardware.i2s"
+        : key.StartsWith("io.adat") ? "hardware.bulk-output"
         : "hardware.output-assignment";                      // io.pin.* / io.slot.*
 
     private async void OnDiscardClick(object sender, RoutedEventArgs e)

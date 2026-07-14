@@ -49,6 +49,7 @@ internal static class SettingsRegistry
 
         // ── Hardware ───────────────────────────────────────────────
         TryAdd<HardwareOutputAssignmentPage>(pages);
+        TryAdd<HardwareBulkOutputPage>(pages);
         TryAdd<HardwareI2SPage>(pages);
         TryAdd<HardwareSpdifInputPage>(pages);
         TryAdd<HardwareI2SInputPage>(pages);
