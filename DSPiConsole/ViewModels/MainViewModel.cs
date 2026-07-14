@@ -1738,6 +1738,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             if (CrossfeedMaskSupported)
                 CrossfeedOutputPairMask = bp.CrossfeedOutputPairMask;
             LinkwitzTransformSupported = bp.FormatVersion >= 22;
+            SeedPsybassFromBulk(bp);
             LevellerMasksSupported = bp.FormatVersion >= 18 && bp.NumInputChannels > 2;
             if (LevellerMasksSupported)
             {

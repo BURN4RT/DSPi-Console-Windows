@@ -81,6 +81,26 @@ public static class VendorCommands
     public const byte GetBufferStats  = 0xB0;
     public const byte ResetBufferStats = 0xB1;
 
+    // Psychoacoustic bass (psybass, wire V23). Missing-fundamental bass enhancement:
+    // one global parameter set applied per output channel selected by a 16-bit mask
+    // (like loudness). Value SETs carry a 4-byte LE float; enable is 1 byte; mask is
+    // 2 bytes LE. Firmware clamps every value; SETs apply live and are saved via
+    // preset/save-params.
+    public const byte SetPsybass          = 0x30; // OUT 1 byte bool
+    public const byte GetPsybass          = 0x31; // IN 1 byte bool
+    public const byte SetPsybassCutoff    = 0x32; // OUT 4-byte float (30..300 Hz)
+    public const byte GetPsybassCutoff    = 0x33;
+    public const byte SetPsybassHarmonics = 0x34; // OUT 4-byte float (-24..+12 dB)
+    public const byte GetPsybassHarmonics = 0x35;
+    public const byte SetPsybassDrive     = 0x36; // OUT 4-byte float (0..18 dB)
+    public const byte GetPsybassDrive     = 0x37;
+    public const byte SetPsybassCharacter = 0x38; // OUT 4-byte float (0..100 %)
+    public const byte GetPsybassCharacter = 0x39;
+    public const byte SetPsybassOriginal  = 0x3A; // OUT 4-byte float (-60..0 dB)
+    public const byte GetPsybassOriginal  = 0x3B;
+    public const byte SetPsybassMask      = 0x3C; // OUT 2-byte uint16 LE (per-output)
+    public const byte GetPsybassMask      = 0x3D;
+
     // Preset system (firmware v3+)
     public const byte PresetSave           = 0x90;
     public const byte PresetLoad           = 0x91;
@@ -2697,6 +2717,49 @@ public partial class DspDevice : ObservableObject, IDisposable
         System.Threading.Thread.Sleep(250);
         var st = GetCtrlIfaceStatus();
         return st?.I2cLastStatus ?? (byte)0xFF;
+    }
+
+    // ── Psychoacoustic bass (0x30–0x3D) ──────────────────────────────────────
+
+    private bool SetPsybassFloat(byte req, float value) =>
+        ControlTransferOut(req, 0, BitConverter.GetBytes(value));
+
+    private float? GetPsybassFloat(byte req)
+    {
+        var r = ControlTransferIn(req, 0, 4);
+        return r != null && r.Length >= 4 ? BitConverter.ToSingle(r, 0) : (float?)null;
+    }
+
+    public bool SetPsybassEnabled(bool on) =>
+        ControlTransferOut(VendorCommands.SetPsybass, 0, new[] { on ? (byte)1 : (byte)0 });
+
+    /// <summary>Read psybass enable (0x31). Null if the firmware STALLs (feature
+    /// unsupported / pre-V23).</summary>
+    public bool? GetPsybassEnabled()
+    {
+        var r = ControlTransferIn(VendorCommands.GetPsybass, 0, 1);
+        return r != null && r.Length >= 1 ? r[0] != 0 : (bool?)null;
+    }
+
+    public bool SetPsybassCutoff(float hz) => SetPsybassFloat(VendorCommands.SetPsybassCutoff, hz);
+    public float? GetPsybassCutoff() => GetPsybassFloat(VendorCommands.GetPsybassCutoff);
+    public bool SetPsybassHarmonics(float db) => SetPsybassFloat(VendorCommands.SetPsybassHarmonics, db);
+    public float? GetPsybassHarmonics() => GetPsybassFloat(VendorCommands.GetPsybassHarmonics);
+    public bool SetPsybassDrive(float db) => SetPsybassFloat(VendorCommands.SetPsybassDrive, db);
+    public float? GetPsybassDrive() => GetPsybassFloat(VendorCommands.GetPsybassDrive);
+    public bool SetPsybassCharacter(float pct) => SetPsybassFloat(VendorCommands.SetPsybassCharacter, pct);
+    public float? GetPsybassCharacter() => GetPsybassFloat(VendorCommands.GetPsybassCharacter);
+    public bool SetPsybassOriginal(float db) => SetPsybassFloat(VendorCommands.SetPsybassOriginal, db);
+    public float? GetPsybassOriginal() => GetPsybassFloat(VendorCommands.GetPsybassOriginal);
+
+    public bool SetPsybassMask(ushort mask) =>
+        ControlTransferOut(VendorCommands.SetPsybassMask, 0,
+            new[] { (byte)(mask & 0xFF), (byte)(mask >> 8) });
+
+    public ushort? GetPsybassMask()
+    {
+        var r = ControlTransferIn(VendorCommands.GetPsybassMask, 0, 2);
+        return r != null && r.Length >= 2 ? BitConverter.ToUInt16(r, 0) : (ushort?)null;
     }
 
     /// <summary>

@@ -52,6 +52,7 @@ public sealed partial class MainWindow : Window
     private GraphWindow? _graphWindow;
     private LoudnessWindow? _loudnessWindow;
     private CrossfeedWindow? _crossfeedWindow;
+    private PsychoacousticBassWindow? _psybassWindow;
     private VolumeLevellerWindow? _levellerWindow;
     private MatrixMixerWindow? _matrixMixerWindow;
     private TestSignalsWindow? _testSignalsWindow;
@@ -4335,6 +4336,21 @@ public sealed partial class MainWindow : Window
             _crossfeedWindow.Closed += (s, e) => _crossfeedWindow = null;
         }
         _crossfeedWindow.Activate();
+    }
+
+    private async void OnPsybassClick(object sender, RoutedEventArgs e)
+    {
+        // Refresh from the device so a value changed elsewhere (e.g. a control
+        // surface) is reflected; the window shows an unsupported notice if absent.
+        if (ViewModel.IsDeviceConnected)
+            await Task.Run(() => ViewModel.FetchPsybass());
+
+        if (_psybassWindow == null)
+        {
+            _psybassWindow = new PsychoacousticBassWindow(ViewModel);
+            _psybassWindow.Closed += (s, e) => _psybassWindow = null;
+        }
+        _psybassWindow.Activate();
     }
 
     private async void OnMatrixMixerClick(object sender, RoutedEventArgs e)
