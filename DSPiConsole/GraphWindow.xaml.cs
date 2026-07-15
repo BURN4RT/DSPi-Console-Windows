@@ -74,7 +74,7 @@ public sealed partial class GraphWindow : Window
     {
         LegendPanel.Children.Clear();
 
-        foreach (var channel in Channel.Inputs)
+        foreach (var channel in _viewModel.ActiveInputs)
             AddLegendButton(channel);
 
         for (int o = 0; o < _viewModel.ActiveOutputs.Count; o++)

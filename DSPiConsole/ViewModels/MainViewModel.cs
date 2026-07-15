@@ -406,6 +406,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         _outputEnabled.Clear();
         ActiveOutputsChanged?.Invoke(this, EventArgs.Empty);
+        RaiseActiveInputsChanged();
     }
 
     // ── PDM / EQ-worker conflict helpers ──
@@ -553,7 +554,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 filters.Add(new FilterParams());
             }
             _channelData[(int)channel.Id] = filters;
-            _channelVisibility[(int)channel.Id] = true;
+            // Extra input channels (11..16) start hidden — they only become
+            // relevant on RP2350 once more than 2 USB inputs are streamed.
+            _channelVisibility[(int)channel.Id] = !ChannelMap.IsExtraInput((int)channel.Id);
             _channelDelays[(int)channel.Id] = 0.0f;
             if (channel.IsOutput)
             {
@@ -1372,6 +1375,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             _dispatcher.TryEnqueue(() =>
             {
                 OnPropertyChanged(nameof(I2sInputChannels));
+                RaiseActiveInputsChanged();
                 OnPropertyChanged(nameof(I2sActivePairs));
                 OnPropertyChanged(nameof(I2sRxPin));
                 CheckDirty();
@@ -1583,6 +1587,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             int ch = (int)channel.Id;
             int wireCh = ChannelMap.AppToWire(ch, numInputs);
+            // Extra inputs (11..16) map to wire 2..7 — real inputs only on a device
+            // with that many wire input channels (RP2350). On RP2040 wire 2..7 are
+            // outputs, so skip them to avoid reading output EQ into phantom inputs.
+            if (ChannelMap.IsExtraInput(ch) && wireCh >= numInputs) continue;
             if (_channelData.TryGetValue(ch, out var filters))
             {
                 for (int band = 0; band < channel.BandCount && band < bp.MaxBands; band++)

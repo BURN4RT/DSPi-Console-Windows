@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
 using CommunityToolkit.Mvvm.ComponentModel;
+using DSPiConsole.Core.Models;
 using DSPiConsole.Services;
+using DSPiConsole.Usb;
 
 namespace DSPiConsole.ViewModels;
 
@@ -32,5 +35,51 @@ public partial class MainViewModel
 
         if (count != UsbInputChannelCount)
             _dispatcher.TryEnqueue(() => UsbInputChannelCount = count);
+    }
+
+    partial void OnUsbInputChannelCountChanged(int value) => RaiseActiveInputsChanged();
+    partial void OnActiveInputSourceChanged(Usb.InputSource value) => RaiseActiveInputsChanged();
+
+    /// <summary>Number of input channels the UI currently shows. Driven by the
+    /// active input source: USB uses the Windows format count; I2S uses its
+    /// channel count; ADAT is 8; SPDIF is stereo. Always at least the stereo pair,
+    /// clamped to the platform's input capability (2 on RP2040, up to 8 on RP2350).</summary>
+    public int ActiveInputChannelCount
+    {
+        get
+        {
+            int max = Math.Min(InputChannelCountForPlatform(Platform), Channel.AllInputs.Count);
+            if (max <= 2) return 2;
+            int n = ActiveInputSource switch
+            {
+                InputSource.Usb => UsbInputChannelCount,
+                InputSource.I2s => I2sInputChannels,
+                InputSource.Adat => 8,
+                _ => 2   // SPDIF / SPDIF2 / SPDIF3 are stereo
+            };
+            return Math.Clamp(n, 2, max);
+        }
+    }
+
+    /// <summary>The input channels to display (first <see cref="ActiveInputChannelCount"/>
+    /// of <see cref="Channel.AllInputs"/>).</summary>
+    public IReadOnlyList<Channel> ActiveInputs
+    {
+        get
+        {
+            int n = ActiveInputChannelCount;
+            var list = new List<Channel>(n);
+            for (int i = 0; i < n && i < Channel.AllInputs.Count; i++)
+                list.Add(Channel.AllInputs[i]);
+            return list;
+        }
+    }
+
+    /// <summary>Notify the UI that the active-input set changed (called from the
+    /// USB-count, input-source, I2S-count and platform change paths).</summary>
+    internal void RaiseActiveInputsChanged()
+    {
+        OnPropertyChanged(nameof(ActiveInputChannelCount));
+        OnPropertyChanged(nameof(ActiveInputs));
     }
 }

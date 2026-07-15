@@ -99,7 +99,7 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private Channel LookupChannelById(int channelId)
     {
-        foreach (var ch in Channel.Inputs)
+        foreach (var ch in Channel.AllInputs)
             if ((int)ch.Id == channelId) return ch;
         foreach (var ch in ViewModel.ActiveOutputs)
             if ((int)ch.Id == channelId) return ch;
@@ -355,7 +355,7 @@ public sealed partial class MainWindow : Window
         if (!ViewModel.IsDeviceConnected) return;
 
         int index = 1;
-        foreach (var channel in Channel.Inputs)
+        foreach (var channel in ViewModel.ActiveInputs)
         {
             var item = CreateChannelListItem(channel, index++);
             _channelListItems.Add(item);
@@ -399,7 +399,7 @@ public sealed partial class MainWindow : Window
         }
 
         // Re-index the flat list for selection tracking
-        int inputCount = Channel.Inputs.Count;
+        int inputCount = ViewModel.ActiveInputs.Count;
         if (_channelListItems.Count > inputCount)
             _channelListItems.RemoveRange(inputCount, _channelListItems.Count - inputCount);
 
@@ -597,8 +597,8 @@ public sealed partial class MainWindow : Window
     {
         LegendPanel.Children.Clear();
 
-        // Input channels are always shown
-        foreach (var channel in Channel.Inputs)
+        // Input channels are always shown (the active set follows the USB format)
+        foreach (var channel in ViewModel.ActiveInputs)
             AddLegendButton(channel);
 
         // Only show enabled output channels
@@ -2529,6 +2529,15 @@ public sealed partial class MainWindow : Window
             {
                 case nameof(MainViewModel.IsDeviceConnected):
                     UpdateConnectionStatus();
+                    break;
+                case nameof(MainViewModel.ActiveInputChannelCount):
+                    // The number of USB input channels changed (Windows format /
+                    // input source) — rebuild the input rows and the graph legend.
+                    if (ViewModel.IsDeviceConnected)
+                    {
+                        InitializeChannelLists();
+                        InitializeLegend();
+                    }
                     break;
                 case nameof(MainViewModel.ErrorMessage):
                     UpdateConnectionStatus();

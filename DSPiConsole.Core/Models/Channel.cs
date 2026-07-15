@@ -23,7 +23,17 @@ public enum ChannelId
     Spdif3R = 7,
     Spdif4L = 8,
     Spdif4R = 9,
-    Pdm = 10
+    Pdm = 10,
+
+    // Extra unified-model input channels (RP2350 V16+). Ids 11..16 map to wire
+    // input indices 2..7 via ChannelMap; kept above the outputs so the existing
+    // 0..10 ids (and all persisted state keyed by them) are undisturbed.
+    Input3 = 11,
+    Input4 = 12,
+    Input5 = 13,
+    Input6 = 14,
+    Input7 = 15,
+    Input8 = 16
 }
 
 /// <summary>
@@ -105,15 +115,51 @@ public class Channel
         ChannelId.PdmRp2040, "PDM", "PDM", "OUT5",
         10, true, Color.FromArgb(255, 186, 135, 243)); // Purple
 
+    // Extra unified-model input channels (RP2350). Only surfaced when the device
+    // actually streams more than 2 USB input channels; otherwise inert.
+    public static readonly Channel Input3 = new(
+        ChannelId.Input3, "Input 3", "I3", "IN3",
+        10, false, Color.FromArgb(255, 69, 194, 163)); // Teal
+
+    public static readonly Channel Input4 = new(
+        ChannelId.Input4, "Input 4", "I4", "IN4",
+        10, false, Color.FromArgb(255, 240, 196, 89)); // Gold
+
+    public static readonly Channel Input5 = new(
+        ChannelId.Input5, "Input 5", "I5", "IN5",
+        10, false, Color.FromArgb(255, 109, 179, 126)); // Green
+
+    public static readonly Channel Input6 = new(
+        ChannelId.Input6, "Input 6", "I6", "IN6",
+        10, false, Color.FromArgb(255, 232, 144, 90)); // Orange
+
+    public static readonly Channel Input7 = new(
+        ChannelId.Input7, "Input 7", "I7", "IN7",
+        10, false, Color.FromArgb(255, 232, 123, 191)); // Pink
+
+    public static readonly Channel Input8 = new(
+        ChannelId.Input8, "Input 8", "I8", "IN8",
+        10, false, Color.FromArgb(255, 168, 137, 224)); // Lavender
+
     public static IReadOnlyList<Channel> All { get; } = new[]
     {
         MasterLeft, MasterRight,
+        Input3, Input4, Input5, Input6, Input7, Input8,
         Spdif1L, Spdif1R, Spdif2L, Spdif2R, Spdif3L, Spdif3R, Spdif4L, Spdif4R, Pdm
     };
 
+    /// <summary>The two base input channels (Master L/R). Consumers that assume a
+    /// fixed stereo input pair (matrix mixer, leveller) use this.</summary>
     public static IReadOnlyList<Channel> Inputs { get; } = new[]
     {
         MasterLeft, MasterRight
+    };
+
+    /// <summary>All potential input channels (up to 8 on RP2350). The active subset
+    /// shown in the UI is driven by the USB input channel count.</summary>
+    public static IReadOnlyList<Channel> AllInputs { get; } = new[]
+    {
+        MasterLeft, MasterRight, Input3, Input4, Input5, Input6, Input7, Input8
     };
 
     public static IReadOnlyList<Channel> Outputs { get; } = new[]
@@ -139,6 +185,12 @@ public class Channel
         ChannelId.Spdif4L => Spdif4L,
         ChannelId.Spdif4R => Spdif4R,
         ChannelId.Pdm => Pdm,
+        ChannelId.Input3 => Input3,
+        ChannelId.Input4 => Input4,
+        ChannelId.Input5 => Input5,
+        ChannelId.Input6 => Input6,
+        ChannelId.Input7 => Input7,
+        ChannelId.Input8 => Input8,
         _ => throw new ArgumentOutOfRangeException(nameof(id))
     };
 

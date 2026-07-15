@@ -48,11 +48,11 @@ public class PresetSnapshot
     public bool[] OutputMuted = new bool[9];
     public Dictionary<int, float> OutputGains = new();
 
-    public FilterParams[,] Eq = new FilterParams[11, 12];
+    public FilterParams[,] Eq = new FilterParams[ChannelMap.AppChannelCount, 12];
 
     // Crossover bands (V11+ firmware): 4 per output channel. Master/input rows
     // stay null. Captured so crossover edits register as preset-dirty.
-    public FilterParams[,] Xover = new FilterParams[11, 4];
+    public FilterParams[,] Xover = new FilterParams[ChannelMap.AppChannelCount, 4];
 
     public Dictionary<int, string> ChannelNames = new();
 

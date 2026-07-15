@@ -19,32 +19,47 @@ namespace DSPiConsole.Core.Models;
 /// </summary>
 public static class ChannelMap
 {
-    /// <summary>Number of input channels the app UI currently models (Master L/R).</summary>
+    /// <summary>Base input channels the output ids sit above (Master L/R).</summary>
     public const int AppInputCount = 2;
 
-    /// <summary>Number of app channels total (2 inputs + 9 outputs).</summary>
-    public const int AppChannelCount = 11;
+    /// <summary>Total app channel id space: 2 base inputs + 9 outputs (ids 0..10)
+    /// plus 6 extra input channels (ids 11..16). Sizes any id-indexed array.</summary>
+    public const int AppChannelCount = 17;
+
+    /// <summary>First app id of the extra unified-model input channels (Input3).
+    /// Ids <see cref="ExtraInputFirstId"/>..+5 map to wire input indices 2..7.</summary>
+    public const int ExtraInputFirstId = 11;
 
     /// <summary>App channel id → absolute firmware wire channel index.</summary>
     public static int AppToWire(int appChannelId, int numInputChannels)
     {
         if (appChannelId < AppInputCount)
             return appChannelId;                        // inputs 0,1 pass straight through
+        if (appChannelId >= ExtraInputFirstId)
+            return AppInputCount + (appChannelId - ExtraInputFirstId); // extra inputs → wire 2..7
         int outputPos = appChannelId - AppInputCount;   // 0-based output position (0..8)
         return numInputChannels + outputPos;
     }
 
     /// <summary>
     /// Absolute firmware wire channel index → app channel id, or -1 if the wire
-    /// channel has no representation in the app model (the extra inputs 2..7 on
-    /// RP2350, or padding beyond the valid channel count).
+    /// channel has no representation in the app model (padding beyond the valid
+    /// channel count).
     /// </summary>
     public static int WireToApp(int wireIndex, int numInputChannels)
     {
         if (wireIndex < numInputChannels)
-            return wireIndex < AppInputCount ? wireIndex : -1; // extra inputs not modeled yet
+        {
+            if (wireIndex < AppInputCount) return wireIndex;   // Master L/R
+            if (wireIndex < 8) return ExtraInputFirstId + (wireIndex - AppInputCount); // 2..7 → 11..16
+            return -1;
+        }
         int outputPos = wireIndex - numInputChannels;          // 0-based output position
-        int appId = AppInputCount + outputPos;
-        return appId < AppChannelCount ? appId : -1;
+        int appId = AppInputCount + outputPos;                 // outputs occupy ids 2..10
+        return appId <= (int)10 ? appId : -1;
     }
+
+    /// <summary>True for the extra unified-model input channels (ids 11..16), which
+    /// only exist on a device with more than 2 wire input channels.</summary>
+    public static bool IsExtraInput(int appChannelId) => appChannelId >= ExtraInputFirstId;
 }

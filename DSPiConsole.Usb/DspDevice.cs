@@ -974,11 +974,11 @@ public partial class DspDevice : ObservableObject, IDisposable
         // Firmware indexes peaks and clip bits by WIRE channel (unified model:
         // inputs then outputs). Remap to the app's stable ChannelId space so
         // meters and clip indicators land on the correct rows.
-        var peaks = new float[ChannelMap.AppChannelCount]; // 11 app channels
+        var peaks = new float[ChannelMap.AppChannelCount]; // app id space (0..16)
         for (int i = 0; i < numCh && (i * 2 + 1) < buffer.Length; i++)
         {
             int appId = ChannelMap.WireToApp(i, NumInputChannels);
-            if (appId < 0) continue; // extra inputs 2..7 not modeled by the app UI
+            if (appId < 0) continue; // wire slot with no app-channel representation
             peaks[appId] = BitConverter.ToUInt16(buffer, i * 2) / 32767.0f;
         }
 

@@ -10,7 +10,7 @@ public class SystemStatus
     /// Index: 0=MasterL, 1=MasterR, 2=SPDIF1L, 3=SPDIF1R, 4=SPDIF2L, 5=SPDIF2R,
     ///        6=SPDIF3L, 7=SPDIF3R, 8=SPDIF4L, 9=SPDIF4R, 10=PDM
     /// </summary>
-    public float[] Peaks { get; set; } = new float[11];
+    public float[] Peaks { get; set; } = new float[ChannelMap.AppChannelCount];
 
     /// <summary>
     /// CPU load percentage for Core 0 (0-100)
