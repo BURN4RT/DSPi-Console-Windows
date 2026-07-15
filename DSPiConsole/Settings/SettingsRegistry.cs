@@ -53,6 +53,7 @@ internal static class SettingsRegistry
         TryAdd<HardwareI2SPage>(pages);
         TryAdd<HardwareSpdifInputPage>(pages);
         TryAdd<HardwareI2SInputPage>(pages);
+        TryAdd<HardwareAdatInputPage>(pages);
         TryAdd<HardwareDacMutePage>(pages);
         TryAdd<HardwareControlInterfacesPage>(pages);
 

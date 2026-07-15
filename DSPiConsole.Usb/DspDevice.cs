@@ -204,6 +204,18 @@ public static class VendorCommands
     public const byte GetAdatPin           = 0xCD; // IN, 1 byte (GPIO)
     public const byte GetAdatStatus        = 0xCE; // IN, 8-byte AdatStatus
 
+    // ADAT input (8-channel lightpipe input source, wire V24, RP2350 only). A
+    // selectable input source (INPUT_SOURCE_ADAT = 3) distinct from the ADAT
+    // output (0xCA-0xCE). SETs are IN transfers carrying the value in wValue and
+    // returning a PIN_CONFIG_* status byte. Set the pin (0x6A) before enabling.
+    public const byte SetAdatInputEnable    = 0x68; // IN, wValue=0/1, status byte
+    public const byte GetAdatInputEnable    = 0x69; // IN, 1 byte (0/1)
+    public const byte SetAdatInputPin       = 0x6A; // IN, wValue=GPIO (0xFF clears), status byte
+    public const byte GetAdatInputPin       = 0x6B; // IN, 1 byte (GPIO; 0xFF unset)
+    public const byte SetAdatInputClockMode = 0x6C; // IN, wValue=0/1 (deferred), status byte
+    public const byte GetAdatInputClockMode = 0x6D; // IN, 1 byte (live mode)
+    public const byte GetAdatInputStatus    = 0x6E; // IN, 20-byte AdatInputStatusPacket
+
     // Input source switching (V7+)
     public const byte SetInputSource       = 0xE0;
     public const byte GetInputSource       = 0xE1;
@@ -264,7 +276,10 @@ public enum InputSource : byte
 {
     Usb = 0,
     Spdif = 1,
-    I2s = 2
+    I2s = 2,
+    Adat = 3,     // 8-channel ADAT optical input (RP2350, V24+)
+    Spdif2 = 4,
+    Spdif3 = 5
 }
 
 /// <summary>
@@ -2760,6 +2775,60 @@ public partial class DspDevice : ObservableObject, IDisposable
     {
         var r = ControlTransferIn(VendorCommands.GetPsybassMask, 0, 2);
         return r != null && r.Length >= 2 ? BitConverter.ToUInt16(r, 0) : (ushort?)null;
+    }
+
+    // ── ADAT input (0x68–0x6E, RP2350) ───────────────────────────────────────
+
+    /// <summary>Enable/disable the ADAT input (0x68). Returns a PIN_CONFIG_* status
+    /// byte (0xFF on transfer failure). Enabling without a pin → InvalidPin; RP2040
+    /// → InvalidOutput.</summary>
+    public byte SetAdatInputEnable(bool enable)
+    {
+        var r = ControlTransferIn(VendorCommands.SetAdatInputEnable, (ushort)(enable ? 1 : 0), 1);
+        return r != null && r.Length >= 1 ? r[0] : (byte)0xFF;
+    }
+
+    /// <summary>Configured ADAT-input enable (0x69). Null on transfer failure (used
+    /// as the feature probe — pre-V24/RP2040 firmware STALLs).</summary>
+    public bool? GetAdatInputEnable()
+    {
+        var r = ControlTransferIn(VendorCommands.GetAdatInputEnable, 0, 1);
+        return r != null && r.Length >= 1 ? r[0] != 0 : (bool?)null;
+    }
+
+    /// <summary>Set the ADAT-input RX GPIO (0x6A; 0xFF clears). PIN_CONFIG_* status.</summary>
+    public byte SetAdatInputPin(byte pin)
+    {
+        var r = ControlTransferIn(VendorCommands.SetAdatInputPin, pin, 1);
+        return r != null && r.Length >= 1 ? r[0] : (byte)0xFF;
+    }
+
+    /// <summary>Configured ADAT-input RX GPIO (0x6B; 0xFF = unset). Null on failure.</summary>
+    public byte? GetAdatInputPin()
+    {
+        var r = ControlTransferIn(VendorCommands.GetAdatInputPin, 0, 1);
+        return r != null && r.Length >= 1 ? r[0] : (byte?)null;
+    }
+
+    /// <summary>Set the ADAT-input clock mode (0x6C; 0=master, 1=slave; deferred).</summary>
+    public byte SetAdatInputClockMode(byte mode)
+    {
+        var r = ControlTransferIn(VendorCommands.SetAdatInputClockMode, (ushort)(mode == 1 ? 1 : 0), 1);
+        return r != null && r.Length >= 1 ? r[0] : (byte)0xFF;
+    }
+
+    /// <summary>Live ADAT-input clock mode (0x6D). Null on failure.</summary>
+    public byte? GetAdatInputClockMode()
+    {
+        var r = ControlTransferIn(VendorCommands.GetAdatInputClockMode, 0, 1);
+        return r != null && r.Length >= 1 ? r[0] : (byte?)null;
+    }
+
+    /// <summary>Read the 20-byte live ADAT-input status (0x6E). Null on failure.</summary>
+    public AdatInputStatus? GetAdatInputStatus()
+    {
+        var r = ControlTransferIn(VendorCommands.GetAdatInputStatus, 0, AdatInputStatus.WireSize);
+        return r == null ? null : AdatInputStatus.FromBytes(r);
     }
 
     /// <summary>

@@ -3570,6 +3570,12 @@ public sealed partial class MainWindow : Window
             // (V12+). Keep the item visible but disabled on older firmware.
             SourceI2sItem.IsEnabled = ViewModel.InputI2sSupported;
 
+            // ADAT input (V24+, RP2350): only shown when the feature is present,
+            // and only selectable once it's enabled with a valid RX pin.
+            SourceAdatItem.Visibility = ViewModel.AdatInputSupported
+                ? Visibility.Visible : Visibility.Collapsed;
+            SourceAdatItem.IsEnabled = ViewModel.AdatInputSelectable;
+
             int target = (int)(byte)ViewModel.ActiveInputSource;
             // Guard against the firmware reporting an input source this combo
             // doesn't list (e.g. I2S=2 on firmware that bundles I2S input).

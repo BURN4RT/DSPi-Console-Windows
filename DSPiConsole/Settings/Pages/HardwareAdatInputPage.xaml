@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.HardwareAdatInputPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <!--
+        ADAT Input page (RP2350-only). A selectable 8-channel optical input source:
+        one TOSLINK receiver feeds 8 channels of 24-bit audio into input channels
+        0..7. Set the RX pin before enabling. Master clock: the DSPi owns the rate
+        (set in I2S Configuration). Slave: an external ADAT master owns the clock
+        and the rate is auto-detected (44.1/48 kHz). Registered only on firmware
+        that reports ADAT input support.
+    -->
+    <StackPanel Spacing="4">
+
+        <controls:SettingsCard Header="Enable ADAT Input"
+                               Description="Use an 8-channel ADAT optical lightpipe as the input source (input channels 1–8). Set the RX pin first.">
+            <ToggleSwitch x:Name="EnableToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnEnableToggled"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="PinCard" Header="Serial Data (RX)"
+                               Description="GPIO receiving the ADAT optical input. May share the ADAT output pin for a loopback self-test.">
+            <ComboBox x:Name="PinCombo" MinWidth="160" SelectionChanged="OnPinChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard Header="Clock Mode"
+                               Description="Master: the DSPi owns the sample rate (set in I2S Configuration). Slave: an external master owns the clock and the rate is auto-detected.">
+            <ComboBox x:Name="ClockModeCombo" MinWidth="120" SelectionChanged="OnClockModeChanged">
+                <ComboBoxItem Content="Master" Tag="0"/>
+                <ComboBoxItem Content="Slave" Tag="1"/>
+            </ComboBox>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="LockCard" Header="Lock Status" Visibility="Collapsed">
+            <TextBlock x:Name="LockText" FontSize="12" VerticalAlignment="Center"/>
+        </controls:SettingsCard>
+
+        <TextBlock x:Name="StatusText"
+                   FontSize="11"
+                   TextWrapping="Wrap"
+                   Visibility="Collapsed"/>
+    </StackPanel>
+</settings:SettingsModule>

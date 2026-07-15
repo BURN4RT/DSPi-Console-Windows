@@ -348,6 +348,8 @@
                             <ComboBoxItem Content="USB" Tag="0" />
                             <ComboBoxItem Content="S/PDIF" Tag="1" />
                             <ComboBoxItem x:Name="SourceI2sItem" Content="I2S" Tag="2" />
+                            <ComboBoxItem x:Name="SourceAdatItem" Content="ADAT" Tag="3"
+                                          Visibility="Collapsed" />
                         </ComboBox>
                     </Grid>
 

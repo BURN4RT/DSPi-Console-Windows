@@ -108,7 +108,8 @@ internal static class HardwarePins
         bool excludeAdatSelf = false,
         int excludeCsSlot = -1,
         bool excludeUartSelf = false,
-        bool excludeI2cSelf = false)
+        bool excludeI2cSelf = false,
+        bool excludeAdatInputSelf = false)
     {
         var owners = new Dictionary<byte, string>();
 
@@ -176,6 +177,13 @@ internal static class HardwarePins
         // stored preference). excludeAdatSelf keeps it pickable on its own combo.
         if (vm.AdatSupported && vm.AdatEnabled && !excludeAdatSelf)
             owners[vm.AdatPin] = "ADAT";
+
+        // ADAT optical input pin (V24+, RP2350): claims a GPIO only while enabled.
+        // May legitimately share the ADAT-output pin (one-directional loopback), so
+        // it's claimed last — its own combo passes excludeAdatInputSelf.
+        if (vm.AdatInputSupported && vm.AdatInputEnabled && !excludeAdatInputSelf
+            && vm.AdatInputPin != MainViewModel.AdatInputPinUnset)
+            owners[vm.AdatInputPin] = "ADAT In";
 
         // Control-surface GPIOs: only LIVE bindings (CsStatus.IsSlotActive) actually
         // hold a pin. Encoders claim both gpio0 and gpio1; single-pin types leave

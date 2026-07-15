@@ -91,6 +91,12 @@ public class PresetSnapshot
     public bool AdatEnabled;
     public byte AdatPin;
 
+    // ADAT optical input (V24+, RP2350). Enable + RX pin + clock mode (0=master,
+    // 1=slave). IO block, same output_config_mode gating as the other input pins.
+    public bool AdatInputEnabled;
+    public byte AdatInputPin;
+    public byte AdatInputClockMode;
+
     // LG Sound Sync enable (V8+ preset slot field). Only the user-writable
     // `enabled` flag is preset state; runtime fields (present, volume, muted)
     // are diagnostic and not captured. Tracks via REQ_SET/GET_LG_SOUND_SYNC
@@ -215,6 +221,9 @@ public class PresetSnapshot
         // ADAT bulk output (V17+ slot data — IO block)
         snap.AdatEnabled = vm.AdatEnabled;
         snap.AdatPin = vm.AdatPin;
+        snap.AdatInputEnabled = vm.AdatInputEnabled;
+        snap.AdatInputPin = vm.AdatInputPin;
+        snap.AdatInputClockMode = vm.AdatInputClockMode;
 
         // LG Sound Sync enable flag (V8+ preset slot field)
         snap.LgSoundSyncEnabled = vm.LgSoundSyncEnabled;
@@ -244,6 +253,9 @@ public class PresetSnapshot
         I2sRxPinsExt = (byte[])src.I2sRxPinsExt.Clone();
         AdatEnabled = src.AdatEnabled;
         AdatPin = src.AdatPin;
+        AdatInputEnabled = src.AdatInputEnabled;
+        AdatInputPin = src.AdatInputPin;
+        AdatInputClockMode = src.AdatInputClockMode;
     }
 }
 
@@ -521,6 +533,14 @@ public static class PresetDiff
             changes.Add(new("io.adat-en", "ADAT output", old.AdatEnabled ? "enabled" : "disabled", cur.AdatEnabled ? "enabled" : "disabled"));
         if (old.AdatPin != cur.AdatPin)
             changes.Add(new("io.adat-pin", "ADAT pin", $"GPIO {old.AdatPin}", $"GPIO {cur.AdatPin}"));
+
+        // ADAT optical input
+        if (old.AdatInputEnabled != cur.AdatInputEnabled)
+            changes.Add(new("io.adat-in-en", "ADAT input", old.AdatInputEnabled ? "enabled" : "disabled", cur.AdatInputEnabled ? "enabled" : "disabled"));
+        if (old.AdatInputPin != cur.AdatInputPin)
+            changes.Add(new("io.adat-in-pin", "ADAT input pin", $"GPIO {old.AdatInputPin}", $"GPIO {cur.AdatInputPin}"));
+        if (old.AdatInputClockMode != cur.AdatInputClockMode)
+            changes.Add(new("io.adat-in-clock", "ADAT input clock", old.AdatInputClockMode == 1 ? "slave" : "master", cur.AdatInputClockMode == 1 ? "slave" : "master"));
 
         return changes;
     }
