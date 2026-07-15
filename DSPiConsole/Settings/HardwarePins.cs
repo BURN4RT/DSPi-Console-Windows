@@ -109,7 +109,8 @@ internal static class HardwarePins
         int excludeCsSlot = -1,
         bool excludeUartSelf = false,
         bool excludeI2cSelf = false,
-        bool excludeAdatInputSelf = false)
+        bool excludeAdatInputSelf = false,
+        bool excludeI2sBckSlaveSelf = false)
     {
         var owners = new Dictionary<byte, string>();
 
@@ -134,6 +135,13 @@ internal static class HardwarePins
         // I²S clock pins: BCK reserves both pin and pin+1 (LRCK).
         owners[vm.I2SBckPin] = "BCK";
         owners[(byte)(vm.I2SBckPin + 1)] = "LRCK";
+
+        // Slave-pair BCK/LRCK — reserved only in SPLIT clock-pin mode.
+        if (vm.I2sClockSplit && !excludeI2sBckSlaveSelf)
+        {
+            owners[vm.I2sBckPinSlave] = "Slave BCK";
+            owners[(byte)(vm.I2sBckPinSlave + 1)] = "Slave LRCK";
+        }
 
         if (vm.MckEnabled && !excludeMckSelf)
             owners[vm.MckPin] = "MCK";

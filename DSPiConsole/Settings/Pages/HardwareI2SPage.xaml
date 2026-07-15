@@ -48,6 +48,34 @@
                       SelectionChanged="OnBckPinChanged"/>
         </controls:SettingsCard>
 
+        <controls:SettingsCard x:Name="ClockModeCard" Header="Clock Mode"
+                               Description="Master: the DSPi drives BCK/LRCLK. Slave: an external master drives the clocks and the rate is auto-detected."
+                               Visibility="Collapsed">
+            <ComboBox x:Name="ClockModeCombo" MinWidth="120" SelectionChanged="OnClockModeChanged">
+                <ComboBoxItem Content="Master" Tag="0"/>
+                <ComboBoxItem Content="Slave" Tag="1"/>
+            </ComboBox>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="ClockLockCard" Header="Clock Lock" Visibility="Collapsed">
+            <TextBlock x:Name="ClockLockText" FontSize="12" VerticalAlignment="Center"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="ClockPinsCard" Header="Clock Pins"
+                               Description="Unified: Master and Slave modes share one BCK/LRCLK pair. Split: a separate pin pair for Slave mode."
+                               Visibility="Collapsed">
+            <ComboBox x:Name="ClockPinsCombo" MinWidth="120" SelectionChanged="OnClockPinsChanged">
+                <ComboBoxItem Content="Unified" Tag="0"/>
+                <ComboBoxItem Content="Split" Tag="1"/>
+            </ComboBox>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="SlaveBckCard" Header="Slave BCK pin"
+                               Description="GPIO for the slave-mode bit clock; LRCLK = BCK + 1. Editable only in Split mode."
+                               Visibility="Collapsed">
+            <ComboBox x:Name="SlaveBckCombo" MinWidth="140" SelectionChanged="OnSlaveBckChanged"/>
+        </controls:SettingsCard>
+
         <TextBlock x:Name="StatusText"
                    FontSize="11"
                    TextWrapping="Wrap"

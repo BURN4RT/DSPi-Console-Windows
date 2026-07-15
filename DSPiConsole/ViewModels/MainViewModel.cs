@@ -1740,6 +1740,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             LinkwitzTransformSupported = bp.FormatVersion >= 22;
             SeedPsybassFromBulk(bp);
             SeedAdatInputFromBulk(bp);
+            SeedI2sClockFromBulk(bp);
             LevellerMasksSupported = bp.FormatVersion >= 18 && bp.NumInputChannels > 2;
             if (LevellerMasksSupported)
             {

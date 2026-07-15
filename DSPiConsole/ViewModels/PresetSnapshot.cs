@@ -97,6 +97,11 @@ public class PresetSnapshot
     public byte AdatInputPin;
     public byte AdatInputClockMode;
 
+    // I2S clock master/slave mode + clock-pin unified/split + slave-pair BCK.
+    public byte I2sClockMode;      // 0=master, 1=slave
+    public byte I2sClockPinMode;   // 0=unified, 1=split
+    public byte I2sBckPinSlave;
+
     // LG Sound Sync enable (V8+ preset slot field). Only the user-writable
     // `enabled` flag is preset state; runtime fields (present, volume, muted)
     // are diagnostic and not captured. Tracks via REQ_SET/GET_LG_SOUND_SYNC
@@ -224,6 +229,9 @@ public class PresetSnapshot
         snap.AdatInputEnabled = vm.AdatInputEnabled;
         snap.AdatInputPin = vm.AdatInputPin;
         snap.AdatInputClockMode = vm.AdatInputClockMode;
+        snap.I2sClockMode = vm.I2sClockMode;
+        snap.I2sClockPinMode = vm.I2sClockPinMode;
+        snap.I2sBckPinSlave = vm.I2sBckPinSlave;
 
         // LG Sound Sync enable flag (V8+ preset slot field)
         snap.LgSoundSyncEnabled = vm.LgSoundSyncEnabled;
@@ -256,6 +264,9 @@ public class PresetSnapshot
         AdatInputEnabled = src.AdatInputEnabled;
         AdatInputPin = src.AdatInputPin;
         AdatInputClockMode = src.AdatInputClockMode;
+        I2sClockMode = src.I2sClockMode;
+        I2sClockPinMode = src.I2sClockPinMode;
+        I2sBckPinSlave = src.I2sBckPinSlave;
     }
 }
 
@@ -507,6 +518,12 @@ public static class PresetDiff
             changes.Add(new("io.mck-pin", "MCK pin", $"GPIO {old.MckPin}", $"GPIO {cur.MckPin}"));
         if (old.MckMultiplier != cur.MckMultiplier)
             changes.Add(new("io.mck-mult", "MCK multiplier", $"{old.MckMultiplier}x", $"{cur.MckMultiplier}x"));
+        if (old.I2sClockMode != cur.I2sClockMode)
+            changes.Add(new("io.i2s-clock", "I2S clock", old.I2sClockMode == 1 ? "slave" : "master", cur.I2sClockMode == 1 ? "slave" : "master"));
+        if (old.I2sClockPinMode != cur.I2sClockPinMode)
+            changes.Add(new("io.i2s-clock-pins", "I2S clock pins", old.I2sClockPinMode == 1 ? "split" : "unified", cur.I2sClockPinMode == 1 ? "split" : "unified"));
+        if (old.I2sBckPinSlave != cur.I2sBckPinSlave)
+            changes.Add(new("io.bck-slave", "I2S slave BCK pin", $"GPIO {old.I2sBckPinSlave}", $"GPIO {cur.I2sBckPinSlave}"));
 
         // S/PDIF RX pins + instance enable
         if (old.SpdifRxPin != cur.SpdifRxPin)

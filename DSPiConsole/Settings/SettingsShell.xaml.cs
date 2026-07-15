@@ -344,6 +344,7 @@ public sealed partial class SettingsShell : UserControl
     /// Output Assignment page.</summary>
     private static string PageForIoKey(string key) =>
         key.StartsWith("io.spdif") ? "hardware.spdif-input"
+        : key.StartsWith("io.i2s-clock") ? "hardware.i2s"    // clock mode / clock pins live on I2S Configuration
         : key.StartsWith("io.i2s-") ? "hardware.i2s-input"   // io.i2s-rx / io.i2s-ch / io.i2s-rate
         : key.StartsWith("io.bck") || key.StartsWith("io.mck") ? "hardware.i2s"
         : key.StartsWith("io.adat-in") ? "hardware.adat-input"

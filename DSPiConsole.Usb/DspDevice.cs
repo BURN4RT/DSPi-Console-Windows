@@ -141,8 +141,17 @@ public static class VendorCommands
     // I2S output configuration
     public const byte SetOutputType    = 0xC0;
     public const byte GetOutputType    = 0xC1;
-    public const byte SetI2SBckPin     = 0xC2;
-    public const byte GetI2SBckPin     = 0xC3;
+    public const byte SetI2SBckPin     = 0xC2; // IN, wValue=(role<<8)|GPIO, status byte
+    public const byte GetI2SBckPin     = 0xC3; // IN, wValue=role, 1 byte (BCK GPIO)
+
+    // I2S clock master/slave mode (clock_pins_spec.md). SET is a deferred OUT.
+    public const byte SetI2SClockMode    = 0x88; // OUT 1 byte (0=master, 1=slave)
+    public const byte GetI2SClockMode    = 0x89; // IN 1 byte (live mode)
+    public const byte GetI2SSlaveStatus  = 0x8A; // IN 16-byte I2sSlaveStatusPacket
+    // I2S clock-pin mode (unified vs split BCK+LRCLK pairs). SET is a synchronous IN
+    // returning a PIN_CONFIG_* status byte.
+    public const byte SetI2SClockPinMode = 0xFE; // IN, wValue=0 unified/1 split, status byte
+    public const byte GetI2SClockPinMode = 0xFF; // IN 1 byte (live pin mode)
     public const byte SetMckEnable     = 0xC4;
     public const byte GetMckEnable     = 0xC5;
     public const byte SetMckPin        = 0xC6;
@@ -1860,23 +1869,63 @@ public partial class DspDevice : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Set I2S BCK (bit clock) pin. LRCLK is always BCK + 1.
+    /// Set an I2S BCK (bit clock) pin. LRCLK is always BCK + 1. <paramref name="role"/>
+    /// 0 = master/unified pair, 1 = slave pair (SPLIT mode only). Role rides in the
+    /// wValue high byte; a bare GPIO (role 0) matches the legacy behavior.
     /// Returns status byte, or 0xFF on transfer failure.
     /// </summary>
-    public byte SetI2SBckPin(byte pin)
+    public byte SetI2SBckPin(byte pin, byte role = 0)
     {
-        var response = ControlTransferIn(VendorCommands.SetI2SBckPin, pin, 1);
+        ushort wValue = (ushort)((role << 8) | pin);
+        var response = ControlTransferIn(VendorCommands.SetI2SBckPin, wValue, 1);
         return response != null && response.Length >= 1 ? response[0] : (byte)0xFF;
     }
 
     /// <summary>
-    /// Get current I2S BCK pin number, or null on failure.
+    /// Get a pair's I2S BCK pin (LRCLK = value + 1). <paramref name="role"/> 0 =
+    /// master/unified, 1 = slave pair. Null on failure.
     /// </summary>
-    public byte? GetI2SBckPin()
+    public byte? GetI2SBckPin(byte role = 0)
     {
-        var response = ControlTransferIn(VendorCommands.GetI2SBckPin, 0, 1);
+        var response = ControlTransferIn(VendorCommands.GetI2SBckPin, role, 1);
         if (response == null || response.Length < 1) return null;
         return response[0];
+    }
+
+    // ── I2S clock master/slave + clock-pin unified/split ─────────────────────
+
+    /// <summary>Set the I2S clock mode (0x88; 0=master, 1=slave). Deferred fire-and-
+    /// forget OUT; confirm via GetI2SClockMode / the slave status. False on failure.</summary>
+    public bool SetI2SClockMode(byte mode) =>
+        ControlTransferOut(VendorCommands.SetI2SClockMode, 0, new[] { (byte)(mode == 1 ? 1 : 0) });
+
+    /// <summary>Live I2S clock mode (0x89). Null on transfer failure / unsupported.</summary>
+    public byte? GetI2SClockMode()
+    {
+        var r = ControlTransferIn(VendorCommands.GetI2SClockMode, 0, 1);
+        return r != null && r.Length >= 1 ? r[0] : (byte?)null;
+    }
+
+    /// <summary>Read the 16-byte I2S slave-clock status (0x8A). Null on failure.</summary>
+    public I2sSlaveStatus? GetI2SSlaveStatus()
+    {
+        var r = ControlTransferIn(VendorCommands.GetI2SSlaveStatus, 0, I2sSlaveStatus.WireSize);
+        return r == null ? null : I2sSlaveStatus.FromBytes(r);
+    }
+
+    /// <summary>Set the I2S clock-pin mode (0xFE; 0=unified, 1=split). Synchronous IN
+    /// returning a PIN_CONFIG_* status byte (0xFF on transfer failure).</summary>
+    public byte SetI2SClockPinMode(byte mode)
+    {
+        var r = ControlTransferIn(VendorCommands.SetI2SClockPinMode, (ushort)(mode == 1 ? 1 : 0), 1);
+        return r != null && r.Length >= 1 ? r[0] : (byte)0xFF;
+    }
+
+    /// <summary>Live I2S clock-pin mode (0xFF). Null on failure / unsupported.</summary>
+    public byte? GetI2SClockPinMode()
+    {
+        var r = ControlTransferIn(VendorCommands.GetI2SClockPinMode, 0, 1);
+        return r != null && r.Length >= 1 ? r[0] : (byte?)null;
     }
 
     /// <summary>

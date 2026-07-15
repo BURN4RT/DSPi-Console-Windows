@@ -42,6 +42,8 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         // safe to Clear/Add.
         foreach (var pin in HardwarePins.ValidPins)
             BckPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
+        foreach (var pin in HardwarePins.ValidPins)
+            SlaveBckCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
 
         // Subscriptions go in Loaded/Unloaded so they survive sidebar
         // navigation cycles — see HardwareOutputAssignmentPage for the
@@ -69,6 +71,7 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
             fetchVm.FetchMckEnable();
             fetchVm.FetchMckPin();
             fetchVm.FetchMckMultiplier();
+            fetchVm.FetchI2sClockConfig();
         });
     }
 
@@ -145,7 +148,14 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
             || e.PropertyName == nameof(MainViewModel.MckEnabled)
             || e.PropertyName == nameof(MainViewModel.MckMultiplier)
             || e.PropertyName == nameof(MainViewModel.MckPin)
-            || e.PropertyName == nameof(MainViewModel.I2SBckPin))
+            || e.PropertyName == nameof(MainViewModel.I2SBckPin)
+            || e.PropertyName == nameof(MainViewModel.I2sClockModeSupported)
+            || e.PropertyName == nameof(MainViewModel.I2sClockMode)
+            || e.PropertyName == nameof(MainViewModel.I2sClockPinModeSupported)
+            || e.PropertyName == nameof(MainViewModel.I2sClockPinMode)
+            || e.PropertyName == nameof(MainViewModel.I2sBckPinSlave)
+            || e.PropertyName == nameof(MainViewModel.I2sSlaveActive)
+            || e.PropertyName == nameof(MainViewModel.I2sSlaveStatus))
         {
             DispatcherQueue.TryEnqueue(Refresh);
         }
@@ -155,14 +165,19 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
     {
         if (Vm == null) return;
 
+        // In slave mode an external master drives the clocks, so the DSPi's own
+        // BCK/MCK/rate controls don't apply.
+        bool slave = Vm.I2sSlaveActive;
+
         _suppress = true;
         try
         {
             BckPinCard.Description = $"LRCK auto-assigned to GPIO {Vm.I2SBckPin + 1} (BCK + 1).";
-            BckPinCombo.IsEnabled = !Vm.AnySlotIsI2S;
+            BckPinCombo.IsEnabled = !Vm.AnySlotIsI2S && !slave;
 
             MckToggle.IsOn = Vm.MckEnabled;
-            MckPinCombo.IsEnabled = !Vm.MckEnabled;
+            MckToggle.IsEnabled = !slave;
+            MckPinCombo.IsEnabled = !Vm.MckEnabled && !slave;
             MckPinCard.Description = Vm.MckEnabled
                 ? "Turn MCK off to change its pin."
                 : "Pin on which MCK is generated.";
@@ -170,14 +185,53 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
             // MCK multiplier
             MckMultiplierCombo.SelectedIndex = Vm.MckMultiplier == 256 ? 1 : 0;
             var highRate = Vm.SampleRateHz >= 96000;
-            MckMultiplierCombo.IsEnabled = !highRate;
+            MckMultiplierCombo.IsEnabled = !highRate && !slave;
             MckMultiplierCard.Description = highRate
                 ? $"Locked to 128× at {Vm.SampleRateHz / 1000.0:F1} kHz."
                 : "Use 256× for DACs that require higher MCK rates.";
+
+            RefreshClockCards();
         }
         finally { _suppress = false; }
 
         RefreshConflicts();
+    }
+
+    /// <summary>Show/populate the clock-mode, clock-pin and slave-BCK cards when the
+    /// firmware supports them, plus the live lock indicator in slave mode. Runs under
+    /// the <c>_suppress</c> guard (called from Refresh).</summary>
+    private void RefreshClockCards()
+    {
+        if (Vm == null) return;
+
+        // Clock master/slave mode (V21+).
+        ClockModeCard.Visibility = Vm.I2sClockModeSupported ? Visibility.Visible : Visibility.Collapsed;
+        SelectByStringTag(ClockModeCombo, Vm.I2sClockMode);
+
+        bool slave = Vm.I2sSlaveActive;
+        var st = Vm.I2sSlaveStatus;
+        ClockLockCard.Visibility = slave && st != null ? Visibility.Visible : Visibility.Collapsed;
+        if (slave && st != null)
+        {
+            string rate = st.IsLocked ? $" · {st.DetectedRateText}" : "";
+            ClockLockText.Text = st.StateText + rate;
+            ClockLockText.Foreground = new SolidColorBrush(st.IsLocked
+                ? Color.FromArgb(255, 100, 200, 140)
+                : Color.FromArgb(255, 240, 180, 90));
+        }
+
+        // Clock-pin unified/split + slave BCK pin.
+        bool pinModeShown = Vm.I2sClockPinModeSupported;
+        ClockPinsCard.Visibility = pinModeShown ? Visibility.Visible : Visibility.Collapsed;
+        SlaveBckCard.Visibility = pinModeShown ? Visibility.Visible : Visibility.Collapsed;
+        if (pinModeShown)
+        {
+            SelectByStringTag(ClockPinsCombo, Vm.I2sClockPinMode);
+            SlaveBckCombo.IsEnabled = Vm.I2sClockSplit;
+            SlaveBckCard.Description = Vm.I2sClockSplit
+                ? $"LRCLK = GPIO {Vm.I2sBckPinSlave + 1} (BCK + 1)."
+                : "Switch Clock Pins to Split to edit the slave pair.";
+        }
     }
 
     /// <summary>Refresh the BCK and MCK pin pickers' per-item state so
@@ -276,6 +330,34 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
                 item.IsEnabled = ownerLabel == null;
             }
             SelectPinInCombo(MckPinCombo, currentMck);
+
+            // ── Slave BCK (SPLIT mode) — reserves pin AND pin+1 (LRCLK) ──
+            if (Vm.I2sClockPinModeSupported)
+            {
+                var slaveOwners = HardwarePins.BuildOwnerMap(Vm, excludeI2sBckSlaveSelf: true);
+                byte currentSlave = Vm.I2sBckPinSlave;
+                for (int i = 0; i < SlaveBckCombo.Items.Count; i++)
+                {
+                    if (SlaveBckCombo.Items[i] is not ComboBoxItem item || item.Tag is not byte pin) continue;
+                    byte lrck = (byte)(pin + 1);
+                    bool isCurrent = pin == currentSlave;
+                    string? ownerLabel = null;
+                    if (!isCurrent)
+                    {
+                        if (slaveOwners.TryGetValue(pin, out var owner)
+                            && owner != "Slave BCK" && owner != "Slave LRCK")
+                            ownerLabel = owner;
+                        else if (!HardwarePins.IsAudioCapable(lrck))
+                            ownerLabel = "LRCK Conflict";
+                        else if (slaveOwners.TryGetValue(lrck, out var nextOwner)
+                                 && nextOwner != "Slave BCK" && nextOwner != "Slave LRCK")
+                            ownerLabel = "LRCK Conflict";
+                    }
+                    item.Content = ownerLabel != null ? $"GPIO {pin} ({ownerLabel})" : $"GPIO {pin}";
+                    item.IsEnabled = ownerLabel == null;
+                }
+                SelectPinInCombo(SlaveBckCombo, currentSlave);
+            }
         }
         finally { _suppress = false; }
     }
@@ -416,6 +498,106 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         MckMultiplierCombo.SelectedIndex = Vm.MckMultiplier == 256 ? 1 : 0;
         _suppress = false;
         ShowStatus("Failed to set MCK multiplier", true);
+    }
+
+    // ── I2S clock master/slave + clock-pin handlers ─────────────────────────
+
+    private async void OnClockModeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppress || Vm == null) return;
+        if (ClockModeCombo.SelectedItem is not ComboBoxItem item || item.Tag is not string tag) return;
+        if (!byte.TryParse(tag, out var mode) || mode == Vm.I2sClockMode) return;
+        ClearStatus();
+
+        // Switching mode while an I2S output is live can emit sustained loud noise
+        // from the DAC if wiring hasn't been adjusted — confirm first.
+        if (Vm.AnySlotIsI2S)
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "Change I2S clock mode?",
+                Content = "One or more I2S outputs are active. Switching between Master and Slave "
+                        + "modes may cause sustained loud noise from the connected DAC if the wiring "
+                        + "has not been adjusted.",
+                PrimaryButtonText = "Change Clock Mode",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = XamlRoot
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            {
+                _suppress = true;
+                SelectByStringTag(ClockModeCombo, Vm.I2sClockMode);
+                _suppress = false;
+                return;
+            }
+        }
+
+        await Task.Run(() => Vm.SetI2sClockMode(mode));
+        HardwarePins.RaisePinAssignmentsChanged();
+        ShowStatus($"I2S clock mode set to {(mode == 1 ? "Slave" : "Master")}", false);
+    }
+
+    private async void OnClockPinsChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppress || Vm == null) return;
+        if (ClockPinsCombo.SelectedItem is not ComboBoxItem item || item.Tag is not string tag) return;
+        if (!byte.TryParse(tag, out var mode)) return;
+        ClearStatus();
+
+        var status = await Task.Run(() => Vm.SetI2sClockPinMode(mode));
+        if (status == PinConfigResult.Success)
+        {
+            HardwarePins.RaisePinAssignmentsChanged();
+            ShowStatus($"Clock pins set to {(mode == 1 ? "Split" : "Unified")}", false);
+            return;
+        }
+        _suppress = true;
+        SelectByStringTag(ClockPinsCombo, Vm.I2sClockPinMode);
+        _suppress = false;
+        ShowStatus(status switch
+        {
+            PinConfigResult.PinInUse => "The slave clock pair overlaps another pin — free it first.",
+            PinConfigResult.OutputActive => "Can't change clock pins while an I2S output is active.",
+            _ => $"Failed to change clock pins (0x{status:X2})."
+        }, true);
+    }
+
+    private async void OnSlaveBckChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppress || Vm == null) return;
+        if (SlaveBckCombo.SelectedItem is not ComboBoxItem item || item.Tag is not byte newPin) return;
+        ClearStatus();
+
+        var status = await Task.Run(() => Vm.SetI2sBckPinSlave(newPin));
+        if (status == PinConfigResult.Success)
+        {
+            SlaveBckCard.Description = $"LRCLK = GPIO {newPin + 1} (BCK + 1).";
+            HardwarePins.RaisePinAssignmentsChanged();
+            ShowStatus($"Slave BCK set to GPIO {newPin}, LRCLK = GPIO {newPin + 1}", false);
+            return;
+        }
+        _suppress = true;
+        SelectPinInCombo(SlaveBckCombo, Vm.I2sBckPinSlave);
+        _suppress = false;
+        ShowStatus(status switch
+        {
+            PinConfigResult.PinInUse => $"GPIO {newPin} or {newPin + 1} is already in use",
+            _ => $"Failed to set slave BCK pin (0x{status:X2})"
+        }, true);
+    }
+
+    /// <summary>Select the combo item whose string Tag ("0"/"1") equals the byte
+    /// <paramref name="value"/>.</summary>
+    private static void SelectByStringTag(ComboBox combo, byte value)
+    {
+        for (int i = 0; i < combo.Items.Count; i++)
+            if (combo.Items[i] is ComboBoxItem item && item.Tag is string s
+                && byte.TryParse(s, out var v) && v == value)
+            {
+                combo.SelectedIndex = i;
+                return;
+            }
     }
 
     private void ShowStatus(string msg, bool isError)
