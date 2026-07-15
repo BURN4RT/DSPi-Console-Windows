@@ -20,6 +20,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private readonly DspDevice _device;
     private readonly DispatcherQueue _dispatcher;
     private readonly System.Timers.Timer _pollTimer;
+    private int _audioPollCounter;   // throttles the Windows USB-format re-poll
     private bool _disposed;
 
     // Channel filter data: Dictionary<ChannelId, List<FilterParams>>
@@ -845,6 +846,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
             if (IsDeviceConnected)
             {
                 FetchStatus();
+                // Re-poll the Windows USB input format ~every 2s so a channel
+                // (alt-mode) change in Sound Settings is picked up without audio.
+                if (++_audioPollCounter >= 33)
+                {
+                    _audioPollCounter = 0;
+                    System.Threading.Tasks.Task.Run(RefreshUsbInputChannelCount);
+                }
             }
         };
         _pollTimer.AutoReset = true;
@@ -1534,6 +1542,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 if (parsed != null)
                 {
                     ApplyBulkParams(parsed, outputs);
+                    RefreshUsbInputChannelCount();
                     return;
                 }
             }
