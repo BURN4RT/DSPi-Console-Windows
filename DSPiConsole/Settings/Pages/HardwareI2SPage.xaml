@@ -49,7 +49,7 @@
         </controls:SettingsCard>
 
         <controls:SettingsCard x:Name="ClockModeCard" Header="Clock Mode"
-                               Description="Master: the DSPi drives BCK/LRCLK. Slave: an external master drives the clocks and the rate is auto-detected."
+                               Description="Master: Generate BCK/LRCK.&#x0A;Slave: Sync to an external master."
                                Visibility="Collapsed">
             <ComboBox x:Name="ClockModeCombo" MinWidth="120" SelectionChanged="OnClockModeChanged">
                 <ComboBoxItem Content="Master" Tag="0"/>
@@ -62,7 +62,7 @@
         </controls:SettingsCard>
 
         <controls:SettingsCard x:Name="ClockPinsCard" Header="Clock Pins"
-                               Description="Unified: Master and Slave modes share one BCK/LRCLK pair. Split: a separate pin pair for Slave mode."
+                               Description="Unified: Master and Slave modes share one BCK/LRCLK pair.&#x0A;Split: a separate pin pair for Slave mode."
                                Visibility="Collapsed">
             <ComboBox x:Name="ClockPinsCombo" MinWidth="120" SelectionChanged="OnClockPinsChanged">
                 <ComboBoxItem Content="Unified" Tag="0"/>

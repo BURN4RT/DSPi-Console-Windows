@@ -220,17 +220,16 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
                 : Color.FromArgb(255, 240, 180, 90));
         }
 
-        // Clock-pin unified/split + slave BCK pin.
+        // Clock-pin unified/split + slave BCK pin. The slave pair only exists in
+        // Split mode, so hide the card entirely in Unified (it can't be changed).
         bool pinModeShown = Vm.I2sClockPinModeSupported;
         ClockPinsCard.Visibility = pinModeShown ? Visibility.Visible : Visibility.Collapsed;
-        SlaveBckCard.Visibility = pinModeShown ? Visibility.Visible : Visibility.Collapsed;
+        SlaveBckCard.Visibility = (pinModeShown && Vm.I2sClockSplit) ? Visibility.Visible : Visibility.Collapsed;
         if (pinModeShown)
         {
             SelectByStringTag(ClockPinsCombo, Vm.I2sClockPinMode);
-            SlaveBckCombo.IsEnabled = Vm.I2sClockSplit;
-            SlaveBckCard.Description = Vm.I2sClockSplit
-                ? $"LRCLK = GPIO {Vm.I2sBckPinSlave + 1} (BCK + 1)."
-                : "Switch Clock Pins to Split to edit the slave pair.";
+            if (Vm.I2sClockSplit)
+                SlaveBckCard.Description = $"LRCLK = GPIO {Vm.I2sBckPinSlave + 1} (BCK + 1).";
         }
     }
 
