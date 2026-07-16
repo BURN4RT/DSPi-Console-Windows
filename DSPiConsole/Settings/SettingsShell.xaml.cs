@@ -72,6 +72,12 @@ public sealed partial class SettingsShell : UserControl
                 _vm.PropertyChanged -= OnVmPropertyChanged;
                 _vm.OutputConfigStateChanged -= OnOutputConfigStateChanged;
             };
+
+            // The Control Interfaces page gates on a device probe (0xF9) that
+            // nothing in the connect flow performs — without this kick the flag
+            // stays false and the page can never appear in the nav. When the
+            // probe confirms support, OnVmPropertyChanged rebuilds the menu.
+            ProbeControlInterfaces();
         }
         catch (Exception ex)
         {
@@ -296,7 +302,42 @@ public sealed partial class SettingsShell : UserControl
     private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MainViewModel.IsDeviceConnected))
+        {
             DispatcherQueue.TryEnqueue(SyncOutputConfigStaged);
+            DispatcherQueue.TryEnqueue(ProbeControlInterfaces); // re-probe on (re)connect
+        }
+        else if (e.PropertyName == nameof(MainViewModel.ControlInterfacesSupported))
+        {
+            DispatcherQueue.TryEnqueue(RebuildNavMenu);
+        }
+    }
+
+    private void ProbeControlInterfaces()
+    {
+        if (_vm.IsDeviceConnected && !_vm.ControlInterfacesSupported)
+            _ = System.Threading.Tasks.Task.Run(_vm.FetchControlInterfaces);
+    }
+
+    /// <summary>Rebuild the nav after a page's availability changed (e.g. the
+    /// control-interfaces probe answered), preserving the current selection and
+    /// pending-dots. No-op when the set of shown pages is already correct.</summary>
+    private void RebuildNavMenu()
+    {
+        var available = SettingsRegistry.Pages
+            .Where(p => p.Category != SettingsCategory.About && p.IsAvailable(_vm))
+            .Select(p => p.Id)
+            .ToHashSet();
+        if (available.SetEquals(_pageDots.Keys)) return;
+
+        var selectedId = (Nav.SelectedItem as NavigationViewItem)?.Tag as string;
+        Nav.MenuItems.Clear();
+        Nav.FooterMenuItems.Clear();
+        _pageDots.Clear();
+        _categoryDots.Clear();
+        BuildNavMenu();
+        if (selectedId != null && FindMenuItem(selectedId) is { } item)
+            Nav.SelectedItem = item;
+        OnTrackerChanged(this, EventArgs.Empty); // repaint dots on the fresh items
     }
 
     private void OnOutputConfigStateChanged(object? sender, EventArgs e) =>
