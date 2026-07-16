@@ -79,19 +79,32 @@ public partial class MainViewModel
             return;
         }
 
-        // Input-config block: input source is handled by the typed InputSourceNotified;
-        // i2s clock mode + ADAT input map to the clock/adat fetchers.
-        if (off >= BulkParamsParser.OffsetInputCfg && off < BulkParamsParser.OffsetLgSoundSync)
+        // Output GPIO pins (pins section): re-read the changed pin.
+        if (off > BulkParamsParser.OffsetPinConfig && off < BulkParamsParser.OffsetEq)
         {
-            int sub = off - BulkParamsParser.OffsetInputCfg;
-            if (sub == 11) { Task.Run(FetchI2sClockConfig); return; }
-            if (sub is 12 or 13 or 14) { Task.Run(FetchAdatInputConfig); return; }
-            // Other input-config fields (pins, rate, channels) — left to the periodic
-            // refetch for now.
+            int idx = off - (BulkParamsParser.OffsetPinConfig + 1);
+            if (idx >= 0) { int i = idx; Task.Run(() => FetchOutputPin(i)); }
             return;
         }
 
-        // ── Scalars applied in place (no device write) on the UI thread. ──
+        // Input-config block. Input source is handled by the typed
+        // InputSourceNotified; the rest map to their existing fetchers.
+        if (off >= BulkParamsParser.OffsetInputCfg && off < BulkParamsParser.OffsetLgSoundSync)
+        {
+            int sub = off - BulkParamsParser.OffsetInputCfg;
+            switch (sub)
+            {
+                case 11: Task.Run(FetchI2sClockConfig); break;              // i2s clock mode
+                case 12: case 13: case 14: Task.Run(FetchAdatInputConfig); break; // ADAT input
+                case 1: case 8: case 9: case 10: Task.Run(FetchSpdifInputConfig); break; // SPDIF pins/enable
+                case 2: case 4: case 5: case 6: case 7: Task.Run(FetchI2sInputConfig); break; // I2S pins/channels
+                case 3: Task.Run(FetchI2sInputRate); break;                // I2S input rate
+                // sub 0 (input_source) never reaches here (typed handler catches it).
+            }
+            return;
+        }
+
+        // ── Scalars / matrix applied in place (no device write) on the UI thread. ──
         _dispatcher.TryEnqueue(() => ApplyScalarParam(n));
     }
 
@@ -132,6 +145,22 @@ public partial class MainViewModel
         else if (off >= BulkParamsParser.OffsetOutputs && off < BulkParamsParser.OffsetPinConfig)
         {
             ApplyOutputField(off - BulkParamsParser.OffsetOutputs, p);
+        }
+        // Matrix crosspoints: enabled / invert / gain per (input, output). The app
+        // models the 2-input matrix, so wire inputs 0..1 only.
+        else if (off >= BulkParamsParser.OffsetCrosspoints && off < BulkParamsParser.OffsetOutputs && p.Length >= 8)
+        {
+            int flat = (off - BulkParamsParser.OffsetCrosspoints) / 8;
+            int inp = flat / 9;
+            int outp = flat % 9;
+            if (inp < 2 && outp < 9)
+            {
+                _matrixRouting[inp, outp] = p[0] != 0;
+                _matrixInvert[inp, outp] = p[1] != 0;
+                _matrixGain[inp, outp] = BitConverter.ToSingle(p, 4);
+                MatrixRouteChanged?.Invoke(inp, outp);
+            }
+            else changed = false;
         }
         // Per-channel delays.
         else if (off >= BulkParamsParser.OffsetDelays && off < BulkParamsParser.OffsetCrosspoints && p.Length >= 4)
