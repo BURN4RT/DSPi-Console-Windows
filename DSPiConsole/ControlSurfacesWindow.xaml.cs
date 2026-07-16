@@ -15,6 +15,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Shapes;
 using Windows.System;
 using Windows.UI;
 using WinRT.Interop;
@@ -49,7 +50,9 @@ public sealed partial class ControlSurfacesWindow : Window
     private int? _learningSub;
 
     // Per-slot / per-sub UI handles refreshed without a full rebuild.
-    private readonly Dictionary<int, TextBlock> _slotPills = new();
+    private readonly Dictionary<int, (Border Pill, Ellipse Dot, TextBlock Label)> _slotPills = new();
+    private readonly Dictionary<int, TextBlock> _slotTitles = new();
+    private readonly Dictionary<int, TextBlock> _slotSummaries = new();
     private readonly Dictionary<int, Button> _slotApply = new();
     private readonly Dictionary<int, StackPanel> _slotBodies = new();
     private readonly Dictionary<int, FrameworkElement> _slotCards = new();
@@ -67,6 +70,7 @@ public sealed partial class ControlSurfacesWindow : Window
     private int _irLeadingCount; // non-card children (count label + optional hint)
     private readonly Dictionary<int, FrameworkElement> _irCommandCards = new();
     private readonly Dictionary<int, Button> _irLearnButtons = new();
+    private readonly Dictionary<int, TextBlock> _irTitles = new();
 
     public ControlSurfacesWindow(MainViewModel vm)
     {
@@ -159,7 +163,12 @@ public sealed partial class ControlSurfacesWindow : Window
             if ((int)t >= caps.TypeCount) continue;
             // One IR receiver max — hide once configured.
             if (t == CsType.Ir && (!_vm.CsIrSupported || AnyIrReceiver())) continue;
-            var item = new MenuFlyoutItem { Text = TypeName(t), Tag = t };
+            var item = new MenuFlyoutItem
+            {
+                Text = TypeName(t),
+                Tag = t,
+                Icon = new FontIcon { Glyph = TypeGlyph(t) },
+            };
             item.Click += (_, _) => AddControl(t);
             AddFlyout.Items.Add(item);
         }
@@ -173,6 +182,8 @@ public sealed partial class ControlSurfacesWindow : Window
         {
             CardsPanel.Children.Clear();
             _slotPills.Clear();
+            _slotTitles.Clear();
+            _slotSummaries.Clear();
             _slotApply.Clear();
             _slotBodies.Clear();
             _slotCards.Clear();
@@ -214,48 +225,70 @@ public sealed partial class ControlSurfacesWindow : Window
     private FrameworkElement BuildCardHeader(int slot)
     {
         var draft = _drafts[slot];
-        var grid = new Grid { ColumnSpacing = 8, Padding = new Thickness(0, 2, 0, 2) };
+        var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(0, 8, 0, 8) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        // Type badge — click to change component type.
-        var typeBtn = new DropDownButton { Content = TypeName(draft.Type), MinWidth = 96 };
-        var typeFlyout = new MenuFlyout();
-        var caps = _vm.CsCaps!;
-        foreach (CsType t in Enum.GetValues<CsType>())
+        // Tinted type-icon badge.
+        var accent = TypeColor(draft.Type);
+        var badge = new Border
         {
-            if (t == CsType.None || (int)t >= caps.TypeCount) continue;
-            if (t == CsType.Ir && t != draft.Type && (!_vm.CsIrSupported || AnyIrReceiver())) continue;
-            var mi = new MenuFlyoutItem { Text = TypeName(t), Tag = t };
-            mi.Click += (_, _) => ChangeType(slot, t);
-            typeFlyout.Items.Add(mi);
-        }
-        typeBtn.Flyout = typeFlyout;
-        Grid.SetColumn(typeBtn, 0);
-        grid.Children.Add(typeBtn);
-
-        // Name editor.
-        var nameBox = new TextBox
-        {
-            PlaceholderText = "Name (optional)",
-            Text = _nameEdits[slot],
+            Width = 34,
+            Height = 34,
+            CornerRadius = new CornerRadius(8),
             VerticalAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.FromArgb(0x2A, accent.R, accent.G, accent.B)),
+            Child = new FontIcon
+            {
+                Glyph = TypeGlyph(draft.Type),
+                FontSize = 16,
+                Foreground = new SolidColorBrush(accent),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
         };
-        nameBox.LostFocus += (_, _) => CommitName(slot, nameBox.Text);
-        nameBox.KeyDown += (_, e) => { if (e.Key == VirtualKey.Enter) CommitName(slot, nameBox.Text); };
-        Grid.SetColumn(nameBox, 1);
-        grid.Children.Add(nameBox);
+        Grid.SetColumn(badge, 0);
+        grid.Children.Add(badge);
 
-        // Status pill.
-        var pill = new TextBlock
+        // Title (custom name or type) + live binding summary.
+        var titleStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 1 };
+        var title = new TextBlock
         {
+            Text = SlotTitle(slot),
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        var summary = new TextBlock
+        {
+            Text = SlotSummary(slot),
             FontSize = 11,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(4, 0, 4, 0),
+            Foreground = SecondaryBrush,
+            TextTrimming = TextTrimming.CharacterEllipsis,
         };
-        _slotPills[slot] = pill;
+        titleStack.Children.Add(title);
+        titleStack.Children.Add(summary);
+        _slotTitles[slot] = title;
+        _slotSummaries[slot] = summary;
+        Grid.SetColumn(titleStack, 1);
+        grid.Children.Add(titleStack);
+
+        // Status pill (dot + label in a tinted capsule).
+        var dot = new Ellipse { Width = 6, Height = 6, VerticalAlignment = VerticalAlignment.Center };
+        var label = new TextBlock { FontSize = 11, VerticalAlignment = VerticalAlignment.Center };
+        var pillContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        pillContent.Children.Add(dot);
+        pillContent.Children.Add(label);
+        var pill = new Border
+        {
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(9, 3, 9, 4),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = pillContent,
+        };
+        _slotPills[slot] = (pill, dot, label);
         Grid.SetColumn(pill, 2);
         grid.Children.Add(pill);
 
@@ -296,6 +329,9 @@ public sealed partial class ControlSurfacesWindow : Window
             _pinRefreshers.Remove(slot); // pickers below re-register fresh closures
             var draft = _drafts[slot];
 
+            panel.Children.Add(BuildIdentityRows(slot));
+            panel.Children.Add(Divider());
+
             if (draft.Type == CsType.Ir)
             {
                 // IR receiver: pin + invert, then the remote-button table.
@@ -328,6 +364,29 @@ public sealed partial class ControlSurfacesWindow : Window
     }
 
     // ── Editor rows ──────────────────────────────────────────────────────────
+
+    /// <summary>Name row shown at the top of every slot card's body. The component
+    /// type is fixed when the control is added.</summary>
+    private FrameworkElement BuildIdentityRows(int slot)
+    {
+        var nameBox = new TextBox
+        {
+            PlaceholderText = "Name (optional)",
+            Text = _nameEdits[slot],
+            MinWidth = 220,
+        };
+        nameBox.LostFocus += (_, _) => CommitName(slot, nameBox.Text);
+        nameBox.KeyDown += (_, e) => { if (e.Key == VirtualKey.Enter) CommitName(slot, nameBox.Text); };
+        return Row("Name", nameBox);
+    }
+
+    private static Border Divider() => new()
+    {
+        Height = 1,
+        Margin = new Thickness(0, 2, 0, 2),
+        Background = Application.Current.Resources.TryGetValue("DividerStrokeColorDefaultBrush", out var b) && b is Brush br
+            ? br : new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+    };
 
     private FrameworkElement BuildNounRow(int slot)
     {
@@ -676,6 +735,7 @@ public sealed partial class ControlSurfacesWindow : Window
             panel.Children.Clear();
             _irCommandCards.Clear();
             _irLearnButtons.Clear();
+            _irTitles.Clear();
             bool receiverLive = _vm.CsStatus?.IsSlotActive(slot) == true;
 
             _irCountLabel = new TextBlock { Text = IrCountText(), FontWeight = FontWeights.SemiBold };
@@ -747,6 +807,7 @@ public sealed partial class ControlSurfacesWindow : Window
             _irSectionPanel?.Children.Remove(card);
         _irCommandCards.Remove(sub);
         _irLearnButtons.Remove(sub);
+        _irTitles.Remove(sub);
     }
 
     /// <summary>Rebuild a single remote-button card in place (chip, learn state,
@@ -780,18 +841,41 @@ public sealed partial class ControlSurfacesWindow : Window
         expander.Expanding += (_, _) => _irExpanded.Add(sub);
         expander.Collapsed += (_, _) => _irExpanded.Remove(sub);
 
-        // Header: learned-code chip + delete.
-        var hgrid = new Grid { ColumnSpacing = 8 };
+        // Header: binding summary + learned-code chip + delete.
+        var hgrid = new Grid { ColumnSpacing = 10, Padding = new Thickness(0, 4, 0, 4) };
         hgrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         hgrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var chip = new TextBlock
+        hgrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var title = new TextBlock
         {
-            Text = draft.CodeLabel, FontSize = 12, VerticalAlignment = VerticalAlignment.Center,
-            Foreground = draft.IsConfigured
-                ? new SolidColorBrush(Color.FromArgb(255, 100, 200, 140))
-                : SecondaryBrush,
+            Text = IrCommandTitle(sub),
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
         };
-        Grid.SetColumn(chip, 0);
+        _irTitles[sub] = title;
+        Grid.SetColumn(title, 0);
+        hgrid.Children.Add(title);
+
+        var chipColor = draft.IsConfigured
+            ? Color.FromArgb(255, 100, 200, 140)
+            : Color.FromArgb(255, 0x90, 0x90, 0x90);
+        var chip = new Border
+        {
+            CornerRadius = new CornerRadius(9),
+            Padding = new Thickness(8, 2, 8, 3),
+            VerticalAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.FromArgb(0x20, chipColor.R, chipColor.G, chipColor.B)),
+            Child = new TextBlock
+            {
+                Text = draft.CodeLabel,
+                FontSize = 11,
+                FontFamily = new FontFamily("Cascadia Code, Consolas, monospace"),
+                Foreground = new SolidColorBrush(chipColor),
+            },
+        };
+        Grid.SetColumn(chip, 1);
         hgrid.Children.Add(chip);
         var delc = new Button
         {
@@ -799,7 +883,7 @@ public sealed partial class ControlSurfacesWindow : Window
             Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0),
         };
         delc.Click += (_, _) => RemoveIrCommand(sub);
-        Grid.SetColumn(delc, 1);
+        Grid.SetColumn(delc, 2);
         hgrid.Children.Add(delc);
         expander.Header = hgrid;
 
@@ -916,7 +1000,7 @@ public sealed partial class ControlSurfacesWindow : Window
         {
             if (_building) return;
             if (chCombo.SelectedItem is ComboBoxItem it && it.Tag is int ch)
-                _irDrafts[sub].Target = (byte)ch;
+            { _irDrafts[sub].Target = (byte)ch; UpdateIrTitle(sub); }
         };
         panel.Children.Add(Row("Channel", chCombo));
 
@@ -1004,16 +1088,6 @@ public sealed partial class ControlSurfacesWindow : Window
         EmptyHint.Visibility = Visibility.Collapsed;
     }
 
-    private void ChangeType(int slot, CsType type)
-    {
-        if (_drafts[slot].Type == type) return;
-        _drafts[slot] = MakeDefaultBinding(type, slot);
-        // Only this card changes (badge + body); the draft isn't live yet, so no other
-        // card's pin list is affected.
-        RebuildSlotCard(slot);
-        BuildAddMenu();
-    }
-
     private void ChangeNoun(int slot, int noun)
     {
         var b = _drafts[slot];
@@ -1077,6 +1151,8 @@ public sealed partial class ControlSurfacesWindow : Window
         _slotCards.Remove(slot);
         _slotBodies.Remove(slot);
         _slotPills.Remove(slot);
+        _slotTitles.Remove(slot);
+        _slotSummaries.Remove(slot);
         _slotApply.Remove(slot);
         _pinRefreshers.Remove(slot);
         _expanded.Remove(slot);
@@ -1089,6 +1165,7 @@ public sealed partial class ControlSurfacesWindow : Window
             _irCountLabel = null;
             _irCommandCards.Clear();
             _irLearnButtons.Clear();
+            _irTitles.Clear();
         }
         if (CardsPanel.Children.Count == 0) EmptyHint.Visibility = Visibility.Visible;
     }
@@ -1324,23 +1401,15 @@ public sealed partial class ControlSurfacesWindow : Window
         var status = _vm.CsStatus;
         foreach (var (slot, pill) in _slotPills)
         {
-            bool dirty = SlotDirty(slot);
-            if (dirty)
-            {
-                pill.Text = "Pending";
-                pill.Foreground = new SolidColorBrush(Color.FromArgb(255, 240, 180, 90));
-            }
+            if (SlotDirty(slot))
+                SetPill(pill, "Pending", Color.FromArgb(255, 240, 180, 90));
             else if (status?.IsSlotActive(slot) == true)
-            {
-                pill.Text = "Active";
-                pill.Foreground = new SolidColorBrush(Color.FromArgb(255, 100, 200, 140));
-            }
+                SetPill(pill, "Active", Color.FromArgb(255, 100, 200, 140));
             else
-            {
-                pill.Text = "Inactive";
-                pill.Foreground = new SolidColorBrush(Color.FromArgb(255, 240, 180, 90));
-            }
+                SetPill(pill, "Inactive", Color.FromArgb(255, 240, 180, 90));
         }
+        foreach (var (slot, title) in _slotTitles) title.Text = SlotTitle(slot);
+        foreach (var (slot, summary) in _slotSummaries) summary.Text = SlotSummary(slot);
         foreach (var (slot, apply) in _slotApply)
             apply.IsEnabled = SlotDirty(slot) && _applyingSlot == null && !_savingConfig;
 
@@ -1548,6 +1617,90 @@ public sealed partial class ControlSurfacesWindow : Window
         v == Math.Truncate(v)
             ? ((long)v).ToString(CultureInfo.InvariantCulture)
             : v.ToString("0.##", CultureInfo.InvariantCulture);
+
+    /// <summary>Update a status pill's dot, label and tinted capsule in one go.</summary>
+    private static void SetPill((Border Pill, Ellipse Dot, TextBlock Label) pill, string text, Color c)
+    {
+        pill.Label.Text = text;
+        pill.Label.Foreground = new SolidColorBrush(c);
+        pill.Dot.Fill = new SolidColorBrush(c);
+        pill.Pill.Background = new SolidColorBrush(Color.FromArgb(0x22, c.R, c.G, c.B));
+    }
+
+    /// <summary>Header line for a remote-button card, e.g. "Volume (Output 1) · Increase".</summary>
+    private string IrCommandTitle(int sub)
+    {
+        var d = _irDrafts[sub];
+        var nd = _vm.CsNounDescFor(d.Noun);
+        if (nd == null) return "Remote button";
+        string s = CsNounInfo.Name(d.Noun);
+        if (nd.IsTargeted) s += $" ({ChannelLabel(nd.TargetKind, d.Target)})";
+        return $"{s} · {ActionName((CsAction)d.Action)}";
+    }
+
+    private void UpdateIrTitle(int sub)
+    {
+        if (_irTitles.TryGetValue(sub, out var t)) t.Text = IrCommandTitle(sub);
+    }
+
+    /// <summary>Card title: the user's custom name, falling back to the type name.</summary>
+    private string SlotTitle(int slot) =>
+        string.IsNullOrWhiteSpace(_nameEdits[slot]) ? TypeName(_drafts[slot].Type) : _nameEdits[slot].Trim();
+
+    /// <summary>One-line binding summary shown under the card title, e.g.
+    /// "Button · Volume · Output 1 · GPIO 5".</summary>
+    private string SlotSummary(int slot)
+    {
+        var d = _drafts[slot];
+        if (!d.IsConfigured) return "";
+        var parts = new List<string>();
+        // Lead with the type when a custom name has displaced it from the title.
+        if (!string.IsNullOrWhiteSpace(_nameEdits[slot])) parts.Add(TypeName(d.Type));
+
+        if (d.Type == CsType.Ir)
+        {
+            int n = ConfiguredIrCount();
+            parts.Add(n == 1 ? "1 remote button" : $"{n} remote buttons");
+        }
+        else
+        {
+            var nd = _vm.CsNounDescFor(d.Noun);
+            if (nd != null)
+            {
+                string noun = CsNounInfo.Name(d.Noun);
+                if (nd.IsTargeted) noun += $" ({ChannelLabel(nd.TargetKind, d.Target)})";
+                parts.Add(noun);
+            }
+        }
+        if (d.Gpio0 != CsLimits.GpioUnused)
+            parts.Add(d.Gpio1 != CsLimits.GpioUnused ? $"GPIO {d.Gpio0} + {d.Gpio1}" : $"GPIO {d.Gpio0}");
+        return string.Join("  ·  ", parts);
+    }
+
+    private static string TypeGlyph(CsType t) => t switch
+    {
+        CsType.Button => "",   // power-button circle
+        CsType.Switch => "",   // switch arrows
+        CsType.Pot => "",      // dial / meter
+        CsType.Encoder => "",  // rotate
+        CsType.Led => "",      // lightbulb
+        CsType.LedPwm => "",   // brightness
+        CsType.Ir => "",       // remote
+        _ => "",
+    };
+
+    /// <summary>Per-type badge tint, drawn from the app's channel-colour palette.</summary>
+    private static Color TypeColor(CsType t) => t switch
+    {
+        CsType.Button => Color.FromArgb(255, 0x4A, 0x8F, 0xE3),  // blue
+        CsType.Switch => Color.FromArgb(255, 0x45, 0xC2, 0xA3),  // teal
+        CsType.Pot => Color.FromArgb(255, 0xF0, 0xC4, 0x59),     // amber
+        CsType.Encoder => Color.FromArgb(255, 0xBA, 0x87, 0xF3), // purple
+        CsType.Led => Color.FromArgb(255, 0x85, 0xC6, 0x62),     // green
+        CsType.LedPwm => Color.FromArgb(255, 0x52, 0xB9, 0xD8),  // cyan
+        CsType.Ir => Color.FromArgb(255, 0xF5, 0x73, 0x73),      // coral
+        _ => Color.FromArgb(255, 0x90, 0x90, 0x90),
+    };
 
     private static string TypeName(CsType t) => t switch
     {

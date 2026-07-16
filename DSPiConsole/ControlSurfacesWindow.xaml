@@ -39,18 +39,32 @@
 
                 <StackPanel x:Name="BodyPanel" Spacing="12">
 
-                    <!-- Empty-state hint -->
-                    <TextBlock x:Name="EmptyHint"
-                               Text="No controls configured yet. Add a button, knob, switch, encoder, LED or IR receiver to get started."
-                               FontSize="12" TextWrapping="Wrap"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               Visibility="Collapsed"/>
+                    <!-- Empty state -->
+                    <Border x:Name="EmptyHint" Visibility="Collapsed"
+                            Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                            CornerRadius="8" Padding="24,32">
+                        <StackPanel Spacing="6" HorizontalAlignment="Center">
+                            <FontIcon Glyph="&#xE9E9;" FontSize="28" HorizontalAlignment="Center"
+                                      Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                            <TextBlock Text="No controls yet" FontWeight="SemiBold" FontSize="14"
+                                       HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                            <TextBlock Text="Add a button, knob, switch, encoder, LED or IR receiver to get started."
+                                       FontSize="12" TextWrapping="Wrap" TextAlignment="Center"
+                                       HorizontalAlignment="Center" MaxWidth="320"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                    </Border>
 
                     <!-- Dynamic slot cards -->
                     <StackPanel x:Name="CardsPanel" Spacing="10"/>
 
                     <!-- Add control -->
-                    <DropDownButton x:Name="AddButton" Content="Add Control" HorizontalAlignment="Left">
+                    <DropDownButton x:Name="AddButton" HorizontalAlignment="Left">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE710;" FontSize="13" VerticalAlignment="Center"/>
+                            <TextBlock Text="Add Control" VerticalAlignment="Center"/>
+                        </StackPanel>
                         <DropDownButton.Flyout>
                             <MenuFlyout x:Name="AddFlyout"/>
                         </DropDownButton.Flyout>
@@ -74,10 +88,13 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="Unsaved changes" FontWeight="Medium"/>
-                    <TextBlock x:Name="SaveStatusText" Text="" FontSize="11"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <Ellipse Width="8" Height="8" Fill="#F0B45A" VerticalAlignment="Center"/>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Unsaved changes" FontWeight="Medium"/>
+                        <TextBlock x:Name="SaveStatusText" Text="" FontSize="11"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
                     <ProgressRing x:Name="SaveRing" IsActive="False" Width="18" Height="18"
