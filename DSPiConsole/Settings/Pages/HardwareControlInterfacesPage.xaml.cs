@@ -324,7 +324,7 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
     public string Title => "Control Interfaces";
     public SettingsCategory Category => SettingsCategory.Hardware;
     public string IconGlyph => "";
-    public int Order => 18;
+    public int Order => 80;
     public bool IsAvailable(MainViewModel vm) => vm.ControlInterfacesSupported;
     public UIElement BuildContent(MainViewModel vm, IPendingChangeTracker tracker)
     {

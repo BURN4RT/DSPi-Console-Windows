@@ -241,7 +241,7 @@ public sealed partial class HardwareAdatInputPage : SettingsModule, ISettingsPag
     public string Title => "ADAT Input";
     public SettingsCategory Category => SettingsCategory.Hardware;
     public string IconGlyph => "";
-    public int Order => 17;
+    public int Order => 30;
     public bool IsAvailable(MainViewModel vm) => vm.AdatInputSupported;
     public UIElement BuildContent(MainViewModel vm, IPendingChangeTracker tracker)
     {

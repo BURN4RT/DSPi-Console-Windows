@@ -290,7 +290,7 @@ public sealed partial class HardwareI2SInputPage : SettingsModule, ISettingsPage
     public string Title => "I2S Input";
     public SettingsCategory Category => SettingsCategory.Hardware;
     public string IconGlyph => "";
-    public int Order => 35; // just after S/PDIF Input (30)
+    public int Order => 50; // just after S/PDIF Input (40)
     public bool IsAvailable(MainViewModel vm) => vm.InputI2sSupported;
     public UIElement BuildContent(MainViewModel vm, IPendingChangeTracker tracker)
     {

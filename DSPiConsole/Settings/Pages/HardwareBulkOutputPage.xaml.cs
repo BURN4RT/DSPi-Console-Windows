@@ -192,10 +192,10 @@ public sealed partial class HardwareBulkOutputPage : SettingsModule, ISettingsPa
 
     // ── ISettingsPage ──────────────────────────────────────────────────
     public string Id => "hardware.bulk-output";
-    public string Title => "Bulk Output";
+    public string Title => "ADAT Output";
     public SettingsCategory Category => SettingsCategory.Hardware;
     public string IconGlyph => "";
-    public int Order => 15;
+    public int Order => 20;
     public bool IsAvailable(MainViewModel vm) => vm.AdatSupported;
     public UIElement BuildContent(MainViewModel vm, IPendingChangeTracker tracker)
     {

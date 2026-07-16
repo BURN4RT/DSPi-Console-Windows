@@ -616,7 +616,7 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
     public string Title => "I²S Configuration";
     public SettingsCategory Category => SettingsCategory.Hardware;
     public string IconGlyph => ""; // SoundLevels (waveform)
-    public int Order => 20;
+    public int Order => 60;
     public bool IsAvailable(MainViewModel vm) => true;
     public UIElement BuildContent(MainViewModel vm, IPendingChangeTracker tracker)
     {

@@ -7,7 +7,7 @@
     xmlns:controls="using:CommunityToolkit.WinUI.Controls">
 
     <!--
-        Bulk Output page (ADAT). RP2350-only optical "bulk" tap that streams all 8
+        ADAT Output page. RP2350-only optical "bulk" tap that streams all 8
         output channels as one ADAT lightpipe (44.1/48 kHz, 24-bit) from a single
         data GPIO, concurrent with the SPDIF/I2S slots and PDM. Only enable + data
         pin are configurable — the channel mapping is fixed (ADAT slot N = output N)

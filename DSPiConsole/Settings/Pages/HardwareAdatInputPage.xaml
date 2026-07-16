@@ -28,7 +28,7 @@
         </controls:SettingsCard>
 
         <controls:SettingsCard Header="Clock Mode"
-                               Description="Master: the DSPi owns the sample rate (set in I2S Configuration). Slave: an external master owns the clock and the rate is auto-detected.">
+                               Description="Master: Use with ADAT Output to an outboard DAC/ADC with its return connected to ADAT Input.&#x0A;Slave: Sync DSPi to an external ADAT master device">
             <ComboBox x:Name="ClockModeCombo" MinWidth="120" SelectionChanged="OnClockModeChanged">
                 <ComboBoxItem Content="Master" Tag="0"/>
                 <ComboBoxItem Content="Slave" Tag="1"/>

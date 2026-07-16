@@ -233,7 +233,7 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
     public string Title => "S/PDIF Input";
     public SettingsCategory Category => SettingsCategory.Hardware;
     public string IconGlyph => "";
-    public int Order => 30;
+    public int Order => 40;
     public bool IsAvailable(MainViewModel vm) => vm.InputSourceSupported;
     public UIElement BuildContent(MainViewModel vm, IPendingChangeTracker tracker)
     {
