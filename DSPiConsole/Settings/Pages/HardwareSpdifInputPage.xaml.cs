@@ -97,7 +97,7 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
         try { InstancesCombo.SelectedIndex = System.Math.Clamp(count - 1, 0, 2); }
         finally { _suppress = false; }
 
-        RxPinCard0.Header = multi ? "S/PDIF 1 RX pin" : "RX pin";
+        RxPinCard0.Header = multi ? "S/PDIF 1 Input" : "S/PDIF Input";
         RxPinCard1.Visibility = (multi && count >= 2) ? Visibility.Visible : Visibility.Collapsed;
         RxPinCard2.Visibility = (multi && count >= 3) ? Visibility.Visible : Visibility.Collapsed;
 

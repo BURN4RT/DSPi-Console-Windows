@@ -28,18 +28,18 @@
             </ComboBox>
         </controls:SettingsCard>
 
-        <controls:SettingsCard x:Name="RxPinCard0" Header="RX pin"
-                               Description="GPIO pin for the S/PDIF input receiver. Hot-swappable while active — output briefly mutes during re-lock.">
+        <controls:SettingsCard x:Name="RxPinCard0" Header="S/PDIF 1 Input"
+                               Description="GPIO pin for the first S/PDIF input.">
             <ComboBox x:Name="RxPinCombo0" MinWidth="140" SelectionChanged="OnSpdifRxPinChanged"/>
         </controls:SettingsCard>
 
-        <controls:SettingsCard x:Name="RxPinCard1" Header="S/PDIF 2 RX pin"
+        <controls:SettingsCard x:Name="RxPinCard1" Header="S/PDIF 2 Input"
                                Description="GPIO pin for the second S/PDIF input."
                                Visibility="Collapsed">
             <ComboBox x:Name="RxPinCombo1" MinWidth="140" SelectionChanged="OnSpdifRxPinChanged"/>
         </controls:SettingsCard>
 
-        <controls:SettingsCard x:Name="RxPinCard2" Header="S/PDIF 3 RX pin"
+        <controls:SettingsCard x:Name="RxPinCard2" Header="S/PDIF 3 Input"
                                Description="GPIO pin for the third S/PDIF input."
                                Visibility="Collapsed">
             <ComboBox x:Name="RxPinCombo2" MinWidth="140" SelectionChanged="OnSpdifRxPinChanged"/>
@@ -47,7 +47,7 @@
 
         <controls:SettingsCard x:Name="LgSoundSyncCard"
                                 Header="LG Sound Sync"
-                                Description="Decode the LG TV's TOSLINK side-channel for volume / mute commands and apply them through the user-volume path. Requires firmware V8 or newer.">
+                                Description="Decode volume control from LG TVs.">
             <ToggleSwitch x:Name="LgSoundSyncToggle"
                           OnContent="On" OffContent="Off"
                           Toggled="OnLgSoundSyncToggled"/>

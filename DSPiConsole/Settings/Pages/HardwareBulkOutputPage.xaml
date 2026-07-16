@@ -15,14 +15,14 @@
     -->
     <StackPanel Spacing="4">
 
-        <controls:SettingsCard Header="Enable ADAT"
-                               Description="Stream all 8 output channels as one optical ADAT lightpipe (44.1/48 kHz, 24-bit). Runs alongside the existing outputs; drive a TOSLINK transmitter from the data pin.">
+        <controls:SettingsCard Header="Enable"
+                               Description="Stream all 8 output channels as one optical ADAT lightpipe (44.1/48 kHz, 24-bit).">
             <ToggleSwitch x:Name="EnableToggle" OnContent="On" OffContent="Off"
                           Toggled="OnEnableToggled"/>
         </controls:SettingsCard>
 
         <controls:SettingsCard x:Name="PinCard" Header="Serial Data"
-                               Description="GPIO driving the ADAT optical output. Default GPIO 12.">
+                               Description="GPIO driving the ADAT optical output.">
             <ComboBox x:Name="PinCombo" MinWidth="140" SelectionChanged="OnAdatPinChanged"/>
         </controls:SettingsCard>
 
