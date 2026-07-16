@@ -51,6 +51,22 @@ public sealed partial class ControlSurfacesWindow : Window
     // Per-slot / per-sub UI handles refreshed without a full rebuild.
     private readonly Dictionary<int, TextBlock> _slotPills = new();
     private readonly Dictionary<int, Button> _slotApply = new();
+    private readonly Dictionary<int, StackPanel> _slotBodies = new();
+    private readonly Dictionary<int, FrameworkElement> _slotCards = new();
+    // Per-slot pin-combo refreshers: re-run a slot's GPIO pickers in place (e.g.
+    // after another slot claims a pin) without recreating the card body.
+    private readonly Dictionary<int, List<Action>> _pinRefreshers = new();
+
+    // Live handles to the IR receiver's command section, so IR edits can rebuild
+    // just that section in place instead of tearing down the whole cards panel
+    // (which resets scroll / makes the section visibly jump).
+    private StackPanel? _irSectionPanel;
+    private int _irSectionSlot = -1;
+    private Button? _addRemoteButton;
+    private TextBlock? _irCountLabel;
+    private int _irLeadingCount; // non-card children (count label + optional hint)
+    private readonly Dictionary<int, FrameworkElement> _irCommandCards = new();
+    private readonly Dictionary<int, Button> _irLearnButtons = new();
 
     public ControlSurfacesWindow(MainViewModel vm)
     {
@@ -158,6 +174,9 @@ public sealed partial class ControlSurfacesWindow : Window
             CardsPanel.Children.Clear();
             _slotPills.Clear();
             _slotApply.Clear();
+            _slotBodies.Clear();
+            _slotCards.Clear();
+            _pinRefreshers.Clear();
 
             int shown = 0;
             for (int slot = 0; slot < _vm.CsSlotCount; slot++)
@@ -188,6 +207,7 @@ public sealed partial class ControlSurfacesWindow : Window
 
         expander.Header = BuildCardHeader(slot);
         expander.Content = BuildCardBody(slot);
+        _slotCards[slot] = expander;
         return expander;
     }
 
@@ -257,35 +277,54 @@ public sealed partial class ControlSurfacesWindow : Window
 
     private FrameworkElement BuildCardBody(int slot)
     {
-        var draft = _drafts[slot];
         var panel = new StackPanel { Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
-
-        if (draft.Type == CsType.Ir)
-        {
-            // IR receiver: pin + invert, then the remote-button table.
-            panel.Children.Add(BuildPinRows(slot));
-            panel.Children.Add(FlagToggle(slot, CsFlags.Invert, "Active-low input (pull-up)"));
-            panel.Children.Add(BuildApplyRow(slot));
-            panel.Children.Add(BuildIrCommandsSection(slot));
-            return panel;
-        }
-
-        var nd = _vm.CsNounDescFor(draft.Noun);
-
-        panel.Children.Add(BuildNounRow(slot));
-        if (nd != null)
-        {
-            var actions = ValidActions(draft.Type, nd);
-            if (actions.Count > 1) panel.Children.Add(BuildActionRow(slot, actions));
-            if (nd.IsTargeted) panel.Children.Add(BuildTargetRows(slot, nd));
-            if (draft.Type == CsType.Button) panel.Children.Add(BuildEventRow(slot));
-            panel.Children.Add(BuildPinRows(slot));
-            var operand = BuildOperandRows(slot, nd);
-            if (operand != null) panel.Children.Add(operand);
-            panel.Children.Add(BuildFlagRows(slot, nd));
-        }
-        panel.Children.Add(BuildApplyRow(slot));
+        _slotBodies[slot] = panel;
+        PopulateSlotBody(slot);
         return panel;
+    }
+
+    /// <summary>Fill (or refill) a slot card's body in place. Used instead of a full
+    /// <see cref="RebuildCards"/> when only this card's options change (noun / action /
+    /// operand range) so the card and scroll position don't jump.</summary>
+    private void PopulateSlotBody(int slot)
+    {
+        if (!_slotBodies.TryGetValue(slot, out var panel)) return;
+        _building = true;
+        try
+        {
+            panel.Children.Clear();
+            _pinRefreshers.Remove(slot); // pickers below re-register fresh closures
+            var draft = _drafts[slot];
+
+            if (draft.Type == CsType.Ir)
+            {
+                // IR receiver: pin + invert, then the remote-button table.
+                panel.Children.Add(BuildPinRows(slot));
+                panel.Children.Add(FlagToggle(slot, CsFlags.Invert, "Active-low input (pull-up)"));
+                panel.Children.Add(BuildApplyRow(slot));
+                panel.Children.Add(BuildIrCommandsSection(slot));
+            }
+            else
+            {
+                var nd = _vm.CsNounDescFor(draft.Noun);
+
+                panel.Children.Add(BuildNounRow(slot));
+                if (nd != null)
+                {
+                    var actions = ValidActions(draft.Type, nd);
+                    if (actions.Count > 1) panel.Children.Add(BuildActionRow(slot, actions));
+                    if (nd.IsTargeted) panel.Children.Add(BuildTargetRows(slot, nd));
+                    if (draft.Type == CsType.Button) panel.Children.Add(BuildEventRow(slot));
+                    panel.Children.Add(BuildPinRows(slot));
+                    var operand = BuildOperandRows(slot, nd);
+                    if (operand != null) panel.Children.Add(operand);
+                    panel.Children.Add(BuildFlagRows(slot, nd));
+                }
+                panel.Children.Add(BuildApplyRow(slot));
+            }
+        }
+        finally { _building = false; }
+        RefreshStatusIndicators();
     }
 
     // ── Editor rows ──────────────────────────────────────────────────────────
@@ -408,21 +447,30 @@ public sealed partial class ControlSurfacesWindow : Window
 
     private ComboBox PinCombo(int slot, bool adcOnly, bool isSecond)
     {
-        var draft = _drafts[slot];
-        byte current = isSecond ? draft.Gpio1 : draft.Gpio0;
         var combo = new ComboBox { MinWidth = 160 };
 
-        var candidates = FreePins(slot, adcOnly).ToList();
-        if (current != CsLimits.GpioUnused && !candidates.Contains(current)) candidates.Add(current);
-        candidates.Sort();
-
-        int sel = -1;
-        for (int i = 0; i < candidates.Count; i++)
+        // Fill (or refill) the candidate list. Called on build and again in place
+        // whenever another slot claims/frees a pin, so the options stay current
+        // without recreating the card body (which would flash its Apply buttons).
+        void Populate()
         {
-            combo.Items.Add(new ComboBoxItem { Content = $"GPIO {candidates[i]}", Tag = candidates[i] });
-            if (candidates[i] == current) sel = i;
+            var draft = _drafts[slot];
+            byte current = isSecond ? draft.Gpio1 : draft.Gpio0;
+            var candidates = FreePins(slot, adcOnly).ToList();
+            if (current != CsLimits.GpioUnused && !candidates.Contains(current)) candidates.Add(current);
+            candidates.Sort();
+
+            combo.Items.Clear();
+            int sel = -1;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                combo.Items.Add(new ComboBoxItem { Content = $"GPIO {candidates[i]}", Tag = candidates[i] });
+                if (candidates[i] == current) sel = i;
+            }
+            combo.SelectedIndex = sel;
         }
-        combo.SelectedIndex = sel;
+        Populate();
+
         combo.SelectionChanged += (_, _) =>
         {
             if (_building) return;
@@ -432,6 +480,10 @@ public sealed partial class ControlSurfacesWindow : Window
                 RefreshStatusIndicators();
             }
         };
+
+        if (!_pinRefreshers.TryGetValue(slot, out var list))
+            _pinRefreshers[slot] = list = new List<Action>();
+        list.Add(Populate);
         return combo;
     }
 
@@ -478,15 +530,16 @@ public sealed partial class ControlSurfacesWindow : Window
 
         toggle.Checked += (_, _) =>
         {
-            minRow.Visibility = maxRow.Visibility = Visibility.Visible;
+            if (_building) return;
             // Seed a sensible span from the noun's full range.
             _drafts[slot].RangeMin = nd.MinQ; _drafts[slot].RangeMax = nd.MaxQ;
-            RebuildCards();
+            PopulateSlotBody(slot);
         };
         toggle.Unchecked += (_, _) =>
         {
+            if (_building) return;
             _drafts[slot].RangeMin = 0; _drafts[slot].RangeMax = 0;
-            RebuildCards();
+            PopulateSlotBody(slot);
         };
         return panel;
     }
@@ -586,6 +639,7 @@ public sealed partial class ControlSurfacesWindow : Window
             var addBtn = new Button { Content = "Add Remote Button" };
             addBtn.Click += (_, _) => AddIrCommand(slot);
             addBtn.IsEnabled = _vm.CsStatus?.IsSlotActive(slot) == true && FirstFreeIrSub() >= 0;
+            _addRemoteButton = addBtn;
             panel.Children.Add(addBtn);
         }
         var revert = new Button { Content = "Revert" };
@@ -603,26 +657,115 @@ public sealed partial class ControlSurfacesWindow : Window
     private FrameworkElement BuildIrCommandsSection(int slot)
     {
         var panel = new StackPanel { Spacing = 8, Margin = new Thickness(0, 8, 0, 0) };
-        bool receiverLive = _vm.CsStatus?.IsSlotActive(slot) == true;
-
-        panel.Children.Add(new TextBlock
-        {
-            Text = $"Remote Buttons ({ConfiguredIrCount()}/{_vm.CsIrMax})",
-            FontWeight = FontWeights.SemiBold,
-        });
-        if (!receiverLive)
-            panel.Children.Add(new TextBlock
-            {
-                Text = "Apply the receiver first, then learn remote buttons.",
-                FontSize = 11, TextWrapping = TextWrapping.Wrap,
-                Foreground = SecondaryBrush,
-            });
-
-        for (int sub = 0; sub < _vm.CsIrMax; sub++)
-            if (_irDrafts[sub].IsConfigured || _irExpanded.Contains(sub))
-                panel.Children.Add(BuildIrCommandCard(sub, receiverLive));
-
+        _irSectionPanel = panel;
+        _irSectionSlot = slot;
+        PopulateIrCommandsSection();
         return panel;
+    }
+
+    /// <summary>Fill (or refill) the IR receiver's remote-button list in place.
+    /// Used instead of a full <see cref="RebuildCards"/> for IR-only edits so the
+    /// receiver card and scroll position don't jump.</summary>
+    private void PopulateIrCommandsSection()
+    {
+        if (_irSectionPanel is not { } panel) return;
+        int slot = _irSectionSlot;
+        _building = true;
+        try
+        {
+            panel.Children.Clear();
+            _irCommandCards.Clear();
+            _irLearnButtons.Clear();
+            bool receiverLive = _vm.CsStatus?.IsSlotActive(slot) == true;
+
+            _irCountLabel = new TextBlock { Text = IrCountText(), FontWeight = FontWeights.SemiBold };
+            panel.Children.Add(_irCountLabel);
+            _irLeadingCount = 1;
+            if (!receiverLive)
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = "Apply the receiver first, then learn remote buttons.",
+                    FontSize = 11, TextWrapping = TextWrapping.Wrap,
+                    Foreground = SecondaryBrush,
+                });
+                _irLeadingCount = 2;
+            }
+
+            for (int sub = 0; sub < _vm.CsIrMax; sub++)
+                if (IrSubShown(sub))
+                    panel.Children.Add(BuildIrCommandCard(sub, receiverLive));
+
+            UpdateAddRemoteButtonState();
+        }
+        finally { _building = false; }
+    }
+
+    private bool IrSubShown(int sub) => _irDrafts[sub].IsConfigured || _irExpanded.Contains(sub);
+
+    private string IrCountText() => $"Remote Buttons ({ConfiguredIrCount()}/{_vm.CsIrMax})";
+
+    private void UpdateIrCount()
+    {
+        if (_irCountLabel != null) _irCountLabel.Text = IrCountText();
+    }
+
+    private void UpdateAddRemoteButtonState()
+    {
+        if (_addRemoteButton != null)
+            _addRemoteButton.IsEnabled =
+                _vm.CsStatus?.IsSlotActive(_irSectionSlot) == true && FirstFreeIrSub() >= 0;
+    }
+
+    /// <summary>While a learn is in progress every other card's Learn button is
+    /// disabled; refresh their enabled state in place without rebuilding them.</summary>
+    private void RefreshIrLearnButtons()
+    {
+        bool receiverLive = _vm.CsStatus?.IsSlotActive(_irSectionSlot) == true;
+        foreach (var (_, btn) in _irLearnButtons)
+            btn.IsEnabled = receiverLive && _learningSub == null && !_savingConfig;
+    }
+
+    /// <summary>Build and insert one remote-button card at its sub-ordered position,
+    /// leaving the sibling cards untouched.</summary>
+    private void InsertIrCommandCard(int sub)
+    {
+        if (_irSectionPanel is not { } panel) return;
+        bool receiverLive = _vm.CsStatus?.IsSlotActive(_irSectionSlot) == true;
+        int index = _irLeadingCount;
+        for (int s = 0; s < sub; s++)
+            if (_irCommandCards.ContainsKey(s)) index++;
+        _building = true;
+        try { panel.Children.Insert(index, BuildIrCommandCard(sub, receiverLive)); }
+        finally { _building = false; }
+    }
+
+    /// <summary>Remove one remote-button card and drop its handles.</summary>
+    private void RemoveIrCommandCard(int sub)
+    {
+        if (_irCommandCards.TryGetValue(sub, out var card))
+            _irSectionPanel?.Children.Remove(card);
+        _irCommandCards.Remove(sub);
+        _irLearnButtons.Remove(sub);
+    }
+
+    /// <summary>Rebuild a single remote-button card in place (chip, learn state,
+    /// operand rows) without touching its siblings.</summary>
+    private void RebuildIrCommandCard(int sub)
+    {
+        if (_irSectionPanel is not { } panel) return;
+        if (!_irCommandCards.TryGetValue(sub, out var old)) return;
+        int index = panel.Children.IndexOf(old);
+        if (index < 0) return;
+        bool receiverLive = _vm.CsStatus?.IsSlotActive(_irSectionSlot) == true;
+        _building = true;
+        try
+        {
+            var fresh = BuildIrCommandCard(sub, receiverLive);
+            panel.Children.RemoveAt(index);
+            panel.Children.Insert(index, fresh);
+        }
+        finally { _building = false; }
     }
 
     private FrameworkElement BuildIrCommandCard(int sub, bool receiverLive)
@@ -666,6 +809,7 @@ public sealed partial class ControlSurfacesWindow : Window
         var learnPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         if (_learningSub == sub)
         {
+            _irLearnButtons.Remove(sub); // this card shows a Cancel, not a Learn button
             learnPanel.Children.Add(new ProgressRing { IsActive = true, Width = 16, Height = 16 });
             learnPanel.Children.Add(new TextBlock
             {
@@ -681,6 +825,7 @@ public sealed partial class ControlSurfacesWindow : Window
             learn.IsEnabled = receiverLive && _learningSub == null && !_savingConfig;
             learn.Click += (_, _) => StartLearn(sub);
             learnPanel.Children.Add(learn);
+            _irLearnButtons[sub] = learn;
         }
         body.Children.Add(learnPanel);
 
@@ -708,6 +853,7 @@ public sealed partial class ControlSurfacesWindow : Window
         body.Children.Add(applyRow);
 
         expander.Content = body;
+        _irCommandCards[sub] = expander;
         return expander;
     }
 
@@ -732,7 +878,7 @@ public sealed partial class ControlSurfacesWindow : Window
                 var nd = _vm.CsNounDescFor(noun);
                 var acts = nd != null ? ValidIrActions(nd) : new List<CsAction>();
                 _irDrafts[sub].Action = acts.Count > 0 ? (byte)acts[0] : (byte)0;
-                RebuildCards();
+                RebuildIrCommandCard(sub);
             }
         };
         return Row("Controls", combo);
@@ -753,7 +899,7 @@ public sealed partial class ControlSurfacesWindow : Window
         {
             if (_building) return;
             if (combo.SelectedItem is ComboBoxItem it && it.Tag is CsAction a)
-            { _irDrafts[sub].Action = (byte)a; RebuildCards(); }
+            { _irDrafts[sub].Action = (byte)a; RebuildIrCommandCard(sub); }
         };
         return Row("Action", combo);
     }
@@ -839,17 +985,32 @@ public sealed partial class ControlSurfacesWindow : Window
         _drafts[slot] = MakeDefaultBinding(type, slot);
         _nameEdits[slot] = "";
         _expanded.Add(slot);
-        RebuildCards();
+        // Insert just the new card instead of rebuilding the panel, so existing
+        // cards don't reload.
+        InsertSlotCard(slot);
         BuildAddMenu();
         // A freshly-added control is seeded valid — apply immediately.
         await ApplySlotAsync(slot);
+    }
+
+    /// <summary>Build one slot's card and insert it into <c>CardsPanel</c> at the
+    /// position matching slot order, leaving the other cards untouched.</summary>
+    private void InsertSlotCard(int slot)
+    {
+        int index = 0;
+        for (int s = 0; s < slot; s++)
+            if (_drafts[s].IsConfigured) index++;
+        CardsPanel.Children.Insert(index, BuildSlotCard(slot));
+        EmptyHint.Visibility = Visibility.Collapsed;
     }
 
     private void ChangeType(int slot, CsType type)
     {
         if (_drafts[slot].Type == type) return;
         _drafts[slot] = MakeDefaultBinding(type, slot);
-        RebuildCards();
+        // Only this card changes (badge + body); the draft isn't live yet, so no other
+        // card's pin list is affected.
+        RebuildSlotCard(slot);
         BuildAddMenu();
     }
 
@@ -867,7 +1028,7 @@ public sealed partial class ControlSurfacesWindow : Window
         }
         // Reset operands to defaults for the new noun.
         b.Value = 0; b.Step = 0; b.RangeMin = 0; b.RangeMax = 0;
-        RebuildCards();
+        PopulateSlotBody(slot);
     }
 
     private void ChangeAction(int slot, CsAction action)
@@ -875,25 +1036,24 @@ public sealed partial class ControlSurfacesWindow : Window
         _drafts[slot].Action = (byte)action;
         _drafts[slot].Value = 0; _drafts[slot].Step = 0;
         _drafts[slot].RangeMin = 0; _drafts[slot].RangeMax = 0;
-        RebuildCards();
+        PopulateSlotBody(slot);
     }
 
     private async void RemoveControl(int slot)
     {
-        // Unapplied slot → just drop the local draft.
+        // Unapplied slot → just drop the local draft and its card. It never claimed a
+        // pin (only live slots do), so no other card needs refreshing.
         if (!_vm.CsBindings[slot].IsConfigured)
         {
             _drafts[slot] = CsBinding.Cleared();
             _nameEdits[slot] = "";
-            _expanded.Remove(slot);
-            RebuildCards();
+            RemoveSlotCard(slot);
             BuildAddMenu();
             return;
         }
         _drafts[slot] = CsBinding.Cleared();
         _nameEdits[slot] = "";
-        _expanded.Remove(slot);
-        RebuildCards();
+        RemoveSlotCard(slot);
         await Task.Run(() =>
         {
             _vm.SetCsBinding(slot, CsBinding.Cleared());
@@ -901,8 +1061,48 @@ public sealed partial class ControlSurfacesWindow : Window
         });
         HardwarePins.RaisePinAssignmentsChanged();
         SeedDraftFrom(slot);
-        RebuildCards();
+        // The removed slot freed its GPIO(s) — refresh the other cards' pin lists in
+        // place so those pins reappear, without reloading their bodies.
+        RefreshOtherSlotPins(slot);
+        RefreshStatusIndicators();
         BuildAddMenu();
+    }
+
+    /// <summary>Remove one slot's card element and drop its per-slot UI handles,
+    /// leaving the other cards untouched.</summary>
+    private void RemoveSlotCard(int slot)
+    {
+        if (_slotCards.TryGetValue(slot, out var card))
+            CardsPanel.Children.Remove(card);
+        _slotCards.Remove(slot);
+        _slotBodies.Remove(slot);
+        _slotPills.Remove(slot);
+        _slotApply.Remove(slot);
+        _pinRefreshers.Remove(slot);
+        _expanded.Remove(slot);
+        if (slot == _irSectionSlot)
+        {
+            // The IR receiver card (which hosts the remote-button section) is gone.
+            _irSectionPanel = null;
+            _irSectionSlot = -1;
+            _addRemoteButton = null;
+            _irCountLabel = null;
+            _irCommandCards.Clear();
+            _irLearnButtons.Clear();
+        }
+        if (CardsPanel.Children.Count == 0) EmptyHint.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>Rebuild one slot's whole card (header + body) in place, e.g. after a
+    /// type change or revert alters the type badge. Other cards are left untouched.</summary>
+    private void RebuildSlotCard(int slot)
+    {
+        if (!_slotCards.TryGetValue(slot, out var old)) return;
+        int index = CardsPanel.Children.IndexOf(old);
+        if (index < 0) return;
+        var fresh = BuildSlotCard(slot); // re-registers this slot's UI handles
+        CardsPanel.Children.RemoveAt(index);
+        CardsPanel.Children.Insert(index, fresh);
     }
 
     private void CommitName(int slot, string text)
@@ -914,7 +1114,8 @@ public sealed partial class ControlSurfacesWindow : Window
     private void RevertSlot(int slot)
     {
         SeedDraftFrom(slot);
-        RebuildCards();
+        // Reverting only restores this slot's draft; other cards are unaffected.
+        RebuildSlotCard(slot);
     }
 
     private async Task ApplySlotAsync(int slot)
@@ -938,11 +1139,32 @@ public sealed partial class ControlSurfacesWindow : Window
         _applyingSlot = null;
         HardwarePins.RaisePinAssignmentsChanged();
         SeedDraftFrom(slot);
-        RebuildCards();
+        // Fully refresh only the applied card. Applying makes this slot live, so it now
+        // claims its GPIO(s) — the other cards just need their pin lists refreshed in
+        // place (not their whole bodies, which would flash their Apply buttons).
+        PopulateSlotBody(slot);
+        RefreshOtherSlotPins(slot);
         BuildAddMenu();
 
         if (status != CsStatus.Success)
             ShowToast(CsStatus.Message(status));
+    }
+
+    /// <summary>Re-run every other slot's GPIO pickers in place so a pin this slot just
+    /// claimed (or freed) drops out of (or back into) their option lists, without
+    /// recreating their card bodies.</summary>
+    private void RefreshOtherSlotPins(int exceptSlot)
+    {
+        _building = true;
+        try
+        {
+            foreach (var (slot, refreshers) in _pinRefreshers)
+            {
+                if (slot == exceptSlot) continue;
+                foreach (var refresh in refreshers) refresh();
+            }
+        }
+        finally { _building = false; }
     }
 
     // ── IR command actions ───────────────────────────────────────────────────
@@ -961,7 +1183,10 @@ public sealed partial class ControlSurfacesWindow : Window
         }
         _irDrafts[sub] = draft;
         _irExpanded.Add(sub);
-        RebuildCards();
+        // Insert just the new remote-button card; siblings stay put.
+        InsertIrCommandCard(sub);
+        UpdateIrCount();
+        UpdateAddRemoteButtonState();
     }
 
     private async void RemoveIrCommand(int sub)
@@ -969,12 +1194,16 @@ public sealed partial class ControlSurfacesWindow : Window
         bool wasLive = _vm.CsIrCommands[sub].IsConfigured;
         _irDrafts[sub] = new IrCommand();
         _irExpanded.Remove(sub);
-        RebuildCards();
+        // Remove just this card; siblings stay put.
+        RemoveIrCommandCard(sub);
+        UpdateIrCount();
+        UpdateAddRemoteButtonState();
         if (wasLive)
         {
             await Task.Run(() => _vm.SetCsIrCommand(sub, new IrCommand()));
             _irDrafts[sub] = _vm.CsIrCommands[sub].Clone();
-            RebuildCards();
+            UpdateIrCount();
+            UpdateAddRemoteButtonState();
         }
     }
 
@@ -984,7 +1213,8 @@ public sealed partial class ControlSurfacesWindow : Window
         if (!cmd.IsConfigured) { ShowToast("Learn a code before applying this button."); return; }
         byte status = await Task.Run(() => _vm.SetCsIrCommand(sub, cmd));
         _irDrafts[sub] = _vm.CsIrCommands[sub].Clone();
-        RebuildCards();
+        RebuildIrCommandCard(sub);
+        UpdateIrCount();
         if (status != CsStatus.Success) ShowToast(CsStatus.Message(status));
     }
 
@@ -992,7 +1222,8 @@ public sealed partial class ControlSurfacesWindow : Window
     {
         if (_learningSub != null) return;
         _learningSub = sub;
-        RebuildCards();
+        RebuildIrCommandCard(sub);   // show the learning spinner on this card
+        RefreshIrLearnButtons();     // disable the other cards' Learn buttons
 
         var proto = _irDrafts[sub];
         _ = Task.Run(async () =>
@@ -1019,29 +1250,38 @@ public sealed partial class ControlSurfacesWindow : Window
         if (_learningSub != sub) return;
         _learningSub = null;
 
-        if (error != null) { ShowToast(error); RebuildCards(); return; }
-        if (result != null && result.IsDone && result.Code != 0)
+        if (error == null)
         {
-            _irDrafts[sub].Proto = result.Proto;
-            _irDrafts[sub].Code = result.Code;
-            ShowToast($"Learned a {CsWire.IrProtocolName(result.Proto)} code. Apply to keep it.");
+            if (result != null && result.IsDone && result.Code != 0)
+            {
+                _irDrafts[sub].Proto = result.Proto;
+                _irDrafts[sub].Code = result.Code;
+                ShowToast($"Learned a {CsWire.IrProtocolName(result.Proto)} code. Apply to keep it.");
+            }
+            else if (result != null && result.IsTimeout)
+            {
+                ShowToast("No remote button was detected.");
+            }
+            else
+            {
+                ShowToast("Learn stopped.");
+            }
         }
-        else if (result != null && result.IsTimeout)
-        {
-            ShowToast("No remote button was detected.");
-        }
-        else
-        {
-            ShowToast("Learn stopped.");
-        }
-        RebuildCards();
+        else ShowToast(error);
+
+        // Restore this card (learned chip / Learn button) and re-enable the others.
+        RebuildIrCommandCard(sub);
+        UpdateIrCount();
+        RefreshIrLearnButtons();
     }
 
     private void CancelLearn()
     {
+        int? sub = _learningSub;
         _learningSub = null;
         _ = Task.Run(() => _vm.CsIrLearnCancel());
-        RebuildCards();
+        if (sub is int s) RebuildIrCommandCard(s);
+        RefreshIrLearnButtons();
     }
 
     // ── Save / revert all ────────────────────────────────────────────────────
@@ -1147,8 +1387,11 @@ public sealed partial class ControlSurfacesWindow : Window
 
     private int FirstFreeIrSub()
     {
+        // A sub is taken once it's learned (IsConfigured) OR while an unlearned draft
+        // is still being edited (expanded) — otherwise a second Add would reuse and
+        // overwrite the first not-yet-learned button's sub.
         for (int i = 0; i < _vm.CsIrMax; i++)
-            if (!_irDrafts[i].IsConfigured) return i;
+            if (!_irDrafts[i].IsConfigured && !_irExpanded.Contains(i)) return i;
         return -1;
     }
 
