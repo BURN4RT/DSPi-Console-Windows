@@ -34,6 +34,12 @@ public sealed partial class ControlSurfacesWindow : Window
     private static extern uint GetDpiForWindow(IntPtr hwnd);
 
     private readonly MainViewModel _vm;
+    private AppWindow? _appWindow;
+
+    // Fixed logical width: 20px page padding each side + 120px row labels +
+    // editor controls + card chrome all fit comfortably; height stays resizable
+    // for the scrolling card list.
+    private const int FixedWidth = 560;
 
     // Editable drafts (seeded from the VM's live values). A slot is "dirty" when
     // its draft differs from the applied device state.
@@ -80,9 +86,17 @@ public sealed partial class ControlSurfacesWindow : Window
         var hWnd = WindowNative.GetWindowHandle(this);
         var windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
         var appWindow = AppWindow.GetFromWindowId(windowId);
+        _appWindow = appWindow;
         double dpiScale = GetDpiForWindow(hWnd) / 96.0;
-        appWindow?.Resize(new Windows.Graphics.SizeInt32((int)(560 * dpiScale), (int)(780 * dpiScale)));
-        if (appWindow != null) appWindow.Title = "Control Surfaces";
+        appWindow?.Resize(new Windows.Graphics.SizeInt32((int)(FixedWidth * dpiScale), (int)(780 * dpiScale)));
+        if (appWindow != null)
+        {
+            appWindow.Title = "Control Surfaces";
+            // Width is fixed; only the height may be resized.
+            if (appWindow.Presenter is OverlappedPresenter presenter)
+                presenter.IsMaximizable = false;
+            appWindow.Changed += OnAppWindowChanged;
+        }
 
         if (appWindow?.TitleBar is { } titleBar)
         {
@@ -110,6 +124,18 @@ public sealed partial class ControlSurfacesWindow : Window
     {
         _vm.PropertyChanged -= OnVmPropertyChanged;
         _vm.ControlSurfacesReloaded -= OnReloaded;
+        if (_appWindow != null) _appWindow.Changed -= OnAppWindowChanged;
+    }
+
+    /// <summary>Snap the width back to <see cref="FixedWidth"/> if a resize (edge
+    /// drag, snap layout, …) changed it; height is left alone.</summary>
+    private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
+    {
+        if (!args.DidSizeChange) return;
+        double scale = GetDpiForWindow(WindowNative.GetWindowHandle(this)) / 96.0;
+        int w = (int)(FixedWidth * scale);
+        if (sender.Size.Width != w)
+            sender.Resize(new Windows.Graphics.SizeInt32(w, sender.Size.Height));
     }
 
     private void OnReloaded() => DispatcherQueue.TryEnqueue(() => { SeedDrafts(); BuildAll(); });
@@ -213,13 +239,41 @@ public sealed partial class ControlSurfacesWindow : Window
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             IsExpanded = _expanded.Contains(slot),
         };
-        expander.Expanding += (_, _) => _expanded.Add(slot);
+        expander.Expanding += (_, _) => { _expanded.Add(slot); FrameExpandedCard(expander); };
         expander.Collapsed += (_, _) => _expanded.Remove(slot);
 
         expander.Header = BuildCardHeader(slot);
         expander.Content = BuildCardBody(slot);
         _slotCards[slot] = expander;
         return expander;
+    }
+
+    /// <summary>Smoothly scroll just enough to keep a card fully in view once it
+    /// expands (or is newly added). The expander animates open, so its final height
+    /// lands several frames after Expanding fires — track size changes for the whole
+    /// animation, nudging the card into view as it grows, and stop once the size has
+    /// settled. A no-op when the card is already fully visible.</summary>
+    private void FrameExpandedCard(FrameworkElement card)
+    {
+        void Bring() => card.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = true });
+
+        var settle = DispatcherQueue.CreateTimer();
+        settle.Interval = TimeSpan.FromMilliseconds(150);
+        SizeChangedEventHandler onSize = (_, _) =>
+        {
+            Bring();
+            settle.Stop();
+            settle.Start(); // restart the settle window on every size tick
+        };
+        settle.Tick += (_, _) =>
+        {
+            // No size change for one settle window: final layout — frame it and stop.
+            settle.Stop();
+            card.SizeChanged -= onSize;
+            Bring();
+        };
+        card.SizeChanged += onSize;
+        settle.Start();
     }
 
     private FrameworkElement BuildCardHeader(int slot)
@@ -838,7 +892,7 @@ public sealed partial class ControlSurfacesWindow : Window
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             IsExpanded = _irExpanded.Contains(sub),
         };
-        expander.Expanding += (_, _) => _irExpanded.Add(sub);
+        expander.Expanding += (_, _) => { _irExpanded.Add(sub); FrameExpandedCard(expander); };
         expander.Collapsed += (_, _) => _irExpanded.Remove(sub);
 
         // Header: binding summary + learned-code chip + delete.
@@ -1072,6 +1126,7 @@ public sealed partial class ControlSurfacesWindow : Window
         // Insert just the new card instead of rebuilding the panel, so existing
         // cards don't reload.
         InsertSlotCard(slot);
+        if (_slotCards.TryGetValue(slot, out var card)) FrameExpandedCard(card);
         BuildAddMenu();
         // A freshly-added control is seeded valid — apply immediately.
         await ApplySlotAsync(slot);
@@ -1262,6 +1317,7 @@ public sealed partial class ControlSurfacesWindow : Window
         _irExpanded.Add(sub);
         // Insert just the new remote-button card; siblings stay put.
         InsertIrCommandCard(sub);
+        if (_irCommandCards.TryGetValue(sub, out var card)) FrameExpandedCard(card);
         UpdateIrCount();
         UpdateAddRemoteButtonState();
     }
@@ -1429,6 +1485,7 @@ public sealed partial class ControlSurfacesWindow : Window
     private void ShowToast(string msg)
     {
         SaveStatusText.Text = msg;
+        SaveStatusText.Visibility = string.IsNullOrEmpty(msg) ? Visibility.Collapsed : Visibility.Visible;
         if (SaveBar.Visibility != Visibility.Visible)
         {
             // Surface the message via the InfoBar when the save bar is hidden.
