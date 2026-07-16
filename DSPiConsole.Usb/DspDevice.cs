@@ -374,6 +374,21 @@ public readonly struct NotifyPacket
 }
 
 /// <summary>
+/// A generic device-pushed PARAM_CHANGED for a bulk-params field that isn't
+/// handled by a dedicated typed notification (EQ / crossover / channel name /
+/// input source / user volume). Carries the byte <see cref="Offset"/> into
+/// WireBulkParams, the payload <see cref="Size"/>, the change <see cref="Source"/>,
+/// and the raw <see cref="Payload"/>. The VM decodes it by offset range.
+/// </summary>
+public readonly struct ParamChangedNotification
+{
+    public ushort Offset { get; init; }
+    public ushort Size { get; init; }
+    public ParamSource Source { get; init; }
+    public byte[] Payload { get; init; }
+}
+
+/// <summary>
 /// Parsed REQ_GET_SPDIF_RX_STATUS (0xE2) response — 16 bytes.
 /// </summary>
 public struct SpdifRxStatus
@@ -585,6 +600,20 @@ public partial class DspDevice : ObservableObject, IDisposable
     /// Diagnostic hook used by the Bulk Endpoint Monitor window. Fires on the
     /// notify background thread; subscribers must marshal to the UI thread.</summary>
     public event EventHandler<NotifyPacket>? NotifyPacketReceived;
+
+    /// <summary>Fired for a PARAM_CHANGED whose offset isn't covered by a dedicated
+    /// typed event above (master volume, outputs, loudness, crossfeed, leveller,
+    /// psybass, I2S/ADAT config, etc.). The VM applies it by offset range.</summary>
+    public event EventHandler<ParamChangedNotification>? ParamChangedNotified;
+
+    /// <summary>NOTIFY_EVT_INPUT_FORMAT (0x05): the active USB input channel count
+    /// changed. Argument is the channel count.</summary>
+    public event EventHandler<byte>? InputFormatNotified;
+
+    /// <summary>Discrete hardware-state events (0x07 siggen, 0x08 ADAT output,
+    /// 0x09 I2S slave clock, 0x0B ADAT input). Argument is the event id; the VM
+    /// re-reads the corresponding status packet.</summary>
+    public event EventHandler<byte>? StatusEventNotified;
 
     // Notification endpoint state (bulk IN EP 0x83, V7+ firmware).
     private UsbEndpointReader? _notifyReader;
@@ -2338,8 +2367,21 @@ public partial class DspDevice : ObservableObject, IDisposable
                         Source = source
                     });
                 }
-                // Other PARAM_CHANGED offsets are ignored for now — the host
-                // already polls status / refetches on BULK_INVALIDATED.
+                // Everything else (master volume, outputs, loudness, crossfeed,
+                // leveller, psybass, I2S/ADAT/DAC/LG config, delays, preamp, …):
+                // surface generically so the VM can keep those UIs live.
+                else
+                {
+                    var payload = new byte[size];
+                    Buffer.BlockCopy(buf, 12, payload, 0, size);
+                    ParamChangedNotified?.Invoke(this, new ParamChangedNotification
+                    {
+                        Offset = offset,
+                        Size = size,
+                        Source = source,
+                        Payload = payload
+                    });
+                }
                 break;
 
             case 0x03: // BULK_INVALIDATED
@@ -2350,6 +2392,18 @@ public partial class DspDevice : ObservableObject, IDisposable
             case 0x04: // PRESET_LOADED (followed by BULK_INVALIDATED)
                 if (len < 5) return;
                 PresetLoadedNotified?.Invoke(this, buf[4]);
+                break;
+
+            case 0x05: // INPUT_FORMAT — active USB input channel count changed
+                if (len < 5) return;
+                InputFormatNotified?.Invoke(this, buf[4]);
+                break;
+
+            case 0x07: // SIGGEN_STATE
+            case 0x08: // ADAT (output) STATE
+            case 0x09: // I2S_SLAVE_STATE
+            case 0x0B: // ADAT_INPUT_STATE
+                StatusEventNotified?.Invoke(this, eventId);
                 break;
         }
     }

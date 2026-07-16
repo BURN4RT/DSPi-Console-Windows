@@ -678,6 +678,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
         // other parameter changes) over bulk IN. Apply them to local state and
         // raise the UI event. Suppress echoes from our own host SETs since we
         // already updated the UI when the user typed.
+
+        // Generic PARAM_CHANGED (master volume, outputs, loudness, crossfeed,
+        // leveller, psybass, I2S/ADAT config, …) + discrete state events.
+        WireParamNotifications();
+
         _device.ChannelNameNotified += (_, n) =>
         {
             if (n.Source == ParamSource.HostSet) return;

@@ -202,28 +202,29 @@ public static class BulkParamsParser
     private const byte WireFilterLinkwitzTransform = 11;
 
     // Section offsets (bytes) into WireBulkParams. Derived directly from the
-    // struct member order + sizes in firmware bulk_params.h.
-    private const int OffsetHeader = 0;          // 16
-    private const int OffsetGlobal = 16;         // 16
-    private const int OffsetCrossfeed = 32;      // 16
-    private const int OffsetLegacy = 48;         // 16 (ignored)
-    private const int OffsetDelays = 64;         // 68  (17 × float)
-    private const int OffsetCrosspoints = 132;   // 576 (8 × 9 × 8)
-    private const int OffsetOutputs = 708;       // 108 (9 × 12)
-    private const int OffsetPinConfig = 816;     // 8
-    internal const int OffsetEq = 824;           // 3264 (17 × 12 × 16); exposed for notify dispatch
-    internal const int OffsetChannelNames = 4088; // 544 (17 × 32); exposed for notify dispatch
-    private const int OffsetI2S = 4632;          // 16
-    private const int OffsetLeveller = 4648;     // 20
-    private const int OffsetPreamp = 4668;       // 32 (8 × float)
-    private const int OffsetMasterVol = 4700;    // 16
-    internal const int OffsetInputCfg = 4716;    // 16; exposed for notify dispatch
-    private const int OffsetLgSoundSync = 4732;  // 16
-    internal const int OffsetUserVolume = 4748;  // 16; exposed for notify dispatch
-    private const int OffsetDacHwMute = 4764;    // 16
-    internal const int OffsetCrossover = 4780;   // 1088 (17 × 4 × 16); exposed for notify dispatch
-    private const int OffsetAdat = 5868;         // 8
-    private const int OffsetPsybass = 5876;      // 24 (appended V23+)
+    // struct member order + sizes in firmware bulk_params.h. Public so the notify
+    // dispatch (DspDevice) and the VM's PARAM_CHANGED apply can range-match them.
+    public const int OffsetHeader = 0;          // 16
+    public const int OffsetGlobal = 16;         // 16
+    public const int OffsetCrossfeed = 32;      // 16
+    public const int OffsetLegacy = 48;         // 16 (ignored)
+    public const int OffsetDelays = 64;         // 68  (17 × float)
+    public const int OffsetCrosspoints = 132;   // 576 (8 × 9 × 8)
+    public const int OffsetOutputs = 708;       // 108 (9 × 12)
+    public const int OffsetPinConfig = 816;     // 8
+    public const int OffsetEq = 824;            // 3264 (17 × 12 × 16)
+    public const int OffsetChannelNames = 4088; // 544 (17 × 32)
+    public const int OffsetI2S = 4632;          // 16
+    public const int OffsetLeveller = 4648;     // 20
+    public const int OffsetPreamp = 4668;       // 32 (8 × float)
+    public const int OffsetMasterVol = 4700;    // 16
+    public const int OffsetInputCfg = 4716;     // 16
+    public const int OffsetLgSoundSync = 4732;  // 16
+    public const int OffsetUserVolume = 4748;   // 16
+    public const int OffsetDacHwMute = 4764;    // 16
+    public const int OffsetCrossover = 4780;    // 1088 (17 × 4 × 16)
+    public const int OffsetAdat = 5868;         // 8
+    public const int OffsetPsybass = 5876;       // 24 (appended V23+)
 
     public static BulkParams? Parse(byte[] buffer)
     {
