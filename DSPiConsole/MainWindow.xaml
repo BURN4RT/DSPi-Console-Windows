@@ -235,6 +235,7 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                         <Border x:Name="SidebarMatrixMixerBtn" Grid.Column="0" Background="Transparent" Padding="0,6"
                                 Tapped="OnSidebarMatrixMixerTapped"
@@ -270,7 +271,18 @@
                                       HorizontalAlignment="Center"
                                       Foreground="{ThemeResource TextFillColorGhostlyBrush}" IsHitTestVisible="False" />
                         </Border>
-                        <Border x:Name="SidebarLevellerBtn" Grid.Column="4" Background="Transparent" Padding="0,6"
+                        <Border x:Name="SidebarPsybassBtn" Grid.Column="4" Background="Transparent" Padding="0,6"
+                                Tapped="OnSidebarPsybassTapped"
+                                RightTapped="OnSidebarPsybassRightClick"
+                                ToolTipService.ToolTip="Psychoacoustic Bass (right-click for settings)"
+                                PointerEntered="OnShortcutIconPointerEntered" PointerExited="OnShortcutIconPointerExited">
+                            <!-- Bass clef; not in Segoe Fluent Icons, so pull it from Segoe UI Symbol -->
+                            <FontIcon x:Name="PsybassIcon" Glyph="&#x1D122;" FontSize="16"
+                                      FontFamily="Segoe UI Symbol"
+                                      HorizontalAlignment="Center"
+                                      Foreground="{ThemeResource TextFillColorGhostlyBrush}" IsHitTestVisible="False" />
+                        </Border>
+                        <Border x:Name="SidebarLevellerBtn" Grid.Column="5" Background="Transparent" Padding="0,6"
                                 Tapped="OnSidebarLevellerTapped"
                                 RightTapped="OnSidebarLevellerRightClick"
                                 ToolTipService.ToolTip="Volume Leveller (right-click for settings)"
@@ -279,7 +291,7 @@
                                       HorizontalAlignment="Center"
                                       Foreground="{ThemeResource TextFillColorGhostlyBrush}" IsHitTestVisible="False" />
                         </Border>
-                        <Border x:Name="SidebarStatsBtn" Grid.Column="5" Background="Transparent" Padding="0,6"
+                        <Border x:Name="SidebarStatsBtn" Grid.Column="6" Background="Transparent" Padding="0,6"
                                 Tapped="OnSidebarStatsTapped"
                                 ToolTipService.ToolTip="Stats for Nerbs"
                                 PointerEntered="OnShortcutIconPointerEntered" PointerExited="OnShortcutIconPointerExited">
@@ -287,7 +299,7 @@
                                       HorizontalAlignment="Center"
                                       Foreground="{ThemeResource TextFillColorGhostlyBrush}" IsHitTestVisible="False" />
                         </Border>
-                        <Border x:Name="SidebarBypassBtn" Grid.Column="6" Background="Transparent" Padding="0,6"
+                        <Border x:Name="SidebarBypassBtn" Grid.Column="7" Background="Transparent" Padding="0,6"
                                 Tapped="OnSidebarBypassTapped"
                                 ToolTipService.ToolTip="Bypass Master EQ"
                                 PointerEntered="OnShortcutIconPointerEntered" PointerExited="OnShortcutIconPointerExited">

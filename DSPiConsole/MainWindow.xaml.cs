@@ -2562,6 +2562,9 @@ public sealed partial class MainWindow : Window
                 case nameof(MainViewModel.CrossfeedEnabled):
                     UpdateShortcutIconStates();
                     break;
+                case nameof(MainViewModel.PsybassEnabled):
+                    UpdateShortcutIconStates();
+                    break;
                 case nameof(MainViewModel.LevellerEnabled):
                     UpdateShortcutIconStates();
                     break;
@@ -4553,6 +4556,17 @@ public sealed partial class MainWindow : Window
         e.Handled = true;
     }
 
+    private void OnSidebarPsybassTapped(object sender, TappedRoutedEventArgs e)
+    {
+        ViewModel.PsybassEnabled = !ViewModel.PsybassEnabled;
+    }
+
+    private void OnSidebarPsybassRightClick(object sender, RightTappedRoutedEventArgs e)
+    {
+        OnPsybassClick(sender, new RoutedEventArgs());
+        e.Handled = true;
+    }
+
     private void OnSidebarLevellerTapped(object sender, TappedRoutedEventArgs e)
     {
         ViewModel.LevellerEnabled = !ViewModel.LevellerEnabled;
@@ -4600,6 +4614,7 @@ public sealed partial class MainWindow : Window
             SetIconColor(SettingsIcon, _iconDimColor);
             SetIconColor(LoudnessIcon, ViewModel.LoudnessEnabled ? _iconActiveColor : _iconDimColor);
             SetIconColor(CrossfeedIcon, ViewModel.CrossfeedEnabled ? _iconActiveColor : _iconDimColor);
+            SetIconColor(PsybassIcon, ViewModel.PsybassEnabled ? _iconActiveColor : _iconDimColor);
             SetIconColor(LevellerIcon, ViewModel.LevellerEnabled ? _iconActiveColor : _iconDimColor);
             SetIconColor(StatsIcon, _statsWindow != null ? _iconActiveColor : _iconDimColor);
             SetIconColor(BypassIcon, ViewModel.Bypass ? _iconBypassColor : _iconDimColor);
@@ -4616,6 +4631,7 @@ public sealed partial class MainWindow : Window
         if (icon == MatrixMixerIcon) return _matrixMixerWindow != null;
         if (icon == LoudnessIcon) return ViewModel.LoudnessEnabled;
         if (icon == CrossfeedIcon) return ViewModel.CrossfeedEnabled;
+        if (icon == PsybassIcon) return ViewModel.PsybassEnabled;
         if (icon == LevellerIcon) return ViewModel.LevellerEnabled;
         if (icon == StatsIcon) return _statsWindow != null;
         if (icon == BypassIcon) return ViewModel.Bypass;
