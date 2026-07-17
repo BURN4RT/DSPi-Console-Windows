@@ -39,6 +39,14 @@
             <TextBlock x:Name="LockText" FontSize="12" VerticalAlignment="Center"/>
         </controls:SettingsCard>
 
+        <InfoBar x:Name="FreeRunBar" IsOpen="False" IsClosable="False"
+                 Severity="Warning" Title="Clock is free-running" Margin="0,4,0,0"
+                 Message="ADAT input is in Master mode but the ADAT output is off, so no device is locked to the DSPi's clock. Periodic pops and clicks will be heard. Enable the ADAT output and connect its return to close the clock loop.">
+            <InfoBar.ActionButton>
+                <Button Content="Enable ADAT Output" Click="OnEnableAdatOutputClick"/>
+            </InfoBar.ActionButton>
+        </InfoBar>
+
         <TextBlock x:Name="StatusText"
                    FontSize="11"
                    TextWrapping="Wrap"

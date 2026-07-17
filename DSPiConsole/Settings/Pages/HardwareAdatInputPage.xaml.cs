@@ -84,6 +84,7 @@ public sealed partial class HardwareAdatInputPage : SettingsModule, ISettingsPag
             case nameof(MainViewModel.AdatInputPin):
             case nameof(MainViewModel.AdatInputClockMode):
             case nameof(MainViewModel.AdatInputSupported):
+            case nameof(MainViewModel.AdatEnabled): // output enable feeds the free-run warning
                 DispatcherQueue.TryEnqueue(Refresh);
                 break;
             case nameof(MainViewModel.AdatInputStatus):
@@ -104,6 +105,41 @@ public sealed partial class HardwareAdatInputPage : SettingsModule, ISettingsPag
         finally { _suppress = false; }
         RefreshConflicts();
         RefreshLock();
+        RefreshFreeRunWarning();
+    }
+
+    /// <summary>Master clock mode with the ADAT output off means nothing external
+    /// is locked to the DSPi's clock — the source drifts against it and produces
+    /// periodic pops/clicks. Surface a warning with a one-click fix.</summary>
+    private void RefreshFreeRunWarning()
+    {
+        FreeRunBar.IsOpen = Vm is
+        {
+            AdatInputEnabled: true,
+            AdatInputClockMode: 0, // Master
+            AdatSupported: true,
+            AdatEnabled: false,
+        };
+    }
+
+    private async void OnEnableAdatOutputClick(object sender, RoutedEventArgs e)
+    {
+        if (Vm == null) return;
+        ClearStatus();
+        var status = await Task.Run(() => Vm.SetAdatEnable(true));
+        if (status == PinConfigResult.Success)
+        {
+            HardwarePins.RaisePinAssignmentsChanged();
+            ShowStatus("ADAT output enabled.", false);
+            RefreshFreeRunWarning();
+            return;
+        }
+        ShowStatus(status switch
+        {
+            PinConfigResult.PinInUse => "The ADAT output pin is already claimed — free it on the ADAT Output page.",
+            PinConfigResult.InvalidPin => "Set a valid pin on the ADAT Output page first.",
+            _ => $"Failed to enable the ADAT output (0x{status:X2})."
+        }, true);
     }
 
     private void RefreshLock()
