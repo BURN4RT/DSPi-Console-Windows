@@ -207,6 +207,10 @@ public sealed partial class MainWindow : Window
         {
             if (_channelNameTexts.TryGetValue(channelId, out var tb))
                 tb.Text = ViewModel.GetChannelName(LookupChannelById(channelId));
+            // Routing rows on the output pages label the matrix inputs with the
+            // same sidebar names; ids 0/1 double as matrix input indices.
+            if (_currentRouteNameTexts.TryGetValue(channelId, out var route))
+                route.Text = ViewModel.GetChannelName(LookupChannelById(channelId));
         };
 
         ViewModel.InputPreampExtChanged += _ =>
@@ -1785,7 +1789,7 @@ public sealed partial class MainWindow : Window
                 // Input name
                 var nameText = new TextBlock
                 {
-                    Text = inputCh.Name,
+                    Text = ViewModel.GetChannelName(inputCh),
                     FontSize = 11,
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                     Foreground = new SolidColorBrush(routed ? inputCh.Color : dimGray),
