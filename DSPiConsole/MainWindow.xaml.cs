@@ -341,6 +341,15 @@ public sealed partial class MainWindow : Window
         _acrylicController.SetSystemBackdropConfiguration(_configurationSource);
     }
 
+    /// <summary>Sidebar channel-row MinHeight, or null to leave the ListView's
+    /// default (40px). Compacted stepwise for 4/6/8-input sources so the whole
+    /// sidebar stays onscreen; 2 inputs render exactly as before.</summary>
+    private int? ChannelRowMinHeight()
+    {
+        int n = ViewModel.ActiveInputs.Count;
+        return n >= 7 ? 29 : n >= 5 ? 33 : n >= 3 ? 38 : null;
+    }
+
     private void InitializeChannelLists()
     {
         // Build channel list items programmatically
@@ -353,6 +362,11 @@ public sealed partial class MainWindow : Window
         OutputChannelsList.Items.Clear();
 
         if (!ViewModel.IsDeviceConnected) return;
+
+        // Tighten the section headers in step with the row compaction.
+        int inputs = ViewModel.ActiveInputs.Count;
+        InputsHeader.Margin = new Thickness(0, inputs >= 7 ? 6 : inputs >= 5 ? 7 : 8, 0, 4);
+        OutputsHeader.Margin = new Thickness(0, inputs >= 7 ? 11 : inputs >= 5 ? 13 : 16, 0, 4);
 
         int index = 1;
         foreach (var channel in ViewModel.ActiveInputs)
@@ -420,8 +434,10 @@ public sealed partial class MainWindow : Window
         var item = new ListViewItem
         {
             Tag = (channel, index),
-            HorizontalContentAlignment = HorizontalAlignment.Stretch
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
         };
+        int? rowMinHeight = ChannelRowMinHeight();
+        if (rowMinHeight is int minHeight) item.MinHeight = minHeight;
         item.Tapped += OnChannelItemTapped;
 
         // When linked, hovering one master channel highlights both
@@ -431,7 +447,13 @@ public sealed partial class MainWindow : Window
             item.PointerExited += OnMasterItemPointerExited;
         }
 
-        var grid = new Grid { Height = 32, HorizontalAlignment = HorizontalAlignment.Stretch };
+        // The content grid floors the row height, so shrink it when the compacted
+        // MinHeight drops below its normal 32px.
+        var grid = new Grid
+        {
+            Height = rowMinHeight is int mh && mh < 32 ? mh : 32,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(74, GridUnitType.Pixel) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
