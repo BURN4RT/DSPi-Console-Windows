@@ -615,22 +615,67 @@ public sealed partial class MainWindow : Window
         return item;
     }
 
+    // Channel-id signature of the last-built legend. Rebuild requests arrive from
+    // several events that often haven't changed the channel set; recreating the
+    // pills anyway renders a frame at natural widths before the deferred
+    // uniform-width pass, which reads as flicker when the events repeat.
+    private string? _legendSignature;
+
     private void InitializeLegend()
     {
-        LegendPanel.Children.Clear();
+        // Inputs are always shown (the active set follows the input source);
+        // outputs only when enabled.
+        var channels = new List<Channel>(ViewModel.ActiveInputs);
+        for (int o = 0; o < ViewModel.ActiveOutputs.Count; o++)
+            if (ViewModel.IsOutputEnabled(o))
+                channels.Add(ViewModel.ActiveOutputs[o]);
 
-        // Input channels are always shown (the active set follows the USB format)
-        foreach (var channel in ViewModel.ActiveInputs)
+        string signature = string.Join(",", channels.Select(c => (int)c.Id));
+        if (signature == _legendSignature)
+        {
+            UpdateLegend(); // same pills — just repaint visibility state
+            return;
+        }
+        _legendSignature = signature;
+
+        LegendPanel.Children.Clear();
+        foreach (var channel in channels)
             AddLegendButton(channel);
 
-        // Only show enabled output channels
-        for (int o = 0; o < ViewModel.ActiveOutputs.Count; o++)
-        {
-            if (!ViewModel.IsOutputEnabled(o)) continue;
-            AddLegendButton(ViewModel.ActiveOutputs[o]);
-        }
+        // Uniform pill width: size every button to the widest one so input and
+        // output pills line up regardless of label length. Must run after layout —
+        // pre-layout Measure under-reports (template padding not yet applied).
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+            () => ApplyUniformLegendWidth());
 
         UpdateLegend();
+    }
+
+    /// <summary>Equalize legend pill widths from their laid-out ActualWidth.
+    /// Retries a few frames if the panel hasn't been laid out yet (first build
+    /// happens before the window is shown).</summary>
+    private void ApplyUniformLegendWidth(int attempt = 0)
+    {
+        double widest = 0;
+        bool unmeasured = false;
+        foreach (var child in LegendPanel.Children)
+            if (child is Button b)
+            {
+                if (b.ActualWidth <= 0) unmeasured = true;
+                widest = Math.Max(widest, b.ActualWidth);
+            }
+
+        if (unmeasured)
+        {
+            if (attempt < 5)
+                DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+                    () => ApplyUniformLegendWidth(attempt + 1));
+            return;
+        }
+        if (widest <= 0) return;
+
+        foreach (var child in LegendPanel.Children)
+            if (child is Button b) b.Width = Math.Ceiling(widest);
     }
 
     private void AddLegendButton(Channel channel)
