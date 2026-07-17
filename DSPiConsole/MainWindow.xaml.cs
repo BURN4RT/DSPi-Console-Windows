@@ -206,6 +206,9 @@ public sealed partial class MainWindow : Window
                 tb.Text = ViewModel.GetChannelName(LookupChannelById(channelId));
         };
 
+        ViewModel.InputPreampExtChanged += _ =>
+            DispatcherQueue.TryEnqueue(UpdateInputPreampEditor);
+
         ViewModel.ActiveOutputsChanged += (s, e) =>
             DispatcherQueue.TryEnqueue(() => { InitializeChannelLists(); InitializeLegend(); });
 
@@ -1172,15 +1175,19 @@ public sealed partial class MainWindow : Window
         _inputPreampSlider = null;
         _inputPreampValueText = null;
 
-        if (channel.Id == ChannelId.MasterLeft || channel.Id == ChannelId.MasterRight)
+        if (!channel.IsOutput)
         {
+            bool isMaster = channel.Id is ChannelId.MasterLeft or ChannelId.MasterRight;
             bool isLeft = channel.Id == ChannelId.MasterLeft;
+            int wireInput = InputWireIndex(channel);
 
             var headerRow = new Grid();
             headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
+            if (isMaster)
+            {
             var linkBtn = new ToggleButton
             {
                 Content = new StackPanel
@@ -1262,6 +1269,7 @@ public sealed partial class MainWindow : Window
             };
             Grid.SetColumn(linkBtn, 0);
             headerRow.Children.Add(linkBtn);
+            }
 
             // Per-input preamp strip (label · slider · value) occupies the middle column
             var preampStrip = new Grid
@@ -1290,7 +1298,7 @@ public sealed partial class MainWindow : Window
                 StepFrequency = 0.5,
                 SmallChange = 0.5,
                 LargeChange = 3,
-                Value = isLeft ? ViewModel.InputPreampLDb : ViewModel.InputPreampRDb,
+                Value = ViewModel.InputPreampAt(wireInput),
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0),
                 Padding = new Thickness(0)
@@ -1298,26 +1306,18 @@ public sealed partial class MainWindow : Window
             preampSlider.ValueChanged += (_, e) =>
             {
                 float v = (float)e.NewValue;
-                if (isLeft)
-                {
-                    if (Math.Abs(ViewModel.InputPreampLDb - v) > 0.1f)
-                        ViewModel.InputPreampLDb = v;
-                }
-                else
-                {
-                    if (Math.Abs(ViewModel.InputPreampRDb - v) > 0.1f)
-                        ViewModel.InputPreampRDb = v;
-                }
+                if (Math.Abs(ViewModel.InputPreampAt(wireInput) - v) > 0.1f)
+                    ViewModel.SetInputPreampAt(wireInput, v);
             };
             preampSlider.RightTapped += (_, e) =>
             {
                 e.Handled = true;
+                // Snapshot only carries the master pair; extra inputs reset to 0.
                 float saved = 0f;
                 var snap = ViewModel.SavedSnapshot;
-                if (snap != null)
+                if (snap != null && isMaster)
                     saved = isLeft ? snap.InputPreampLDb : snap.InputPreampRDb;
-                if (isLeft) ViewModel.InputPreampLDb = saved;
-                else ViewModel.InputPreampRDb = saved;
+                ViewModel.SetInputPreampAt(wireInput, saved);
             };
             Grid.SetColumn(preampSlider, 1);
             preampStrip.Children.Add(preampSlider);
@@ -1344,7 +1344,7 @@ public sealed partial class MainWindow : Window
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(10, 0, 10, 0),
-                Margin = new Thickness(8, 0, 8, 0),
+                Margin = new Thickness(isMaster ? 8 : 0, 0, 8, 0),
                 Height = 32,
                 VerticalAlignment = VerticalAlignment.Center,
                 Child = preampStrip
@@ -1368,7 +1368,7 @@ public sealed partial class MainWindow : Window
                 // is on, ViewModel.SetFilter mirrors each write to the linked
                 // channel automatically — so a single per-band loop covers
                 // both cases (linked = both channels, unlinked = just this one).
-                bool linked = ViewModel.MasterPeqLinked;
+                bool linked = isMaster && ViewModel.MasterPeqLinked;
                 string content;
                 if (linked)
                 {
@@ -2839,15 +2839,21 @@ public sealed partial class MainWindow : Window
     private void UpdateInputPreampEditor()
     {
         if (_inputPreampSlider == null || _inputPreampValueText == null) return;
-        if (_selectedChannel == null) return;
-        bool isLeft = _selectedChannel.Id == ChannelId.MasterLeft;
-        bool isRight = _selectedChannel.Id == ChannelId.MasterRight;
-        if (!isLeft && !isRight) return;
-        float v = isLeft ? ViewModel.InputPreampLDb : ViewModel.InputPreampRDb;
+        if (_selectedChannel == null || _selectedChannel.IsOutput) return;
+        float v = ViewModel.InputPreampAt(InputWireIndex(_selectedChannel));
         if (Math.Abs(_inputPreampSlider.Value - v) > 0.05)
             _inputPreampSlider.Value = v;
         _inputPreampValueText.Text = $"{v:F1} dB";
     }
+
+    /// <summary>Wire input index (0..7) for an input channel: Master L/R → 0/1,
+    /// Input3..8 (ids 11..16) → 2..7.</summary>
+    private static int InputWireIndex(Channel ch) => ch.Id switch
+    {
+        ChannelId.MasterLeft => 0,
+        ChannelId.MasterRight => 1,
+        _ => (int)ch.Id - ChannelMap.ExtraInputFirstId + 2,
+    };
 
     // ── Volume slider taper (user + master) ─────────────────────────────────
     //
@@ -3164,8 +3170,12 @@ public sealed partial class MainWindow : Window
             {
                 InputChannelsList.SelectionMode = ListViewSelectionMode.Multiple;
                 InputChannelsList.SelectedItems.Clear();
+                // Only the linked master pair — the list also holds IN 3..8 on
+                // multichannel sources, and those are never link-edited.
                 foreach (var inputItem in InputChannelsList.Items)
-                    InputChannelsList.SelectedItems.Add(inputItem);
+                    if (inputItem is ListViewItem lvi && lvi.Tag is (Channel inCh, int _) &&
+                        (inCh.Id == ChannelId.MasterLeft || inCh.Id == ChannelId.MasterRight))
+                        InputChannelsList.SelectedItems.Add(inputItem);
             }
             else
             {

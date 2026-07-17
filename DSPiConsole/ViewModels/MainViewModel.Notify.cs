@@ -134,6 +134,7 @@ public partial class MainViewModel
             float v = BitConverter.ToSingle(p, 0);
             if (ch == 0) { _inputPreampLDb = v; OnPropertyChanged(nameof(InputPreampLDb)); }
             else if (ch == 1) { _inputPreampRDb = v; OnPropertyChanged(nameof(InputPreampRDb)); }
+            else if (ch < 8) { _inputPreampExtDb[ch - 2] = v; InputPreampExtChanged?.Invoke(ch); }
             else changed = false;
         }
         // Volume leveller (per-field).

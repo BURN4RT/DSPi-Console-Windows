@@ -1726,6 +1726,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
             {
                 InputPreampLDb = bp.PreampLDb;
                 InputPreampRDb = bp.PreampRDb;
+                for (int i = 2; i < Math.Min(8, bp.Preamp.Length); i++)
+                    _inputPreampExtDb[i - 2] = bp.Preamp[i];
             }
             else
             {
@@ -2646,6 +2648,39 @@ public partial class MainViewModel : ObservableObject, IDisposable
         Task.Run(() => _device.SetInputPreamp(1, rounded));
         if (_masterPeqLinked && Math.Abs(InputPreampLDb - rounded) > 0.05f)
             InputPreampLDb = rounded;
+        CheckDirty();
+    }
+
+    // ── Extra-input preamps (wire inputs 2..7, RP2350 unified model) ──
+    // Master L/R keep their observable InputPreampL/RDb properties; the extra
+    // inputs live here so IN 3..8 get the same header preamp control.
+    private readonly float[] _inputPreampExtDb = new float[6];
+
+    /// <summary>Raised on the UI thread when an extra input's preamp changes
+    /// (argument = wire input index 2..7).</summary>
+    public event Action<int>? InputPreampExtChanged;
+
+    /// <summary>Preamp for any wire input index (0..7).</summary>
+    public float InputPreampAt(int wireInput) => wireInput switch
+    {
+        0 => InputPreampLDb,
+        1 => InputPreampRDb,
+        >= 2 and <= 7 => _inputPreampExtDb[wireInput - 2],
+        _ => 0f,
+    };
+
+    /// <summary>Set the preamp for any wire input index (0..7). Inputs 0/1 route
+    /// through the observable L/R properties (preserving Link L/R mirroring).</summary>
+    public void SetInputPreampAt(int wireInput, float db)
+    {
+        if (wireInput == 0) { InputPreampLDb = db; return; }
+        if (wireInput == 1) { InputPreampRDb = db; return; }
+        if (wireInput is < 2 or > 7) return;
+        var rounded = MathF.Round(db, 1);
+        if (Math.Abs(_inputPreampExtDb[wireInput - 2] - rounded) < 0.05f) return;
+        _inputPreampExtDb[wireInput - 2] = rounded;
+        Task.Run(() => _device.SetInputPreamp(wireInput, rounded));
+        InputPreampExtChanged?.Invoke(wireInput);
         CheckDirty();
     }
 
