@@ -142,6 +142,7 @@ public sealed partial class MainWindow : Window
         BodePlot.DataContext = ViewModel;
         BodePlot.SetDottedInactiveEnabled(AppSettings.Instance.DottedInactiveChannels);
         SyncLinkedPairGradient();
+        UpdateGraphPopoutButtonMargin();
 
         // Set window size (scale for DPI)
         var appWindow = GetAppWindow();
@@ -189,6 +190,7 @@ public sealed partial class MainWindow : Window
         AppSettings.Instance.SettingsChanged += (_, _) =>
         {
             DispatcherQueue.TryEnqueue(UpdatePresetDirtyIndicator);
+            DispatcherQueue.TryEnqueue(UpdateGraphPopoutButtonMargin);
             if (_graphWindow == null) return;
             bool follows = AppSettings.Instance.PopoutFollowsSelectedChannel;
             _graphWindow.SetIgnoreVisibility(!follows);
@@ -2817,6 +2819,12 @@ public sealed partial class MainWindow : Window
                 yield return a + 1;
             }
     }
+
+    /// <summary>Keep the graph pop-out button clear of the phase degree axis:
+    /// when the phase overlay is on, the plot reserves ~34px on the right for
+    /// the scale, so shift the button left of it.</summary>
+    private void UpdateGraphPopoutButtonMargin() =>
+        GraphPopoutButton.Margin = new Thickness(0, 8, AppSettings.Instance.ShowPhase ? 38 : 8, 0);
 
     /// <summary>Push the linked-pair set for the current selection to the plot:
     /// the selected input's pair when linked, every linked pair on the dashboard

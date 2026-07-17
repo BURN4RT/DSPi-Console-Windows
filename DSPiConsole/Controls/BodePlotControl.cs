@@ -230,6 +230,9 @@ public sealed class BodePlotControl : UserControl
         // Show Phase / Unwrap applies immediately (magnitude targets are unchanged).
         UpdateTargets();
         SnapToTargets();
+        // Show Phase changes RightMargin — refresh the canvas clip too, or the
+        // wider grid stays sheared at the old phase-axis edge until a resize.
+        UpdatePlotClip();
         Redraw(gridChanged: true);
     }
 
