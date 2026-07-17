@@ -357,8 +357,15 @@
                                   Background="Transparent" BorderBrush="Transparent"
                                   PointerEntered="OnSourceComboPointerEntered"
                                   PointerExited="OnSourceComboPointerExited">
+                            <!-- Tag = InputSource wire value. Selection maps by
+                                 tag, not index, so the S/PDIF group can sit
+                                 together regardless of enum order. -->
                             <ComboBoxItem Content="USB" Tag="0" />
-                            <ComboBoxItem Content="S/PDIF" Tag="1" />
+                            <ComboBoxItem x:Name="SourceSpdifItem" Content="S/PDIF" Tag="1" />
+                            <ComboBoxItem x:Name="SourceSpdif2Item" Content="S/PDIF 2" Tag="4"
+                                          Visibility="Collapsed" />
+                            <ComboBoxItem x:Name="SourceSpdif3Item" Content="S/PDIF 3" Tag="5"
+                                          Visibility="Collapsed" />
                             <ComboBoxItem x:Name="SourceI2sItem" Content="I2S" Tag="2" />
                             <ComboBoxItem x:Name="SourceAdatItem" Content="ADAT" Tag="3"
                                           Visibility="Collapsed" />

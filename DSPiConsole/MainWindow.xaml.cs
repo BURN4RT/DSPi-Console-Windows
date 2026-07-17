@@ -2565,6 +2565,12 @@ public sealed partial class MainWindow : Window
                 case nameof(MainViewModel.PsybassEnabled):
                     UpdateShortcutIconStates();
                     break;
+                // SpdifRxPin doubles as the "S/PDIF input config changed" signal
+                // (pins, enables, instance count) — resync the Source items.
+                case nameof(MainViewModel.SpdifRxPin):
+                case nameof(MainViewModel.MultiSpdifSupported):
+                    RefreshSourceComboBox();
+                    break;
                 case nameof(MainViewModel.LevellerEnabled):
                     UpdateShortcutIconStates();
                     break;
@@ -3588,13 +3594,31 @@ public sealed partial class MainWindow : Window
                 ? Visibility.Visible : Visibility.Collapsed;
             SourceAdatItem.IsEnabled = ViewModel.AdatInputSelectable;
 
-            int target = (int)(byte)ViewModel.ActiveInputSource;
-            // Guard against the firmware reporting an input source this combo
-            // doesn't list (e.g. I2S=2 on firmware that bundles I2S input).
-            // Setting an out-of-range SelectedIndex throws ArgumentException,
-            // which surfaces from the native XAML layer as a stowed-exception
-            // crash on connect. Leave the selection unchanged in that case.
-            if (target < 0 || target >= SourceComboBox.Items.Count)
+            // Extra S/PDIF receivers (multi-instance firmware): show one item per
+            // enabled instance and number the first item once siblings appear.
+            int spdifCount = ViewModel.MultiSpdifSupported ? ViewModel.SpdifEnabledCount : 1;
+            string spdifLabel = spdifCount > 1 ? "S/PDIF 1" : "S/PDIF";
+            bool spdifRelabeled = !Equals(SourceSpdifItem.Content, spdifLabel);
+            SourceSpdifItem.Content = spdifLabel;
+            SourceSpdif2Item.Visibility = spdifCount >= 2 ? Visibility.Visible : Visibility.Collapsed;
+            SourceSpdif3Item.Visibility = spdifCount >= 3 ? Visibility.Visible : Visibility.Collapsed;
+
+            // The closed combo caches its selection-box content, so renaming the
+            // selected item doesn't repaint until the dropdown opens. Bounce the
+            // selection to force a refresh (guarded — no device write).
+            if (spdifRelabeled && SourceComboBox.SelectedItem == SourceSpdifItem)
+            {
+                SourceComboBox.SelectedIndex = -1;
+                SourceComboBox.SelectedItem = SourceSpdifItem;
+            }
+
+            // Items are ordered for display (S/PDIF group together), so map the
+            // active source to its item by Tag, never by index. A source this
+            // combo doesn't list (unknown future value) leaves the selection
+            // unchanged — setting an out-of-range SelectedIndex would throw and
+            // surface as a stowed-exception crash on connect.
+            int target = SourceItemIndexFor((byte)ViewModel.ActiveInputSource);
+            if (target < 0)
                 return;
             if (SourceComboBox.SelectedIndex != target)
                 SourceComboBox.SelectedIndex = target;
@@ -3605,13 +3629,24 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>Index of the Source combo item whose Tag is the given
+    /// <see cref="DSPiConsole.Usb.InputSource"/> wire value, or -1.</summary>
+    private int SourceItemIndexFor(byte source)
+    {
+        for (int i = 0; i < SourceComboBox.Items.Count; i++)
+            if (SourceComboBox.Items[i] is ComboBoxItem item
+                && byte.TryParse(item.Tag?.ToString(), out var v) && v == source)
+                return i;
+        return -1;
+    }
+
     private async void OnSourceSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_isUpdatingSourceCombo) return;
         if (!ViewModel.IsDeviceConnected || !ViewModel.InputSourceSupported) return;
         if (SourceComboBox.SelectedItem is not ComboBoxItem item) return;
 
-        // Tag is "0" or "1" from XAML — parse to InputSource.
+        // Tag is the InputSource value ("0".."5") from XAML — parse to InputSource.
         if (!byte.TryParse(item.Tag?.ToString(), out var raw)) return;
         var target = (DSPiConsole.Usb.InputSource)raw;
         if (target == ViewModel.ActiveInputSource) return;
