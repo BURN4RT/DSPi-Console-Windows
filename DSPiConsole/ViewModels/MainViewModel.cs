@@ -963,13 +963,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         if (channel != null)
         {
-            // When linked and a master channel is selected, show both Master L and R
-            bool showBothMasters = _masterPeqLinked && IsMasterChannel((int)channel.Id);
+            // When a linked input is selected, show both channels of its pair
+            bool showPair = IsInputPairLinked((int)channel.Id);
+            int partner = GetLinkedInputChannel((int)channel.Id);
 
             foreach (var ch in Channel.All)
             {
-                if (showBothMasters)
-                    _channelVisibility[(int)ch.Id] = IsMasterChannel((int)ch.Id);
+                if (showPair)
+                    _channelVisibility[(int)ch.Id] = ch.Id == channel.Id || (int)ch.Id == partner;
                 else
                     _channelVisibility[(int)ch.Id] = ch.Id == channel.Id;
             }
@@ -2010,10 +2011,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
             filters[band] = p;
         var success = await Task.Run(() => _device.SetFilter(channel, band, p));
 
-        // Mirror to linked master channel
-        if (_masterPeqLinked && IsMasterChannel(channel))
+        // Mirror to the linked pair partner
+        if (IsInputPairLinked(channel))
         {
-            int other = GetLinkedMasterChannel(channel);
+            int other = GetLinkedInputChannel(channel);
             if (_channelData.TryGetValue(other, out var otherFilters) && band < otherFilters.Count)
                 otherFilters[band] = p;
             await Task.Run(() => _device.SetFilter(other, band, p));
@@ -2035,10 +2036,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (_channelData.TryGetValue(channel, out var filters) && band < filters.Count)
             filters[band] = p;
 
-        // Mirror to linked master channel (local state)
-        if (_masterPeqLinked && IsMasterChannel(channel))
+        // Mirror to the linked pair partner (local state)
+        if (IsInputPairLinked(channel))
         {
-            int other = GetLinkedMasterChannel(channel);
+            int other = GetLinkedInputChannel(channel);
             if (_channelData.TryGetValue(other, out var otherFilters) && band < otherFilters.Count)
                 otherFilters[band] = p;
         }
@@ -2055,31 +2056,68 @@ public partial class MainViewModel : ObservableObject, IDisposable
             {
                 await Task.Delay(500, token);
                 _device.SetFilter(channel, band, p);
-                if (_masterPeqLinked && IsMasterChannel(channel))
-                    _device.SetFilter(GetLinkedMasterChannel(channel), band, p);
+                if (IsInputPairLinked(channel))
+                    _device.SetFilter(GetLinkedInputChannel(channel), band, p);
             }
             catch (TaskCanceledException) { }
         });
     }
 
-    private static bool IsMasterChannel(int channelId) =>
-        channelId == (int)ChannelId.MasterLeft || channelId == (int)ChannelId.MasterRight;
+    // ── Input-pair linking (Master L/R + IN3/4, IN5/6, IN7/8) ──
+    // Pair 0's state lives in the observable MasterPeqLinked (persisted under
+    // that name since before multichannel inputs existed); pairs 1..3 are plain
+    // flags the main window loads from / persists to AppSettings.
+    private readonly bool[] _inputPairLinkedExt = new bool[3];
 
-    private static int GetLinkedMasterChannel(int channelId) =>
-        channelId == (int)ChannelId.MasterLeft ? (int)ChannelId.MasterRight : (int)ChannelId.MasterLeft;
+    /// <summary>Stereo pair index (0..3) for an input channel id, or -1.</summary>
+    public static int InputPairIndex(int channelId) => channelId switch
+    {
+        (int)ChannelId.MasterLeft or (int)ChannelId.MasterRight => 0,
+        >= (int)ChannelId.Input3 and <= (int)ChannelId.Input8 =>
+            1 + (channelId - (int)ChannelId.Input3) / 2,
+        _ => -1,
+    };
+
+    /// <summary>The other channel of an input pair (Master L↔R, IN3↔IN4, …).</summary>
+    public static int GetLinkedInputChannel(int channelId) => ChannelMap.LinkedPartnerId(channelId);
+
+    public bool GetInputPairLinked(int pair) =>
+        pair == 0 ? MasterPeqLinked : pair is >= 1 and <= 3 && _inputPairLinkedExt[pair - 1];
+
+    public void SetInputPairLinked(int pair, bool value)
+    {
+        if (pair == 0) MasterPeqLinked = value;
+        else if (pair is >= 1 and <= 3) _inputPairLinkedExt[pair - 1] = value;
+    }
+
+    /// <summary>True when this channel is an input whose stereo pair is linked.</summary>
+    public bool IsInputPairLinked(int channelId)
+    {
+        int pair = InputPairIndex(channelId);
+        return pair >= 0 && GetInputPairLinked(pair);
+    }
+
+    /// <summary>Wire input index (0..7) for an input channel id.</summary>
+    private static int InputWireFromId(int channelId) => channelId switch
+    {
+        (int)ChannelId.MasterLeft => 0,
+        (int)ChannelId.MasterRight => 1,
+        _ => channelId - ChannelMap.ExtraInputFirstId + 2,
+    };
 
     /// <summary>
-    /// Returns true iff the Master L and Master R filter banks have at least
-    /// one differing band. Used by the Link L/R toggle to decide whether the
-    /// user must be prompted to choose a source channel before syncing.
+    /// Returns true iff an input channel's filter bank differs from its pair
+    /// partner's in at least one band. Used by the Link toggle to decide whether
+    /// the user must be prompted to choose a source channel before syncing.
     /// </summary>
-    public bool MasterFiltersDiffer()
+    public bool InputPairFiltersDiffer(int channelId)
     {
-        if (!_channelData.TryGetValue((int)ChannelId.MasterLeft, out var left)) return false;
-        if (!_channelData.TryGetValue((int)ChannelId.MasterRight, out var right)) return false;
-        if (left.Count != right.Count) return true;
-        for (int i = 0; i < left.Count; i++)
-            if (!left[i].Equals(right[i])) return true;
+        int other = GetLinkedInputChannel(channelId);
+        if (!_channelData.TryGetValue(channelId, out var a)) return false;
+        if (!_channelData.TryGetValue(other, out var b)) return false;
+        if (a.Count != b.Count) return true;
+        for (int i = 0; i < a.Count; i++)
+            if (!a[i].Equals(b[i])) return true;
         return false;
     }
 
@@ -2093,9 +2131,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// device confirms each band, keeping local and device state in lockstep
     /// even on mid-loop failure.
     /// </summary>
-    public async Task<bool> SyncMasterFilters(int sourceChannel)
+    public async Task<bool> SyncInputPairFilters(int sourceChannel)
     {
-        int other = GetLinkedMasterChannel(sourceChannel);
+        int other = GetLinkedInputChannel(sourceChannel);
         if (!_channelData.TryGetValue(sourceChannel, out var srcFilters)) return false;
         if (!_channelData.TryGetValue(other, out var dstFilters)) return false;
 
@@ -2121,10 +2159,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         // Mirror the preamp from source to other so the two input channels are
         // fully aligned when link is turned on.
-        if (sourceChannel == (int)ChannelId.MasterLeft)
-            InputPreampRDb = InputPreampLDb;
-        else
-            InputPreampLDb = InputPreampRDb;
+        SetInputPreampAt(InputWireFromId(other), InputPreampAt(InputWireFromId(sourceChannel)));
 
         FiltersChanged?.Invoke(this, EventArgs.Empty);
         return true;
@@ -2681,6 +2716,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _inputPreampExtDb[wireInput - 2] = rounded;
         Task.Run(() => _device.SetInputPreamp(wireInput, rounded));
         InputPreampExtChanged?.Invoke(wireInput);
+
+        // Mirror to the pair partner when the pair is linked (matches the L/R
+        // property setters' behaviour for pair 0).
+        int partnerWire = wireInput ^ 1;
+        if (GetInputPairLinked(1 + (wireInput - 2) / 2)
+            && Math.Abs(_inputPreampExtDb[partnerWire - 2] - rounded) > 0.05f)
+        {
+            _inputPreampExtDb[partnerWire - 2] = rounded;
+            Task.Run(() => _device.SetInputPreamp(partnerWire, rounded));
+            InputPreampExtChanged?.Invoke(partnerWire);
+        }
         CheckDirty();
     }
 
@@ -3050,9 +3096,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         var success = await Task.Run(() => _device.SetBandBypass(channel, band, bypass));
 
-        if (_masterPeqLinked && IsMasterChannel(channel))
+        if (IsInputPairLinked(channel))
         {
-            int other = GetLinkedMasterChannel(channel);
+            int other = GetLinkedInputChannel(channel);
             if (_channelData.TryGetValue(other, out var otherFilters) && band < otherFilters.Count)
                 otherFilters[band].Bypass = bypass;
             await Task.Run(() => _device.SetBandBypass(other, band, bypass));
@@ -3138,8 +3184,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public async Task SetAllBandsBypass(int channel, bool bypass)
     {
         if (!_channelData.TryGetValue(channel, out var filters)) return;
-        bool linked = _masterPeqLinked && IsMasterChannel(channel);
-        int other = linked ? GetLinkedMasterChannel(channel) : -1;
+        bool linked = IsInputPairLinked(channel);
+        int other = linked ? GetLinkedInputChannel(channel) : -1;
 
         for (int b = 0; b < filters.Count; b++)
         {

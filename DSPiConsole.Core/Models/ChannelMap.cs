@@ -62,4 +62,15 @@ public static class ChannelMap
     /// <summary>True for the extra unified-model input channels (ids 11..16), which
     /// only exist on a device with more than 2 wire input channels.</summary>
     public static bool IsExtraInput(int appChannelId) => appChannelId >= ExtraInputFirstId;
+
+    /// <summary>The other member of an input channel's stereo pair: Master L↔R,
+    /// IN3↔IN4, IN5↔IN6, IN7↔IN8. Returns the id itself for non-input channels.</summary>
+    public static int LinkedPartnerId(int channelId) => channelId switch
+    {
+        0 => 1,
+        1 => 0,
+        >= ExtraInputFirstId and < ExtraInputFirstId + 6 =>
+            ((channelId - ExtraInputFirstId) ^ 1) + ExtraInputFirstId,
+        _ => channelId,
+    };
 }

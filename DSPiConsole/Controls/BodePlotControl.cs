@@ -25,7 +25,7 @@ public sealed class BodePlotControl : UserControl
     private bool _dottedInactiveEnabled = true;
     private bool _isPopout;
     private bool _ignoreVisibility;
-    private bool _masterLinkedGradient;
+    private HashSet<int> _linkedInputIds = new();
     private Dictionary<int, bool>? _localVisibility;
 
     /// <summary>
@@ -40,16 +40,14 @@ public sealed class BodePlotControl : UserControl
     }
 
     /// <summary>
-    /// When true, Master L and R curves render with a horizontal gradient
-    /// blending both channel colors to indicate they are linked.
+    /// Channel ids belonging to linked input pairs. Their curves render with a
+    /// horizontal gradient blending the pair's two colors, and neither member is
+    /// dotted while the other is selected. Does not trigger a redraw — call
+    /// SetSelectedChannel or Invalidate after to apply the change.
     /// </summary>
-    /// <summary>
-    /// Sets gradient mode for linked master curves. Does not trigger a redraw —
-    /// call SetSelectedChannel or Invalidate after to apply the change.
-    /// </summary>
-    public void SetMasterLinkedGradient(bool enabled)
+    public void SetLinkedInputs(IEnumerable<int> channelIds)
     {
-        _masterLinkedGradient = enabled;
+        _linkedInputIds = new HashSet<int>(channelIds);
     }
 
     /// <summary>
@@ -690,10 +688,9 @@ public sealed class BodePlotControl : UserControl
             var polylines = new List<Polyline>();
 
             var points = BuildPoints(magnitudes, plotWidth, plotHeight);
-            // Don't dot master channels when they're linked — both are "active"
-            bool isLinkedMaster = _masterLinkedGradient &&
-                (channel.Id == ChannelId.MasterLeft || channel.Id == ChannelId.MasterRight);
-            bool isDotted = _dottedInactiveEnabled && _selectedChannelId >= 0 && id != _selectedChannelId && !isLinkedMaster;
+            // Don't dot linked-pair inputs — both members of the pair are "active"
+            bool isLinkedInput = _linkedInputIds.Contains(id);
+            bool isDotted = _dottedInactiveEnabled && _selectedChannelId >= 0 && id != _selectedChannelId && !isLinkedInput;
             var dashArray = isDotted ? new DoubleCollection { 4, 3 } : null;
 
             if (showGlow && !isDotted)
@@ -719,18 +716,20 @@ public sealed class BodePlotControl : UserControl
                 polylines.Add(innerGlow);
             }
 
-            // Use gradient stroke for linked master channels
+            // Use gradient stroke for linked-pair input channels
             Brush strokeBrush;
-            if (_masterLinkedGradient &&
-                (channel.Id == ChannelId.MasterLeft || channel.Id == ChannelId.MasterRight))
+            if (isLinkedInput)
             {
+                int partnerId = ChannelMap.LinkedPartnerId(id);
+                var first = Channel.FromId((ChannelId)Math.Min(id, partnerId));
+                var second = Channel.FromId((ChannelId)Math.Max(id, partnerId));
                 var gradient = new LinearGradientBrush
                 {
                     StartPoint = new Windows.Foundation.Point(0, 0.5),
                     EndPoint = new Windows.Foundation.Point(1, 0.5)
                 };
-                gradient.GradientStops.Add(new GradientStop { Color = Channel.MasterLeft.Color, Offset = 0.3 });
-                gradient.GradientStops.Add(new GradientStop { Color = Channel.MasterRight.Color, Offset = 0.7 });
+                gradient.GradientStops.Add(new GradientStop { Color = first.Color, Offset = 0.3 });
+                gradient.GradientStops.Add(new GradientStop { Color = second.Color, Offset = 0.7 });
                 strokeBrush = gradient;
             }
             else

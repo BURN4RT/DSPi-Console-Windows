@@ -136,9 +136,12 @@ public sealed partial class MainWindow : Window
 
         ViewModel = new MainViewModel();
         ViewModel.MasterPeqLinked = AppSettings.Instance.MasterPeqLinked;
+        for (int pair = 1; pair <= 3; pair++)
+            ViewModel.SetInputPairLinked(pair,
+                AppSettings.Instance.InputPairLinkedExt is { Length: >= 3 } ext && ext[pair - 1]);
         BodePlot.DataContext = ViewModel;
         BodePlot.SetDottedInactiveEnabled(AppSettings.Instance.DottedInactiveChannels);
-        BodePlot.SetMasterLinkedGradient(ViewModel.MasterPeqLinked);
+        SyncLinkedPairGradient();
 
         // Set window size (scale for DPI)
         var appWindow = GetAppWindow();
@@ -443,8 +446,8 @@ public sealed partial class MainWindow : Window
         if (rowMinHeight is int minHeight) item.MinHeight = minHeight;
         item.Tapped += OnChannelItemTapped;
 
-        // When linked, hovering one master channel highlights both
-        if (channel.Id == ChannelId.MasterLeft || channel.Id == ChannelId.MasterRight)
+        // When a pair is linked, hovering one of its channels highlights both
+        if (!channel.IsOutput)
         {
             item.PointerEntered += OnMasterItemPointerEntered;
             item.PointerExited += OnMasterItemPointerExited;
@@ -1155,10 +1158,8 @@ public sealed partial class MainWindow : Window
             _filterPageIsXover = false;
         }
 
-        // Set gradient flag before SetSelectedChannel to avoid a redraw without it
-        bool linkedMaster = ViewModel.MasterPeqLinked &&
-            (channel.Id == ChannelId.MasterLeft || channel.Id == ChannelId.MasterRight);
-        BodePlot.SetMasterLinkedGradient(linkedMaster);
+        // Set gradient state before SetSelectedChannel to avoid a redraw without it
+        SyncLinkedPairGradient();
 
         BodePlot.SetSelectedChannel((int)channel.Id);
         if (AppSettings.Instance.PopoutFollowsSelectedChannel)
@@ -1181,13 +1182,21 @@ public sealed partial class MainWindow : Window
             bool isLeft = channel.Id == ChannelId.MasterLeft;
             int wireInput = InputWireIndex(channel);
 
-            var headerRow = new Grid();
+            // Same bottom pad as the output card so the header-to-filter gap
+            // matches the gap between filter rows.
+            var headerRow = new Grid { Margin = new Thickness(0, 0, 0, 12) };
             headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            if (isMaster)
-            {
+            // Pair-aware link label. Channel numbers only mean anything on the
+            // multichannel sources (USB, ADAT); everywhere else — and on the
+            // master pair — it's just "Link Pair".
+            int pairStartWire = wireInput & ~1;
+            bool numberedSource = ViewModel.ActiveInputSource is InputSource.Usb or InputSource.Adat;
+            string linkLabel = isMaster || !numberedSource
+                ? "Link Pair"
+                : $"Link {pairStartWire + 1}/{pairStartWire + 2}";
             var linkBtn = new ToggleButton
             {
                 Content = new StackPanel
@@ -1197,10 +1206,10 @@ public sealed partial class MainWindow : Window
                     Children =
                     {
                         new FontIcon { Glyph = "\uE71B", FontSize = 14, Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] },
-                        new TextBlock { Text = "Link L/R", FontSize = 12, Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] }
+                        new TextBlock { Text = linkLabel, FontSize = 12, Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] }
                     }
                 },
-                IsChecked = ViewModel.MasterPeqLinked,
+                IsChecked = ViewModel.IsInputPairLinked((int)channel.Id),
                 Height = 32,
                 VerticalAlignment = VerticalAlignment.Center
             };
@@ -1217,14 +1226,15 @@ public sealed partial class MainWindow : Window
             linkBtn.Click += async (s, e) =>
             {
                 bool wantLink = linkBtn.IsChecked == true;
+                int pair = MainViewModel.InputPairIndex((int)channel.Id);
 
-                // When enabling and the two master channels' filters disagree,
-                // ask the user which channel's bank should win — silently
-                // overwriting one would lose work the user might still want.
+                // When enabling and the pair's filters disagree, ask the user
+                // which channel's bank should win — silently overwriting one
+                // would lose work the user might still want.
                 int sourceChannel = (int)channel.Id;
-                if (wantLink && ViewModel.MasterFiltersDiffer())
+                if (wantLink && ViewModel.InputPairFiltersDiffer((int)channel.Id))
                 {
-                    var chosen = await AskWhichMasterFiltersToKeep();
+                    var chosen = await AskWhichFiltersToKeep(channel);
                     if (chosen == null)
                     {
                         // Cancelled: revert toggle visual state, keep link off.
@@ -1234,42 +1244,39 @@ public sealed partial class MainWindow : Window
                     sourceChannel = chosen.Value;
                 }
 
-                // Commit the link state BEFORE the sync. SyncMasterFilters
+                // Commit the link state BEFORE the sync. SyncInputPairFilters
                 // fires FiltersChanged, which causes MainWindow to rebuild
-                // the channel editor — and the rebuild reads
-                // ViewModel.MasterPeqLinked to set the new link button's
-                // IsChecked. If we set it after, the rebuilt button is born
-                // unchecked and only illuminates next time you re-enter the
-                // editor. On a sync failure we revert below.
-                ViewModel.MasterPeqLinked = wantLink;
-                AppSettings.Instance.MasterPeqLinked = ViewModel.MasterPeqLinked;
-                AppSettings.Instance.Save();
+                // the channel editor — and the rebuild reads the pair-link
+                // state to set the new link button's IsChecked. If we set it
+                // after, the rebuilt button is born unchecked and only
+                // illuminates next time you re-enter the editor. On a sync
+                // failure we revert below.
+                ViewModel.SetInputPairLinked(pair, wantLink);
+                PersistPairLink(pair, wantLink);
 
                 if (wantLink)
                 {
-                    var ok = await ViewModel.SyncMasterFilters(sourceChannel);
+                    var ok = await ViewModel.SyncInputPairFilters(sourceChannel);
                     if (!ok)
                     {
                         // Revert the link state and rebuild the editor so the
                         // (now stale, off-screen) link button is replaced with
                         // a fresh unchecked one.
-                        ViewModel.MasterPeqLinked = false;
-                        AppSettings.Instance.MasterPeqLinked = false;
-                        AppSettings.Instance.Save();
+                        ViewModel.SetInputPairLinked(pair, false);
+                        PersistPairLink(pair, false);
                         if (_selectedChannel != null) ShowChannelEditor(_selectedChannel);
-                        BodePlot.SetMasterLinkedGradient(false);
+                        SyncLinkedPairGradient();
                         await ShowErrorDialog("Failed to sync filters to the linked channel — link not enabled.");
                         return;
                     }
                 }
 
-                BodePlot.SetMasterLinkedGradient(ViewModel.MasterPeqLinked);
+                SyncLinkedPairGradient();
                 ViewModel.UpdateChannelSelection(channel);
                 UpdateChannelListSelection();
             };
             Grid.SetColumn(linkBtn, 0);
             headerRow.Children.Add(linkBtn);
-            }
 
             // Per-input preamp strip (label · slider · value) occupies the middle column
             var preampStrip = new Grid
@@ -1344,7 +1351,7 @@ public sealed partial class MainWindow : Window
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(10, 0, 10, 0),
-                Margin = new Thickness(isMaster ? 8 : 0, 0, 8, 0),
+                Margin = new Thickness(8, 0, 8, 0),
                 Height = 32,
                 VerticalAlignment = VerticalAlignment.Center,
                 Child = preampStrip
@@ -1368,13 +1375,12 @@ public sealed partial class MainWindow : Window
                 // is on, ViewModel.SetFilter mirrors each write to the linked
                 // channel automatically — so a single per-band loop covers
                 // both cases (linked = both channels, unlinked = just this one).
-                bool linked = isMaster && ViewModel.MasterPeqLinked;
+                bool linked = ViewModel.IsInputPairLinked((int)channel.Id);
                 string content;
                 if (linked)
                 {
-                    var leftName = ViewModel.GetChannelName(Channel.MasterLeft);
-                    var rightName = ViewModel.GetChannelName(Channel.MasterRight);
-                    content = $"This will reset every filter band on {leftName} and {rightName}.";
+                    var partner = Channel.FromId((ChannelId)ChannelMap.LinkedPartnerId((int)channel.Id));
+                    content = $"This will reset every filter band on {ViewModel.GetChannelName(channel)} and {ViewModel.GetChannelName(partner)}.";
                 }
                 else
                 {
@@ -2577,7 +2583,7 @@ public sealed partial class MainWindow : Window
         FilterStatusBarHost.Visibility = Visibility.Collapsed;
         ChannelHeaderHost.Visibility = Visibility.Collapsed;
         ChannelHeaderHost.Child = null;
-        BodePlot.SetMasterLinkedGradient(ViewModel.MasterPeqLinked);
+        SyncLinkedPairGradient();
         BodePlot.SetSelectedChannel(-1);
         if (AppSettings.Instance.PopoutFollowsSelectedChannel)
             _graphWindow?.SetSelectedChannel(-1);
@@ -2743,20 +2749,24 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// Prompt the user to pick which input channel's filters should win when
-    /// enabling Link L/R against differing banks. Returns the chosen channel
+    /// enabling a pair link against differing banks. Returns the chosen channel
     /// id, or null if the user cancelled.
     /// </summary>
-    private async Task<int?> AskWhichMasterFiltersToKeep()
+    private async Task<int?> AskWhichFiltersToKeep(Channel channel)
     {
-        var leftName = ViewModel.GetChannelName(Channel.MasterLeft);
-        var rightName = ViewModel.GetChannelName(Channel.MasterRight);
+        int partnerId = ChannelMap.LinkedPartnerId((int)channel.Id);
+        var partner = Channel.FromId((ChannelId)partnerId);
+        var first = (int)channel.Id < partnerId ? channel : partner;
+        var second = first == channel ? partner : channel;
+        var firstName = ViewModel.GetChannelName(first);
+        var secondName = ViewModel.GetChannelName(second);
 
         var dialog = new ContentDialog
         {
-            Title = $"{leftName} and {rightName} have different filters",
+            Title = $"{firstName} and {secondName} have different filters",
             Content = "Linking will overwrite one channel's filters with the other's. Which would you like to keep?",
-            PrimaryButtonText = $"Keep {leftName}",
-            SecondaryButtonText = $"Keep {rightName}",
+            PrimaryButtonText = $"Keep {firstName}",
+            SecondaryButtonText = $"Keep {secondName}",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = Content.XamlRoot
@@ -2764,10 +2774,59 @@ public sealed partial class MainWindow : Window
 
         return await dialog.ShowAsync() switch
         {
-            ContentDialogResult.Primary => (int)ChannelId.MasterLeft,
-            ContentDialogResult.Secondary => (int)ChannelId.MasterRight,
+            ContentDialogResult.Primary => (int)first.Id,
+            ContentDialogResult.Secondary => (int)second.Id,
             _ => (int?)null
         };
+    }
+
+    /// <summary>Persist one pair's link state to AppSettings (pair 0 keeps the
+    /// legacy MasterPeqLinked key).</summary>
+    private static void PersistPairLink(int pair, bool value)
+    {
+        if (pair == 0)
+        {
+            AppSettings.Instance.MasterPeqLinked = value;
+        }
+        else
+        {
+            if (AppSettings.Instance.InputPairLinkedExt is not { Length: >= 3 })
+                AppSettings.Instance.InputPairLinkedExt = new bool[3];
+            AppSettings.Instance.InputPairLinkedExt[pair - 1] = value;
+        }
+        AppSettings.Instance.Save();
+    }
+
+    /// <summary>Ids of every input channel whose stereo pair is currently linked.</summary>
+    private IEnumerable<int> AllLinkedInputIds()
+    {
+        if (ViewModel.GetInputPairLinked(0))
+        {
+            yield return (int)ChannelId.MasterLeft;
+            yield return (int)ChannelId.MasterRight;
+        }
+        for (int pair = 1; pair <= 3; pair++)
+            if (ViewModel.GetInputPairLinked(pair))
+            {
+                int a = (int)ChannelId.Input3 + (pair - 1) * 2;
+                yield return a;
+                yield return a + 1;
+            }
+    }
+
+    /// <summary>Push the linked-pair set for the current selection to the plot:
+    /// the selected input's pair when linked, every linked pair on the dashboard
+    /// (no selection), none when an output is selected.</summary>
+    private void SyncLinkedPairGradient()
+    {
+        IEnumerable<int> ids;
+        if (_selectedChannel is { } ch)
+            ids = !ch.IsOutput && ViewModel.IsInputPairLinked((int)ch.Id)
+                ? new[] { (int)ch.Id, ChannelMap.LinkedPartnerId((int)ch.Id) }
+                : Array.Empty<int>();
+        else
+            ids = AllLinkedInputIds();
+        BodePlot.SetLinkedInputs(ids);
     }
 
     private async Task<UnsavedAction> ShowUnsavedChangesDialogAsync(string? summary)
@@ -3115,21 +3174,19 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// When hovering a master channel item with link enabled, force the other master
+    /// When hovering a linked input channel item, force its pair partner's
     /// item into PointerOver visual state so both highlight together.
     /// </summary>
     private void OnMasterItemPointerEntered(object sender, PointerRoutedEventArgs e)
     {
-        if (!ViewModel.MasterPeqLinked) return;
-        var other = GetPairedMasterItem(sender);
+        var other = GetPairedInputItem(sender);
         if (other != null)
             VisualStateManager.GoToState(other, "PointerOver", true);
     }
 
     private void OnMasterItemPointerExited(object sender, PointerRoutedEventArgs e)
     {
-        if (!ViewModel.MasterPeqLinked) return;
-        var other = GetPairedMasterItem(sender);
+        var other = GetPairedInputItem(sender);
         if (other == null) return;
 
         // If the other item is selected, restore to Selected state, not Normal
@@ -3138,15 +3195,17 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Finds the other master channel ListViewItem in the InputChannelsList.
+    /// Finds the pair partner's ListViewItem in the InputChannelsList, or null
+    /// when the sender's pair isn't linked.
     /// </summary>
-    private ListViewItem? GetPairedMasterItem(object sender)
+    private ListViewItem? GetPairedInputItem(object sender)
     {
         if (sender is not ListViewItem item || item.Tag is not (Channel ch, int _)) return null;
-        var targetId = ch.Id == ChannelId.MasterLeft ? ChannelId.MasterRight : ChannelId.MasterLeft;
+        if (!ViewModel.IsInputPairLinked((int)ch.Id)) return null;
+        int targetId = ChannelMap.LinkedPartnerId((int)ch.Id);
         foreach (var child in InputChannelsList.Items)
         {
-            if (child is ListViewItem other && other.Tag is (Channel otherCh, int _) && otherCh.Id == targetId)
+            if (child is ListViewItem other && other.Tag is (Channel otherCh, int _) && (int)otherCh.Id == targetId)
                 return other;
         }
         return null;
@@ -3163,18 +3222,16 @@ public sealed partial class MainWindow : Window
         {
             var item = _channelListItems[_selectedChannelIndex - 1];
 
-            // When linked and a master channel is selected, highlight both master items
-            if (ViewModel.MasterPeqLinked && item.Tag is (Channel ch, int _) &&
-                (ch.Id == ChannelId.MasterLeft || ch.Id == ChannelId.MasterRight) &&
-                Channel.Inputs.Count >= 2)
+            // When a linked input is selected, highlight both channels of its pair
+            if (item.Tag is (Channel ch, int _) && !ch.IsOutput &&
+                ViewModel.IsInputPairLinked((int)ch.Id))
             {
+                int partnerId = ChannelMap.LinkedPartnerId((int)ch.Id);
                 InputChannelsList.SelectionMode = ListViewSelectionMode.Multiple;
                 InputChannelsList.SelectedItems.Clear();
-                // Only the linked master pair — the list also holds IN 3..8 on
-                // multichannel sources, and those are never link-edited.
                 foreach (var inputItem in InputChannelsList.Items)
                     if (inputItem is ListViewItem lvi && lvi.Tag is (Channel inCh, int _) &&
-                        (inCh.Id == ChannelId.MasterLeft || inCh.Id == ChannelId.MasterRight))
+                        ((int)inCh.Id == (int)ch.Id || (int)inCh.Id == partnerId))
                         InputChannelsList.SelectedItems.Add(inputItem);
             }
             else

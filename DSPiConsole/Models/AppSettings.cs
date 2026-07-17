@@ -39,8 +39,11 @@ public class AppSettings
     // Whether the popout graph follows the selected channel editor page
     public bool PopoutFollowsSelectedChannel { get; set; } = true;
 
-    // Master L/R PEQ link
+    // Master L/R PEQ link (input pair 0 — name kept for settings-file compat)
     public bool MasterPeqLinked { get; set; }
+
+    // PEQ link for the extra input pairs: [0]=IN3/4, [1]=IN5/6, [2]=IN7/8
+    public bool[] InputPairLinkedExt { get; set; } = new bool[3];
 
     // Per-channel gain/delay lock state (key = ChannelId int)
     public Dictionary<int, bool> GainLocked { get; set; } = new();
