@@ -48,10 +48,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // Output enabled in matrix mixer: Dictionary<outputIndex, bool>
     private readonly Dictionary<int, bool> _outputEnabled = new();
 
-    // Matrix mixer state: [inputIndex, outputIndex]
-    private readonly bool[,] _matrixRouting = new bool[2, 9];
-    private readonly float[,] _matrixGain = new float[2, 9];
-    private readonly bool[,] _matrixInvert = new bool[2, 9];
+    // Matrix mixer state: [inputIndex, outputIndex]. Sized to the wire maximums
+    // (8 inputs × 9 outputs); the UI only surfaces the active subset.
+    private readonly bool[,] _matrixRouting = new bool[MatrixMaxInputs, MatrixMaxOutputs];
+    private readonly float[,] _matrixGain = new float[MatrixMaxInputs, MatrixMaxOutputs];
+    private readonly bool[,] _matrixInvert = new bool[MatrixMaxInputs, MatrixMaxOutputs];
+    public const int MatrixMaxInputs = 8;
+    public const int MatrixMaxOutputs = 9;
 
     // Per-output matrix mixer state (indexed by output position in ActiveOutputs)
     private readonly bool[] _outputMuted = new bool[9];
@@ -1646,7 +1649,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
 
         // Matrix crosspoints
-        for (int inp = 0; inp < 2; inp++)
+        for (int inp = 0; inp < MatrixMaxInputs; inp++)
         {
             for (int o = 0; o < outputs.Count && o < 9; o++)
             {
@@ -1792,7 +1795,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 MatrixOutputGainChanged?.Invoke(o);
                 MatrixOutputMuteChanged?.Invoke(o);
                 MatrixOutputDelayChanged?.Invoke(o);
-                for (int inp = 0; inp < 2; inp++)
+                for (int inp = 0; inp < MatrixMaxInputs; inp++)
                     MatrixRouteChanged?.Invoke(inp, o);
             }
 
@@ -2428,7 +2431,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private void FetchMatrixRoutes(IReadOnlyList<Channel>? outputsOverride = null)
     {
         var outputs = outputsOverride ?? ActiveOutputs;
-        for (int input = 0; input < 2; input++)
+        int numInputs = Math.Clamp(_device.NumInputChannels, 2, MatrixMaxInputs);
+        for (int input = 0; input < numInputs; input++)
         {
             for (int o = 0; o < outputs.Count; o++)
             {

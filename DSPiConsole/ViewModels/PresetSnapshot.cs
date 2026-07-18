@@ -40,9 +40,9 @@ public class PresetSnapshot
     public int LevellerApplyMask;
 
     public Dictionary<int, float> Delays = new();
-    public bool[,] MatrixRouting = new bool[2, 9];
-    public float[,] MatrixGain = new float[2, 9];
-    public bool[,] MatrixInvert = new bool[2, 9];
+    public bool[,] MatrixRouting = new bool[MainViewModel.MatrixMaxInputs, 9];
+    public float[,] MatrixGain = new float[MainViewModel.MatrixMaxInputs, 9];
+    public bool[,] MatrixInvert = new bool[MainViewModel.MatrixMaxInputs, 9];
 
     public Dictionary<int, bool> OutputEnabled = new();
     public bool[] OutputMuted = new bool[9];
@@ -145,7 +145,7 @@ public class PresetSnapshot
 
         // Matrix
         var outputs = vm.ActiveOutputs;
-        for (int inp = 0; inp < 2; inp++)
+        for (int inp = 0; inp < MainViewModel.MatrixMaxInputs; inp++)
         {
             for (int o = 0; o < outputs.Count && o < 9; o++)
             {
@@ -370,7 +370,7 @@ public static class PresetDiff
         // Matrix crosspoints
         var outputs = vm.ActiveOutputs;
         int crosspointChanges = 0;
-        for (int inp = 0; inp < 2; inp++)
+        for (int inp = 0; inp < MainViewModel.MatrixMaxInputs; inp++)
         {
             for (int o = 0; o < outputs.Count && o < 9; o++)
             {

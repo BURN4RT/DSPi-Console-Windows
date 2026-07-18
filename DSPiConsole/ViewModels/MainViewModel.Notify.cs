@@ -147,14 +147,14 @@ public partial class MainViewModel
         {
             ApplyOutputField(off - BulkParamsParser.OffsetOutputs, p);
         }
-        // Matrix crosspoints: enabled / invert / gain per (input, output). The app
-        // models the 2-input matrix, so wire inputs 0..1 only.
+        // Matrix crosspoints: enabled / invert / gain per (input, output),
+        // across the full 8-input wire matrix.
         else if (off >= BulkParamsParser.OffsetCrosspoints && off < BulkParamsParser.OffsetOutputs && p.Length >= 8)
         {
             int flat = (off - BulkParamsParser.OffsetCrosspoints) / 8;
             int inp = flat / 9;
             int outp = flat % 9;
-            if (inp < 2 && outp < 9)
+            if (inp < MatrixMaxInputs && outp < 9)
             {
                 _matrixRouting[inp, outp] = p[0] != 0;
                 _matrixInvert[inp, outp] = p[1] != 0;

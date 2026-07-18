@@ -35,6 +35,9 @@ public sealed partial class MatrixMixerWindow : Window
     // Column header name TextBoxes: key = outputIndex
     private readonly Dictionary<int, TextBox> _headerNameTexts = new();
 
+    // Input row name labels: key = inputIndex
+    private readonly Dictionary<int, TextBlock> _inputLabelTexts = new();
+
     // Output controls: key = outputIndex
     private readonly Dictionary<int, Button> _outputEnableButtons = new();
     private readonly Dictionary<int, TextBox> _outputGainTexts = new();
@@ -44,6 +47,7 @@ public sealed partial class MatrixMixerWindow : Window
 
     private Border? _card;
     private int _nonClientH;
+    private int _builtInputCount;
     private bool _closed;
 
     // Shared cell border brush (reused across all cells)
@@ -86,8 +90,17 @@ public sealed partial class MatrixMixerWindow : Window
 
         _viewModel.PropertyChanged += (s, e) =>
         {
-            if (_closed || e.PropertyName != nameof(MainViewModel.IsDeviceConnected)) return;
-            DispatcherQueue.TryEnqueue(() => { if (!_closed) UpdateDisconnectOverlay(); });
+            if (_closed) return;
+            if (e.PropertyName == nameof(MainViewModel.IsDeviceConnected))
+                DispatcherQueue.TryEnqueue(() => { if (!_closed) UpdateDisconnectOverlay(); });
+            else if (e.PropertyName == nameof(MainViewModel.ActiveInputs))
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    // ActiveOutputs changes also raise ActiveInputs; only rebuild
+                    // here when the input row count actually changed.
+                    if (!_closed && _viewModel.ActiveInputs.Count != _builtInputCount)
+                        RebuildUI();
+                });
         };
 
         _viewModel.ChannelNameChanged += channelId =>
@@ -100,6 +113,15 @@ public sealed partial class MatrixMixerWindow : Window
                 {
                     if (tb.FocusState == FocusState.Unfocused)
                         tb.Text = _viewModel.GetChannelName(active[o]);
+                    break;
+                }
+            }
+            var activeInputs = _viewModel.ActiveInputs;
+            for (int i = 0; i < activeInputs.Count; i++)
+            {
+                if ((int)activeInputs[i].Id == channelId && _inputLabelTexts.TryGetValue(i, out var lbl))
+                {
+                    lbl.Text = _viewModel.GetChannelName(activeInputs[i]);
                     break;
                 }
             }
@@ -173,9 +195,13 @@ public sealed partial class MatrixMixerWindow : Window
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto, MinWidth = 95 });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        // Rows: 0=headers, 1=routing bar, 2=input L, 3=divider, 4=input R, 5=output bar,
-        //       6=enable, 7=gain, 8=delay, 9=mute
-        for (int r = 0; r < 10; r++)
+        // Rows: 0=headers, 1=routing bar, then one row per active input with a
+        // divider between each pair, then the output bar + enable/gain/delay/mute.
+        var inputs = _viewModel.ActiveInputs;
+        int inputCount = inputs.Count;
+        _builtInputCount = inputCount;
+        int outputBarRow = 2 * inputCount + 1;
+        for (int r = 0; r < outputBarRow + 5; r++)
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         // ── Row 0: Header background ──
@@ -258,29 +284,28 @@ public sealed partial class MatrixMixerWindow : Window
         // ── Row 1: ROUTING section bar ──
         AddSectionBar(grid, 1, "ROUTING", outputCount);
 
-        // ── Row 2: Input L ──
-        var inputs = Channel.Inputs;
-        AddInputRow(grid, 2, inputs[0], "Input L", outputCount);
-
-        // ── Row 3: Input divider ──
-        var inputDivider = new Border
+        // ── Input rows (one per active input, dividers between) ──
+        for (int i = 0; i < inputCount; i++)
         {
-            Height = 1,
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(22, 255, 255, 255)),
-            IsHitTestVisible = false
-        };
-        Grid.SetColumnSpan(inputDivider, outputCount + 2);
-        Grid.SetRow(inputDivider, 3);
-        grid.Children.Add(inputDivider);
+            AddInputRow(grid, 2 + 2 * i, i, inputs[i], outputCount);
+            if (i == inputCount - 1) break;
 
-        // ── Row 4: Input R ──
-        AddInputRow(grid, 4, inputs[1], "Input R", outputCount);
+            var inputDivider = new Border
+            {
+                Height = 1,
+                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(22, 255, 255, 255)),
+                IsHitTestVisible = false
+            };
+            Grid.SetColumnSpan(inputDivider, outputCount + 2);
+            Grid.SetRow(inputDivider, 3 + 2 * i);
+            grid.Children.Add(inputDivider);
+        }
 
-        // ── Row 5: OUTPUT section bar ──
-        AddSectionBar(grid, 5, "OUTPUT", outputCount);
+        // ── OUTPUT section bar ──
+        AddSectionBar(grid, outputBarRow, "OUTPUT", outputCount);
 
-        // ── Rows 6–9: Output data rows ──
-        AddOutputDataRow(grid, 6, "ENABLE", outputCount, isLast: false,
+        // ── Output data rows ──
+        AddOutputDataRow(grid, outputBarRow + 1, "ENABLE", outputCount, isLast: false,
             makeCell: o =>
             {
                 bool isEnabled = _viewModel.IsOutputEnabled(o);
@@ -306,7 +331,7 @@ public sealed partial class MatrixMixerWindow : Window
                 return btn;
             });
 
-        AddOutputDataRow(grid, 7, "GAIN", outputCount, isLast: false, unit: "dB",
+        AddOutputDataRow(grid, outputBarRow + 2, "GAIN", outputCount, isLast: false, unit: "dB",
             makeCell: o =>
             {
                 float initGain = _viewModel.GetOutputGainDb(o);
@@ -364,7 +389,7 @@ public sealed partial class MatrixMixerWindow : Window
                 return text;
             });
 
-        AddOutputDataRow(grid, 8, "DELAY", outputCount, isLast: false, unit: "ms",
+        AddOutputDataRow(grid, outputBarRow + 3, "DELAY", outputCount, isLast: false, unit: "ms",
             makeCell: o =>
             {
                 float initDelay = _viewModel.GetOutputDelayMs(o);
@@ -421,7 +446,7 @@ public sealed partial class MatrixMixerWindow : Window
                 return text;
             });
 
-        AddOutputDataRow(grid, 9, "MUTE", outputCount, isLast: true,
+        AddOutputDataRow(grid, outputBarRow + 4, "MUTE", outputCount, isLast: true,
             makeCell: o =>
             {
                 bool initMuted = _viewModel.GetOutputMuted(o);
@@ -452,7 +477,7 @@ public sealed partial class MatrixMixerWindow : Window
         {
             if (!_viewModel.IsOutputEnabled(o))
             {
-                for (int input = 0; input < 2; input++)
+                for (int input = 0; input < inputCount; input++)
                 {
                     if (_routeCells.TryGetValue((input, o), out var cell))
                     {
@@ -542,6 +567,7 @@ public sealed partial class MatrixMixerWindow : Window
         _routeInverted.Clear();
         _routeCells.Clear();
         _headerNameTexts.Clear();
+        _inputLabelTexts.Clear();
         _outputEnableButtons.Clear();
         _outputGainTexts.Clear();
         _outputDelayTexts.Clear();
@@ -553,22 +579,23 @@ public sealed partial class MatrixMixerWindow : Window
     }
 
     // Adds an input row (routing section): colored label + route cells per output
-    private void AddInputRow(Grid grid, int row, Channel inputCh, string labelText, int outputCount)
+    private void AddInputRow(Grid grid, int row, int inputIndex, Channel inputCh, int outputCount)
     {
         var label = new TextBlock
         {
-            Text = labelText,
+            Text = _viewModel.GetChannelName(inputCh),
             FontSize = 11,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = new SolidColorBrush(inputCh.Color),
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(14, 0, 0, 0)
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(14, 0, 4, 0)
         };
+        _inputLabelTexts[inputIndex] = label;
         Grid.SetColumn(label, 0);
         Grid.SetRow(label, row);
         grid.Children.Add(label);
 
-        int inputIndex = inputCh == Channel.Inputs[0] ? 0 : 1;
         for (int outp = 0; outp < outputCount; outp++)
         {
             var cell = BuildRouteCell(inputIndex, outp, inputCh.Color);
@@ -653,12 +680,15 @@ public sealed partial class MatrixMixerWindow : Window
 
     private FrameworkElement BuildRouteCell(int input, int output, Windows.UI.Color inputColor)
     {
+        // Tighten the cells when many input rows are shown so an 8-input
+        // matrix still fits on screen.
+        bool compact = _viewModel.ActiveInputs.Count > 4;
         var panel = new StackPanel
         {
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            Spacing = 10,
-            Margin = new Thickness(0, 18, 0, 18)
+            Spacing = compact ? 6 : 10,
+            Margin = compact ? new Thickness(0, 8, 0, 8) : new Thickness(0, 18, 0, 18)
         };
 
         // Initialize from ViewModel state
@@ -951,7 +981,7 @@ public sealed partial class MatrixMixerWindow : Window
         }
 
         // Dim / un-dim route cells for this output
-        for (int input = 0; input < 2; input++)
+        for (int input = 0; input < MainViewModel.MatrixMaxInputs; input++)
         {
             if (_routeCells.TryGetValue((input, output), out var cell))
             {

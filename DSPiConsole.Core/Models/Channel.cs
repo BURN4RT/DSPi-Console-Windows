@@ -149,7 +149,7 @@ public class Channel
     };
 
     /// <summary>The two base input channels (Master L/R). Consumers that assume a
-    /// fixed stereo input pair (matrix mixer, leveller) use this.</summary>
+    /// fixed stereo input pair (output-page routing rows, leveller) use this.</summary>
     public static IReadOnlyList<Channel> Inputs { get; } = new[]
     {
         MasterLeft, MasterRight
