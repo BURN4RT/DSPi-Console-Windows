@@ -2327,8 +2327,11 @@ public sealed partial class MainWindow : Window
         });
 
         // Wheel-scrub the cutoff (debounced USB write), mirroring the PEQ fields.
+        // Ctrl-gated: a bare wheel over the field scrolls the filter list instead
+        // of accidentally editing the value.
         panel.PointerWheelChanged += (s, e) =>
         {
+            if (!e.KeyModifiers.HasFlag(Windows.System.VirtualKeyModifiers.Control)) return;
             var delta = e.GetCurrentPoint(panel).Properties.MouseWheelDelta;
             if (delta == 0) return;
 
@@ -2571,8 +2574,11 @@ public sealed partial class MainWindow : Window
             VerticalAlignment = VerticalAlignment.Center
         });
 
+        // Ctrl-gated like the crossover cutoff: a bare wheel scrolls the filter
+        // list; holding Ctrl scrubs the value.
         panel.PointerWheelChanged += (s, e) =>
         {
+            if (!e.KeyModifiers.HasFlag(Windows.System.VirtualKeyModifiers.Control)) return;
             var delta = e.GetCurrentPoint(panel).Properties.MouseWheelDelta;
             if (delta == 0) return;
 
