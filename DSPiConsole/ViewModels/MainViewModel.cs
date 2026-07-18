@@ -1556,6 +1556,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 {
                     ApplyBulkParams(parsed, outputs);
                     RefreshUsbInputChannelCount();
+                    // Probe siggen support so features gated on it (sidebar
+                    // Identify) work without opening the Test Signals window.
+                    _ = FetchSiggenAsync();
                     return;
                 }
             }
@@ -1572,6 +1575,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             FetchUserVolume();
             FetchLgSoundSync();
             FetchDacHwMute();
+            _ = FetchSiggenAsync();
         }
         catch { }
     }
@@ -2670,6 +2674,57 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         var status = await Task.Run(() => _device.GetSiggenStatus());
         if (status != null) SiggenStatus = status;
+    }
+
+    /// <summary>
+    /// Play the siggen's Channel ID chirp on a single output so the user can
+    /// locate it physically (sidebar right-click → Identify), once, then
+    /// auto-stop. Sends a standalone config; the Test Signals draft
+    /// (<see cref="SiggenConfig"/>) is untouched.
+    /// </summary>
+    public async Task IdentifyOutputAsync(int outputIndex)
+    {
+        if (!SiggenSupported || outputIndex < 0 || outputIndex > 15) return;
+
+        SiggenTypeDesc? desc = null;
+        foreach (var d in _siggenTypeDescs)
+            if (d.Id == SiggenType.ChannelId) { desc = d; break; }
+
+        var cfg = new SiggenConfig
+        {
+            SignalType = SiggenType.ChannelId,
+            ChannelMask = (ushort)(1 << outputIndex),
+            InvertMask = 0,
+            Flags = SiggenFlags.None,
+            LevelDb = -20f,
+        };
+        if (desc != null)
+            for (int i = 0; i < 4; i++)
+                if (desc.Params[i].IsUsed) cfg.SetParam(i, desc.Params[i].Default);
+
+        switch (desc?.TimingModel)
+        {
+            case SiggenTimingModel.Pattern:
+                cfg.Repeat = 1;      // 0 = continuous; play the ID once then stop
+                break;
+            case SiggenTimingModel.Sweep:
+                cfg.DurationMs = 500;
+                cfg.Repeat = 0;      // sweep repeat: 0 = once
+                break;
+            default:                 // Continuous (or unknown desc): bounded burst
+                cfg.DurationMs = 1500;
+                break;
+        }
+
+        await Task.Run(() =>
+        {
+            if (!_device.SetSiggenConfig(cfg)) return;
+            if (_device.SiggenControl(SiggenControl.Start))
+            {
+                var status = _device.GetSiggenStatus();
+                _dispatcher.TryEnqueue(() => SiggenStatus = status);
+            }
+        });
     }
 
     partial void OnInputPreampLDbChanged(float value)

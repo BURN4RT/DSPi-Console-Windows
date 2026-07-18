@@ -524,11 +524,39 @@ public sealed partial class MainWindow : Window
             nameBox.SelectAll();
         };
 
+        // Identify: play a short chirp on this output so the user can find the
+        // physical speaker. Outputs only — the signal generator drives output
+        // channels, so inputs have nothing to identify.
+        MenuFlyoutItem? identifyItem = null;
+        if (channel.IsOutput)
+        {
+            identifyItem = new MenuFlyoutItem { Text = "Identify" };
+            identifyItem.Click += async (s, e) =>
+            {
+                var outputs = ViewModel.ActiveOutputs;
+                for (int o = 0; o < outputs.Count; o++)
+                {
+                    if (outputs[o].Id == channel.Id)
+                    {
+                        await ViewModel.IdentifyOutputAsync(o);
+                        break;
+                    }
+                }
+            };
+        }
+
         flyout.Opening += (s, e) =>
         {
             pasteItem.IsEnabled = ViewModel.HasChannelClipboard;
+            if (identifyItem != null)
+                identifyItem.IsEnabled = ViewModel.IsDeviceConnected && ViewModel.SiggenSupported;
         };
 
+        if (identifyItem != null)
+        {
+            flyout.Items.Add(identifyItem);
+            flyout.Items.Add(new MenuFlyoutSeparator());
+        }
         flyout.Items.Add(copyItem);
         flyout.Items.Add(pasteItem);
         flyout.Items.Add(new MenuFlyoutSeparator());
