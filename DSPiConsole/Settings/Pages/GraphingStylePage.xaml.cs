@@ -34,6 +34,7 @@ public sealed partial class GraphingStylePage : SettingsModule, ISettingsPage
             LineWidthSlider.Value = s.GraphLineWidth;
             AnimSpeedSlider.Value = s.GraphAnimationSpeed;
             DottedInactiveToggle.IsOn = s.DottedInactiveChannels;
+            GainLevelToggle.IsOn = s.GraphLevelIncludesGain;
             PopoutFollowsToggle.IsOn = s.PopoutFollowsSelectedChannel;
             ShowPhaseToggle.IsOn = s.ShowPhase;
             PhaseUnwrapToggle.IsOn = s.PhaseUnwrapped;
@@ -70,6 +71,9 @@ public sealed partial class GraphingStylePage : SettingsModule, ISettingsPage
 
     private void OnDottedInactiveToggled(object sender, RoutedEventArgs e) =>
         CommitBool(DottedInactiveToggle.IsOn, b => AppSettings.Instance.DottedInactiveChannels = b);
+
+    private void OnGainLevelToggled(object sender, RoutedEventArgs e) =>
+        CommitBool(GainLevelToggle.IsOn, b => AppSettings.Instance.GraphLevelIncludesGain = b);
 
     private void OnPopoutFollowsToggled(object sender, RoutedEventArgs e) =>
         CommitBool(PopoutFollowsToggle.IsOn, b => AppSettings.Instance.PopoutFollowsSelectedChannel = b);

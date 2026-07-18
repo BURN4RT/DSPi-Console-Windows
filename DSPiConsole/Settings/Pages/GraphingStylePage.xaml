@@ -38,6 +38,12 @@
                           Toggled="OnDottedInactiveToggled"/>
         </controls:SettingsCard>
 
+        <controls:SettingsCard Header="Gain affects displayed level"
+                                Description="Offset each channel's curve by its output gain or input preamp. Off shows the pure filter response.">
+                        <ToggleSwitch x:Name="GainLevelToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnGainLevelToggled"/>
+        </controls:SettingsCard>
+
         <controls:SettingsCard Header="Pop-out follows selected channel"
                                 Description="When the pop-out graph is open, change which channel it shows as you switch channel editor pages.">
                         <ToggleSwitch x:Name="PopoutFollowsToggle" OnContent="On" OffContent="Off"

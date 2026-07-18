@@ -39,6 +39,10 @@ public class AppSettings
     // Whether the popout graph follows the selected channel editor page
     public bool PopoutFollowsSelectedChannel { get; set; } = true;
 
+    // Whether output gain / input preamp offsets the level shown in the
+    // response graph (off = pure filter response).
+    public bool GraphLevelIncludesGain { get; set; } = true;
+
     // Master L/R PEQ link (input pair 0 — name kept for settings-file compat)
     public bool MasterPeqLinked { get; set; }
 

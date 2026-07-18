@@ -3758,7 +3758,28 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (!_channelData.TryGetValue((int)channel.Id, out var filters))
             return (Array.Empty<float>(), Array.Empty<float>());
 
-        // If master channel and bypass is on, return flat response
+        // Level offset from the channel's gain control — output gain for outputs,
+        // preamp for inputs. User-optional (Graphing → Style); off = pure filter
+        // response.
+        float levelOffset = 0f;
+        if (Models.AppSettings.Instance.GraphLevelIncludesGain)
+        {
+            if (channel.IsOutput)
+            {
+                levelOffset = GetChannelGain(channel);
+            }
+            else
+            {
+                int id = (int)channel.Id;
+                int wireInput = ChannelMap.IsExtraInput(id)
+                    ? ChannelMap.AppInputCount + (id - ChannelMap.ExtraInputFirstId)
+                    : id;
+                levelOffset = InputPreampAt(wireInput);
+            }
+        }
+
+        // If master channel and bypass is on, return flat response. The preamp
+        // stage sits outside the EQ bypass, so its offset still applies.
         if ((channel.Id == ChannelId.MasterLeft || channel.Id == ChannelId.MasterRight) && Bypass)
         {
             var freqs = new float[201];
@@ -3767,7 +3788,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             {
                 float pct = i / 200.0f;
                 freqs[i] = MathF.Pow(10, MathF.Log10(10) + pct * (MathF.Log10(20000) - MathF.Log10(10)));
-                mags[i] = 0;
+                mags[i] = levelOffset;
             }
             return (freqs, mags);
         }
@@ -3783,15 +3804,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         var result = DspMath.GenerateResponseCurve(curveFilters);
 
-        // Apply output channel gain offset to the curve
-        if (channel.IsOutput)
+        if (MathF.Abs(levelOffset) > 0.001f)
         {
-            float gain = GetChannelGain(channel);
-            if (MathF.Abs(gain) > 0.001f)
-            {
-                for (int i = 0; i < result.magnitudes.Length; i++)
-                    result.magnitudes[i] += gain;
-            }
+            for (int i = 0; i < result.magnitudes.Length; i++)
+                result.magnitudes[i] += levelOffset;
         }
 
         return result;

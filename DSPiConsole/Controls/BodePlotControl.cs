@@ -179,6 +179,8 @@ public sealed class BodePlotControl : UserControl
             _viewModel.FiltersChanged += OnFiltersChanged;
             _viewModel.VisibilityChanged += OnVisibilityChanged;
             _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+            _viewModel.MatrixOutputGainChanged += OnOutputGainChanged;
+            _viewModel.InputPreampExtChanged += OnPreampExtChanged;
             AppSettings.Instance.SettingsChanged += OnSettingsChanged;
 
             foreach (var channel in Channel.All)
@@ -210,6 +212,8 @@ public sealed class BodePlotControl : UserControl
             _viewModel.FiltersChanged -= OnFiltersChanged;
             _viewModel.VisibilityChanged -= OnVisibilityChanged;
             _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+            _viewModel.MatrixOutputGainChanged -= OnOutputGainChanged;
+            _viewModel.InputPreampExtChanged -= OnPreampExtChanged;
         }
         AppSettings.Instance.SettingsChanged -= OnSettingsChanged;
     }
@@ -219,6 +223,9 @@ public sealed class BodePlotControl : UserControl
         UpdateTargets();
         StartAnimation();
     }
+
+    private void OnOutputGainChanged(int outputIndex) => OnLevelOffsetChanged();
+    private void OnPreampExtChanged(int wireInput) => OnLevelOffsetChanged();
 
     private void OnVisibilityChanged(object? sender, EventArgs e) => Redraw(gridChanged: true);
     private void OnSettingsChanged(object? sender, EventArgs e)
@@ -257,6 +264,22 @@ public sealed class BodePlotControl : UserControl
             UpdateTargets();
             StartAnimation();
         }
+        // Preamp moves the input curves when the level-includes-gain setting is on.
+        else if (e.PropertyName is nameof(MainViewModel.InputPreampLDb)
+                                or nameof(MainViewModel.InputPreampRDb))
+        {
+            OnLevelOffsetChanged();
+        }
+    }
+
+    // Output gain / ext-input preamp changed (locally or via a device
+    // notification — both arrive on the UI thread). Only matters while the
+    // curves include the gain offset.
+    private void OnLevelOffsetChanged()
+    {
+        if (!AppSettings.Instance.GraphLevelIncludesGain) return;
+        UpdateTargets();
+        StartAnimation();
     }
 
     private void OnSizeChanged(object sender, SizeChangedEventArgs e)
