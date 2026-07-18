@@ -2676,6 +2676,7 @@ public sealed partial class MainWindow : Window
                 // (pins, enables, instance count) — resync the Source items.
                 case nameof(MainViewModel.SpdifRxPin):
                 case nameof(MainViewModel.MultiSpdifSupported):
+                case nameof(MainViewModel.AdatInputSelectable):
                     RefreshSourceComboBox();
                     break;
                 case nameof(MainViewModel.LevellerEnabled):
@@ -3762,11 +3763,10 @@ public sealed partial class MainWindow : Window
             // (V12+). Keep the item visible but disabled on older firmware.
             SourceI2sItem.IsEnabled = ViewModel.InputI2sSupported;
 
-            // ADAT input (V24+, RP2350): only shown when the feature is present,
-            // and only selectable once it's enabled with a valid RX pin.
-            SourceAdatItem.Visibility = ViewModel.AdatInputSupported
+            // ADAT input (V24+, RP2350): listed only once it's enabled with a
+            // valid RX pin — a disabled ADAT input is hidden entirely.
+            SourceAdatItem.Visibility = ViewModel.AdatInputSelectable
                 ? Visibility.Visible : Visibility.Collapsed;
-            SourceAdatItem.IsEnabled = ViewModel.AdatInputSelectable;
 
             // Extra S/PDIF receivers (multi-instance firmware): show one item per
             // enabled instance and number the first item once siblings appear.
