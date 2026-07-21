@@ -1771,6 +1771,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 CrossfeedOutputPairMask = bp.CrossfeedOutputPairMask;
             LinkwitzTransformSupported = bp.FormatVersion >= 22;
             SeedPsybassFromBulk(bp);
+            SeedUpmixFromBulk(bp);
             SeedAdatInputFromBulk(bp);
             SeedI2sClockFromBulk(bp);
             LevellerMasksSupported = bp.FormatVersion >= 18 && bp.NumInputChannels > 2;

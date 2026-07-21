@@ -53,6 +53,7 @@ public sealed partial class MainWindow : Window
     private LoudnessWindow? _loudnessWindow;
     private CrossfeedWindow? _crossfeedWindow;
     private PsychoacousticBassWindow? _psybassWindow;
+    private UpmixerWindow? _upmixerWindow;
     private VolumeLevellerWindow? _levellerWindow;
     private MatrixMixerWindow? _matrixMixerWindow;
     private TestSignalsWindow? _testSignalsWindow;
@@ -87,6 +88,9 @@ public sealed partial class MainWindow : Window
 
     // Inline per-channel meters: keyed by ChannelId
     private readonly Dictionary<int, HorizontalMeterBar> _channelMeters = new();
+
+    // Sidebar badge restyle callbacks (graph-visibility toggles): keyed by ChannelId
+    private readonly Dictionary<int, Action> _channelBadgeStylers = new();
 
     /// <summary>
     /// Resolve a firmware-side channel ID back to the Channel object
@@ -158,9 +162,6 @@ public sealed partial class MainWindow : Window
         // Initialize channel lists
         InitializeChannelLists();
 
-        // Initialize legend
-        InitializeLegend();
-
         // Initialize dashboard
         InitializeDashboard();
 
@@ -201,7 +202,7 @@ public sealed partial class MainWindow : Window
         };
         ViewModel.VisibilityChanged += (_, _) =>
         {
-            UpdateLegend();
+            UpdateChannelBadges();
             BodePlot.Invalidate();
         };
 
@@ -219,10 +220,10 @@ public sealed partial class MainWindow : Window
             DispatcherQueue.TryEnqueue(UpdateInputPreampEditor);
 
         ViewModel.ActiveOutputsChanged += (s, e) =>
-            DispatcherQueue.TryEnqueue(() => { InitializeChannelLists(); InitializeLegend(); });
+            DispatcherQueue.TryEnqueue(InitializeChannelLists);
 
         ViewModel.OutputEnabledChanged += (outputIndex, enabled) =>
-            DispatcherQueue.TryEnqueue(() => { OnOutputEnabledChanged(outputIndex, enabled); InitializeLegend(); if (DashboardPanel.Visibility == Visibility.Visible) UpdateDashboardCards(); });
+            DispatcherQueue.TryEnqueue(() => { OnOutputEnabledChanged(outputIndex, enabled); if (DashboardPanel.Visibility == Visibility.Visible) UpdateDashboardCards(); });
 
         ViewModel.MatrixOutputGainChanged += outputIndex =>
             DispatcherQueue.TryEnqueue(() => { SyncGainFromViewModel(outputIndex); BodePlot.Invalidate(); });
@@ -369,6 +370,7 @@ public sealed partial class MainWindow : Window
         _channelListItems.Clear();
         _outputChannelItems.Clear();
         _channelMeters.Clear();
+        _channelBadgeStylers.Clear();
 
         InputChannelsList.Items.Clear();
         OutputChannelsList.Items.Clear();
@@ -576,11 +578,11 @@ public sealed partial class MainWindow : Window
         };
         nameBox.LostFocus += (s, e) => CommitSidebarName();
 
-        // Modern pill-shaped badge with glow indicator
+        // Pill-shaped badge — doubles as the graph-visibility toggle (moved here
+        // from the old legend under the graph): channel color while shown on the
+        // graph, grey once hidden. Click to toggle.
         var badge = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(15, channel.Color.R, channel.Color.G, channel.Color.B)),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(80, channel.Color.R, channel.Color.G, channel.Color.B)),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(7, 2, 7, 2),
@@ -595,50 +597,58 @@ public sealed partial class MainWindow : Window
             HorizontalAlignment = HorizontalAlignment.Center
         };
 
-        // Glowing indicator dot with layered effect
-        var dotContainer = new Grid
-        {
-            Width = 8,
-            Height = 8,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        // Outer glow
-        var dotGlow = new Ellipse
-        {
-            Width = 8,
-            Height = 8,
-            Fill = new SolidColorBrush(Color.FromArgb(100, channel.Color.R, channel.Color.G, channel.Color.B))
-        };
-        dotContainer.Children.Add(dotGlow);
-
-        // Inner bright dot
-        var dotCore = new Ellipse
-        {
-            Width = 5,
-            Height = 5,
-            Fill = new SolidColorBrush(channel.Color),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        //dotContainer.Children.Add(dotCore);
-
-        //badgeContent.Children.Add(dotContainer);
-
         var badgeText = new TextBlock
         {
             Text = channel.Descriptor,
             FontSize = 9,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(Color.FromArgb(230, channel.Color.R, channel.Color.G, channel.Color.B)),
             VerticalAlignment = VerticalAlignment.Center,
             CharacterSpacing = 80
         };
         badgeContent.Children.Add(badgeText);
-
         badge.Child = badgeContent;
-        Grid.SetColumn(badge, 2);
-        grid.Children.Add(badge);
+
+        void StyleBadge()
+        {
+            bool graphVisible = ViewModel.GetChannelVisibility(channel);
+            var c = channel.Color;
+            badge.Background = new SolidColorBrush(graphVisible
+                ? Color.FromArgb(15, c.R, c.G, c.B) : Color.FromArgb(10, 150, 150, 150));
+            badge.BorderBrush = new SolidColorBrush(graphVisible
+                ? Color.FromArgb(80, c.R, c.G, c.B) : Color.FromArgb(60, 150, 150, 150));
+            badgeText.Foreground = new SolidColorBrush(graphVisible
+                ? Color.FromArgb(230, c.R, c.G, c.B) : Color.FromArgb(150, 165, 165, 165));
+        }
+        StyleBadge();
+        _channelBadgeStylers[(int)channel.Id] = StyleBadge;
+
+        // Oversized hit area (negative margin cancels the padding, so the layout
+        // is unchanged): a slightly-off click still toggles the badge instead of
+        // selecting the channel row. A chromeless Button rather than a Border —
+        // the ListView doesn't select the row when the click lands on a button,
+        // where handled Tapped/Pointer events on a plain element wouldn't stop
+        // SelectionMode="Single". Right-clicks pass through to the row's context
+        // menu as usual.
+        var badgeHit = new Button
+        {
+            Style = (Style)RootGrid.Resources["BadgeHitButtonStyle"],
+            Padding = new Thickness(10, 8, 10, 8),
+            Margin = new Thickness(-10, -8, -10, -8),
+            VerticalAlignment = VerticalAlignment.Center,
+            Content = badge
+        };
+        badgeHit.Click += (s, e) => ViewModel.ToggleChannelVisibility(channel);
+        // Channel selection is driven by the row's own Tapped handler
+        // (OnChannelItemTapped), and Tapped bubbles up from the badge no matter
+        // what the Button does with the pointer events — stop it here, and undo
+        // any stray built-in ListView highlight the click may have caused.
+        badgeHit.Tapped += (s, e) =>
+        {
+            e.Handled = true;
+            UpdateChannelListSelection();
+        };
+        Grid.SetColumn(badgeHit, 2);
+        grid.Children.Add(badgeHit);
 
         // Inline meter bar
         var meter = new HorizontalMeterBar
@@ -655,140 +665,12 @@ public sealed partial class MainWindow : Window
         return item;
     }
 
-    // Channel-id signature of the last-built legend. Rebuild requests arrive from
-    // several events that often haven't changed the channel set; recreating the
-    // pills anyway renders a frame at natural widths before the deferred
-    // uniform-width pass, which reads as flicker when the events repeat.
-    private string? _legendSignature;
-
-    private void InitializeLegend()
+    /// <summary>Repaint every sidebar badge from its channel's current graph
+    /// visibility (the badges replaced the old legend pills under the graph).</summary>
+    private void UpdateChannelBadges()
     {
-        // Inputs are always shown (the active set follows the input source);
-        // outputs only when enabled.
-        var channels = new List<Channel>(ViewModel.ActiveInputs);
-        for (int o = 0; o < ViewModel.ActiveOutputs.Count; o++)
-            if (ViewModel.IsOutputEnabled(o))
-                channels.Add(ViewModel.ActiveOutputs[o]);
-
-        string signature = string.Join(",", channels.Select(c => (int)c.Id));
-        if (signature == _legendSignature)
-        {
-            UpdateLegend(); // same pills — just repaint visibility state
-            return;
-        }
-        _legendSignature = signature;
-
-        LegendPanel.Children.Clear();
-        foreach (var channel in channels)
-            AddLegendButton(channel);
-
-        // Uniform pill width: size every button to the widest one so input and
-        // output pills line up regardless of label length. Must run after layout —
-        // pre-layout Measure under-reports (template padding not yet applied).
-        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
-            () => ApplyUniformLegendWidth());
-
-        UpdateLegend();
-    }
-
-    /// <summary>Equalize legend pill widths from their laid-out ActualWidth.
-    /// Retries a few frames if the panel hasn't been laid out yet (first build
-    /// happens before the window is shown).</summary>
-    private void ApplyUniformLegendWidth(int attempt = 0)
-    {
-        double widest = 0;
-        bool unmeasured = false;
-        foreach (var child in LegendPanel.Children)
-            if (child is Button b)
-            {
-                if (b.ActualWidth <= 0) unmeasured = true;
-                widest = Math.Max(widest, b.ActualWidth);
-            }
-
-        if (unmeasured)
-        {
-            if (attempt < 5)
-                DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
-                    () => ApplyUniformLegendWidth(attempt + 1));
-            return;
-        }
-        if (widest <= 0) return;
-
-        foreach (var child in LegendPanel.Children)
-            if (child is Button b) b.Width = Math.Ceiling(widest);
-    }
-
-    private void AddLegendButton(Channel channel)
-    {
-        var btn = new Button
-        {
-            Tag = channel,
-            Padding = new Thickness(8, 4, 8, 4),
-            Background = new SolidColorBrush(Colors.Transparent),
-            BorderThickness = new Thickness(0)
-        };
-
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-
-        var indicator = new Ellipse
-        {
-            Width = 6,
-            Height = 6,
-            Fill = new SolidColorBrush(channel.Color)
-        };
-
-        var label = new TextBlock
-        {
-            Text = channel.Descriptor,
-            FontSize = 10,
-            FontWeight = Microsoft.UI.Text.FontWeights.Bold,
-            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
-        };
-
-        panel.Children.Add(indicator);
-        panel.Children.Add(label);
-        btn.Content = panel;
-
-        btn.Click += (s, e) =>
-        {
-            if (s is Button b && b.Tag is Channel ch)
-            {
-                ViewModel.ToggleChannelVisibility(ch);
-            }
-        };
-
-        LegendPanel.Children.Add(btn);
-    }
-
-    private void UpdateLegend()
-    {
-        foreach (var child in LegendPanel.Children)
-        {
-            if (child is Button btn && btn.Tag is Channel channel)
-            {
-                bool isVisible = ViewModel.GetChannelVisibility(channel);
-                var panel = btn.Content as StackPanel;
-                if (panel != null)
-                {
-                    var ellipse = panel.Children[0] as Ellipse;
-                    var text = panel.Children[1] as TextBlock;
-
-                    if (ellipse != null)
-                    {
-                        ellipse.Fill = new SolidColorBrush(isVisible ? channel.Color : Colors.Gray);
-                        ellipse.Opacity = isVisible ? 1.0 : 0.5;
-                    }
-
-                    if (text != null)
-                    {
-                        text.Opacity = isVisible ? 1.0 : 0.5;
-                    }
-                }
-
-                btn.Background = new SolidColorBrush(
-                    isVisible ? Color.FromArgb(38, channel.Color.R, channel.Color.G, channel.Color.B) : Colors.Transparent);
-            }
-        }
+        foreach (var styler in _channelBadgeStylers.Values)
+            styler();
     }
 
     private void ScheduleDashboardRefresh()
@@ -2645,12 +2527,9 @@ public sealed partial class MainWindow : Window
                     break;
                 case nameof(MainViewModel.ActiveInputChannelCount):
                     // The number of USB input channels changed (Windows format /
-                    // input source) — rebuild the input rows and the graph legend.
+                    // input source) — rebuild the input rows.
                     if (ViewModel.IsDeviceConnected)
-                    {
                         InitializeChannelLists();
-                        InitializeLegend();
-                    }
                     break;
                 case nameof(MainViewModel.ErrorMessage):
                     UpdateConnectionStatus();
@@ -2710,7 +2589,6 @@ public sealed partial class MainWindow : Window
             _channelMeters.Clear();
 
             FadeCurves(0);
-            FadeElement(LegendPanel, 0);
 
             // Hide preset and source sections
             PresetSection.Visibility = Visibility.Collapsed;
@@ -2729,10 +2607,7 @@ public sealed partial class MainWindow : Window
         else
         {
             InitializeChannelLists();
-            InitializeLegend();
-
             FadeCurves(1);
-            FadeElement(LegendPanel, 1);
         }
     }
 
@@ -4586,6 +4461,21 @@ public sealed partial class MainWindow : Window
         _psybassWindow.Activate();
     }
 
+    private async void OnUpmixClick(object sender, RoutedEventArgs e)
+    {
+        // Refresh from the device so a value changed elsewhere (control surface,
+        // preset load) is reflected; the window shows an unsupported notice if absent.
+        if (ViewModel.IsDeviceConnected)
+            await Task.Run(() => ViewModel.FetchUpmix());
+
+        if (_upmixerWindow == null)
+        {
+            _upmixerWindow = new UpmixerWindow(ViewModel);
+            _upmixerWindow.Closed += (s, e) => _upmixerWindow = null;
+        }
+        _upmixerWindow.Activate();
+    }
+
     private async void OnMatrixMixerClick(object sender, RoutedEventArgs e)
     {
         if (!ViewModel.IsDeviceConnected)
@@ -5422,7 +5312,6 @@ public sealed partial class MainWindow : Window
 
         // Animate graph row collapsing
         GraphGripperControl.Visibility = Visibility.Collapsed;
-        LegendPanel.Visibility = Visibility.Collapsed;
         AnimateGraphRow(GraphRow.Height.Value, 0, 250, () =>
         {
             GraphArea.Visibility = Visibility.Collapsed;
@@ -5442,15 +5331,12 @@ public sealed partial class MainWindow : Window
             // Restore and animate graph row expanding
             GraphArea.Visibility = Visibility.Visible;
             GraphArea.Opacity = 0;
-            LegendPanel.Visibility = Visibility.Visible;
-            LegendPanel.Opacity = 0;
             GraphRow.Height = new GridLength(0);
 
             AnimateGraphRow(0, 250, 300, () =>
             {
                 GraphGripperControl.Visibility = Visibility.Visible;
                 GraphArea.Opacity = 1;
-                LegendPanel.Opacity = 1;
             });
         };
         _graphWindow.Activate();
@@ -5472,10 +5358,9 @@ public sealed partial class MainWindow : Window
             double height = from + (to - from) * eased;
             GraphRow.Height = new GridLength(Math.Max(0, height));
 
-            // Fade graph area and legend proportionally
+            // Fade the graph area proportionally
             double opacity = to > from ? eased : 1.0 - eased;
             GraphArea.Opacity = opacity;
-            LegendPanel.Opacity = opacity;
 
             if (t >= 1.0)
             {

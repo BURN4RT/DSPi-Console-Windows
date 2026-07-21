@@ -63,6 +63,11 @@
                                 <KeyboardAccelerator Modifiers="Control,Shift" Key="P"/>
                             </MenuFlyoutItem.KeyboardAccelerators>
                         </MenuFlyoutItem>
+                        <MenuFlyoutItem Text="Stereo Upmixer..." Click="OnUpmixClick">
+                            <MenuFlyoutItem.KeyboardAccelerators>
+                                <KeyboardAccelerator Modifiers="Control,Shift" Key="U"/>
+                            </MenuFlyoutItem.KeyboardAccelerators>
+                        </MenuFlyoutItem>
                         <MenuFlyoutItem Text="Matrix Mixer..." Click="OnMatrixMixerClick">
                             <MenuFlyoutItem.KeyboardAccelerators>
                                 <KeyboardAccelerator Modifiers="Control,Shift" Key="M"/>
@@ -174,6 +179,28 @@
                     <Setter Property="Height" Value="20" />
                     <Setter Property="VerticalAlignment" Value="Center" />
                     <Setter Property="TextAlignment" Value="Right" />
+                </Style>
+
+                <!-- Chromeless button for the sidebar badge hit area: being a real
+                     Button keeps clicks from selecting the ListView row, and the
+                     bare template adds no hover/press visuals. -->
+                <Style x:Key="BadgeHitButtonStyle" TargetType="Button">
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="BorderThickness" Value="0" />
+                    <Setter Property="MinWidth" Value="0" />
+                    <Setter Property="MinHeight" Value="0" />
+                    <Setter Property="IsTabStop" Value="False" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="Transparent"
+                                        Padding="{TemplateBinding Padding}">
+                                    <ContentPresenter HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center" />
+                                </Border>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
                 </Style>
             </Grid.Resources>
 
@@ -488,8 +515,8 @@
                                Opacity="0.3" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </controls:ResizeGripper>
 
-                <toolkit:WrapPanel x:Name="LegendPanel" Grid.Row="2"
-                                   HorizontalSpacing="8" VerticalSpacing="6" Margin="0,4,0,16" />
+                <!-- (The graph legend pills lived here in Grid.Row 2 — their
+                     show/hide role moved to the sidebar channel badges.) -->
 
                 <Grid Grid.Row="3">
                     <Grid.RowDefinitions>

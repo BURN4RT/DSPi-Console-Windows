@@ -59,6 +59,10 @@ public partial class MainViewModel
         { Task.Run(FetchLoudness); return; }
         if (off >= BulkParamsParser.OffsetCrossfeed && off < BulkParamsParser.OffsetLegacy)
         { Task.Run(FetchCrossfeed); return; }
+        // Upmix section sits above psybass in the struct — match it first, or the
+        // open-ended psybass range would swallow upmix offsets.
+        if (off >= BulkParamsParser.OffsetUpmix)
+        { Task.Run(FetchUpmix); return; }
         if (off >= BulkParamsParser.OffsetPsybass)
         { Task.Run(FetchPsybass); return; }
         if (off >= BulkParamsParser.OffsetDacHwMute && off < BulkParamsParser.OffsetCrossover)
