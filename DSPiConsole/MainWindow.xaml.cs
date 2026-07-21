@@ -646,6 +646,24 @@ public sealed partial class MainWindow : Window
         {
             e.Handled = true;
             UpdateChannelListSelection();
+            // Pressing the pill makes the button capture the pointer, so the row
+            // under the cursor receives a synthetic pointer-exit and drops its
+            // hover visual (and a linked pair drops the partner's forced one)
+            // even though the cursor never moved. Restore hover on this row and,
+            // for linked inputs, its partner once the click has settled.
+            void RestoreHover()
+            {
+                VisualStateManager.GoToState(item, "PointerOver", true);
+                if (!channel.IsOutput)
+                {
+                    var partner = GetPairedInputItem(item);
+                    if (partner != null)
+                        VisualStateManager.GoToState(partner, "PointerOver", true);
+                }
+            }
+            RestoreHover();
+            DispatcherQueue.TryEnqueue(
+                Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, RestoreHover);
         };
         Grid.SetColumn(badgeHit, 2);
         grid.Children.Add(badgeHit);
