@@ -3095,9 +3095,16 @@ public sealed partial class MainWindow : Window
         if (sender is not ListViewItem item || item.Tag is not (Channel channel, int index))
             return;
 
-        if (_selectedChannelIndex == index)
+        // A linked pair shares one editor page, so clicking either member of
+        // the currently shown pair counts as clicking the shown channel.
+        bool isShownPairPartner = _selectedChannel != null
+            && !_selectedChannel.IsOutput && !channel.IsOutput
+            && ViewModel.IsInputPairLinked((int)_selectedChannel.Id)
+            && ChannelMap.LinkedPartnerId((int)_selectedChannel.Id) == (int)channel.Id;
+
+        if (_selectedChannelIndex == index || isShownPairPartner)
         {
-            // Same channel clicked - go back to dashboard
+            // Same channel (or its linked partner) clicked - go back to dashboard
             _selectedChannelIndex = 0;
             UpdateChannelListSelection();
             ViewModel.UpdateChannelSelection(null);
