@@ -557,9 +557,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 filters.Add(new FilterParams());
             }
             _channelData[(int)channel.Id] = filters;
-            // Extra input channels (11..16) start hidden — they only become
-            // relevant on RP2350 once more than 2 USB inputs are streamed.
-            _channelVisibility[(int)channel.Id] = !ChannelMap.IsExtraInput((int)channel.Id);
+            // Seed graph visibility from the persisted dashboard pill state;
+            // channels the user never toggled default to visible.
+            _channelVisibility[(int)channel.Id] = PersistedChannelVisibility((int)channel.Id);
             _channelDelays[(int)channel.Id] = 0.0f;
             if (channel.IsOutput)
             {
@@ -980,20 +980,36 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
         else
         {
-            // Show all channels
+            // Back on the dashboard: restore the user's persistent pill
+            // configuration (the editor's narrowed view was temporary).
             foreach (var ch in Channel.All)
             {
-                _channelVisibility[(int)ch.Id] = true;
+                _channelVisibility[(int)ch.Id] = PersistedChannelVisibility((int)ch.Id);
             }
         }
 
         VisibilityChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>Persisted dashboard pill state for a channel; no entry = visible.</summary>
+    private static bool PersistedChannelVisibility(int channelId) =>
+        !Models.AppSettings.Instance.GraphChannelVisibility.TryGetValue(channelId, out var v) || v;
+
     public void ToggleChannelVisibility(Channel channel)
     {
         var id = (int)channel.Id;
         _channelVisibility[id] = !_channelVisibility[id];
+
+        // Dashboard toggles are the user's persistent configuration (restored on
+        // relaunch and whenever a channel editor is closed); toggles while an
+        // editor is open only adjust that temporary narrowed view.
+        if (SelectedChannel == null)
+        {
+            var s = Models.AppSettings.Instance;
+            s.GraphChannelVisibility[id] = _channelVisibility[id];
+            s.Save();
+        }
+
         VisibilityChanged?.Invoke(this, EventArgs.Empty);
     }
 

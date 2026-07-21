@@ -368,8 +368,9 @@ public static class PresetDiff
             var (ou, cu) = (old.Upmix, cur.Upmix);
             if (ou.Enabled != cu.Enabled)
                 changes.Add($"Upmixer: {(cu.Enabled ? "enabled" : "disabled")}");
-            string ModeC(byte m) => m == 0 ? "Passive" : "Adaptive";
-            string ModeS(byte m) => m == 0 ? "Off" : m == 1 ? "Passive" : "Adaptive";
+            // Product mode names: PASSIVE = Sinner, ADAPTIVE = Logician.
+            string ModeC(byte m) => m == 0 ? "Sinner" : "Logician";
+            string ModeS(byte m) => m == 0 ? "Off" : m == 1 ? "Sinner" : "Logician";
             if (ou.CenterMode != cu.CenterMode)
                 changes.Add($"Upmixer centre mode: {ModeC(ou.CenterMode)} → {ModeC(cu.CenterMode)}");
             if (ou.SurroundMode != cu.SurroundMode)

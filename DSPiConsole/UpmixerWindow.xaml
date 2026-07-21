@@ -100,15 +100,18 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <StackPanel VerticalAlignment="Center">
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
                             <TextBlock Text="Centre" FontWeight="SemiBold"/>
                             <TextBlock Text="Extract centre-panned content to a real centre speaker."
-                                       FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                       FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap"/>
                         </StackPanel>
+                        <!-- Wire values 0/1 (PASSIVE/ADAPTIVE); displayed with the
+                             product mode names Sinner / Logician. -->
                         <ComboBox x:Name="CenterModeCombo" Grid.Column="1" Width="120" VerticalAlignment="Center"
                                   SelectionChanged="OnCenterModeChanged">
-                            <ComboBoxItem Content="Passive"/>
-                            <ComboBoxItem Content="Adaptive"/>
+                            <ComboBoxItem Content="Sinner"/>
+                            <ComboBoxItem Content="Logician"/>
                         </ComboBox>
                     </Grid>
 
@@ -116,7 +119,8 @@
                     <StackPanel Spacing="4">
                         <TextBlock Text="Strength" FontWeight="Medium"/>
                         <TextBlock Text="Centre extraction amount; also scales the removal from L/R."
-                                   FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                   FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap"/>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -157,7 +161,8 @@
                     <StackPanel Spacing="4">
                         <TextBlock Text="Presence" FontWeight="Medium"/>
                         <TextBlock Text="Centre presence bell at 3 kHz: negative moves voices back, positive brings them forward."
-                                   FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                   FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap"/>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -267,16 +272,19 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <StackPanel VerticalAlignment="Center">
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
                             <TextBlock Text="Surround" FontWeight="SemiBold"/>
                             <TextBlock Text="Steer ambience to rear speakers with built-in delay, band-limit and decorrelation."
-                                       FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                       FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap"/>
                         </StackPanel>
+                        <!-- Wire values 0/1/2 (OFF/PASSIVE/ADAPTIVE); displayed with
+                             the product mode names Sinner / Logician. -->
                         <ComboBox x:Name="SurroundModeCombo" Grid.Column="1" Width="120" VerticalAlignment="Center"
                                   SelectionChanged="OnSurroundModeChanged">
                             <ComboBoxItem Content="Off"/>
-                            <ComboBoxItem Content="Passive"/>
-                            <ComboBoxItem Content="Adaptive"/>
+                            <ComboBoxItem Content="Sinner"/>
+                            <ComboBoxItem Content="Logician"/>
                         </ComboBox>
                     </Grid>
 
@@ -286,7 +294,8 @@
                         <StackPanel Spacing="4">
                             <TextBlock Text="Surround Delay" FontWeight="Medium"/>
                             <TextBlock Text="Haas precedence delay on the rears; roughly 1 ms per foot of listener distance."
-                                       FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                       FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap"/>
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
@@ -346,7 +355,8 @@
                         <StackPanel Spacing="4">
                             <TextBlock Text="Decorrelation" FontWeight="Medium"/>
                             <TextBlock Text="Allpass decorrelator amount; diffuses the rears so they do not localize."
-                                       FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                       FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap"/>
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>

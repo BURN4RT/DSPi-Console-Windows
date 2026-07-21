@@ -115,15 +115,16 @@ public sealed partial class UpmixerWindow : Window
         box.Text = value.ToString(fmt, CultureInfo.InvariantCulture);
     }
 
-    /// <summary>Per-mode greying (spec section 4): only the adaptive steering
-    /// controls grey in passive centre mode; strength/width/presence stay live.
-    /// The surround conditioning greys only when the surround engine is off.</summary>
+    /// <summary>Per-mode visibility (spec section 4): the adaptive steering
+    /// controls only apply in adaptive centre mode — strength/width/presence
+    /// stay shown in both modes — and the surround conditioning only applies
+    /// while the surround engine is on. Inapplicable controls are hidden.</summary>
     private void UpdateModeEnables()
     {
-        AdaptiveCenterPanel.Opacity = _viewModel.UpmixCenterMode == 1 ? 1.0 : 0.4;
-        AdaptiveCenterPanel.IsHitTestVisible = _viewModel.UpmixCenterMode == 1;
-        SurroundPanel.Opacity = _viewModel.UpmixSurroundMode != 0 ? 1.0 : 0.4;
-        SurroundPanel.IsHitTestVisible = _viewModel.UpmixSurroundMode != 0;
+        AdaptiveCenterPanel.Visibility = _viewModel.UpmixCenterMode == 1
+            ? Visibility.Visible : Visibility.Collapsed;
+        SurroundPanel.Visibility = _viewModel.UpmixSurroundMode != 0
+            ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // ── Telemetry ────────────────────────────────────────────────────────────
