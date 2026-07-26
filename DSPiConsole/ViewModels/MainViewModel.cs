@@ -2620,6 +2620,51 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public SiggenCaps? SiggenCaps => _siggenCaps;
     public IReadOnlyList<SiggenTypeDesc> SiggenTypeDescs => _siggenTypeDescs;
 
+    /// <summary>The descriptor for a signal type, or null when caps have not been read.</summary>
+    public SiggenTypeDesc? SiggenDescFor(SiggenType type)
+    {
+        foreach (var d in _siggenTypeDescs)
+            if (d.Id == type) return d;
+        return null;
+    }
+
+    /// <summary>
+    /// Make the draft config safe and self-consistent before anything is shown or sent.
+    /// A device that has never staged a config answers GET_CONFIG with a zeroed struct
+    /// (0 dBFS, no channels, no params), so adopt real defaults instead of presenting
+    /// full scale, and align params/timing with the selected type's descriptor.
+    /// </summary>
+    private void NormalizeSiggenDraft()
+    {
+        ushort valid = _siggenCaps?.UsableChannelMask ?? 0;
+
+        if (_siggenConfig.IsUnconfigured)
+        {
+            _siggenConfig.ChannelMask = valid;
+            _siggenConfig.InvertMask = 0;
+            _siggenConfig.Flags = SiggenFlags.None;
+            _siggenConfig.LevelDb = SiggenConfig.DefaultLevelDb;
+        }
+        else if (valid != 0)
+        {
+            _siggenConfig.ChannelMask &= valid;
+        }
+        _siggenConfig.InvertMask &= _siggenConfig.ChannelMask;
+
+        if (float.IsNaN(_siggenConfig.LevelDb))
+            _siggenConfig.LevelDb = SiggenConfig.DefaultLevelDb;
+        else
+            _siggenConfig.LevelDb = Math.Clamp(_siggenConfig.LevelDb,
+                SiggenConfig.LevelMinDb, SiggenConfig.LevelMaxDb);
+
+        var desc = SiggenDescFor(_siggenConfig.SignalType);
+        if (desc != null)
+        {
+            desc.SeedParams(_siggenConfig);
+            desc.SeedTiming(_siggenConfig, _siggenConfig.Flags);
+        }
+    }
+
     /// <summary>Probe siggen support and read caps, per-type descriptors, the applied
     /// config, and initial status. Sets SiggenSupported (false if the firmware STALLs).</summary>
     public async Task FetchSiggenAsync()
@@ -2641,10 +2686,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
             }
             _siggenTypeDescs = descs.ToArray();
             var cfg = _device.GetSiggenConfig();
-            if (cfg != null) cfg.CopyTo(_siggenConfig);
             var status = _device.GetSiggenStatus();
             _dispatcher.TryEnqueue(() =>
             {
+                // Adopt the draft on the UI thread: an open Test Signals window edits
+                // the same instance, and a re-sync can land mid-edit.
+                if (cfg != null) cfg.CopyTo(_siggenConfig);
+                NormalizeSiggenDraft();
                 SiggenSupported = true;
                 SiggenStatus = status;
             });
@@ -2690,8 +2738,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public async Task PollSiggenStatusAsync()
     {
         var status = await Task.Run(() => _device.GetSiggenStatus());
-        if (status != null) SiggenStatus = status;
+        if (status != null) _dispatcher.TryEnqueue(() => SiggenStatus = status);
     }
+
+    /// <summary>Re-read status off the notification thread (NOTIFY_EVT_SIGGEN_STATE 0x07:
+    /// start, stop, completion, reconfigure). Keeps SiggenStatus fresh even when nothing
+    /// is polling — e.g. after an Identify chirp finishes with the window closed.</summary>
+    private void RefreshSiggenStatus() => Task.Run(() =>
+    {
+        var status = _device.GetSiggenStatus();
+        if (status != null) _dispatcher.TryEnqueue(() => SiggenStatus = status);
+    });
 
     /// <summary>
     /// Play the siggen's Channel ID chirp on a single output so the user can
@@ -2703,17 +2760,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         if (!SiggenSupported || outputIndex < 0 || outputIndex > 15) return;
 
-        SiggenTypeDesc? desc = null;
-        foreach (var d in _siggenTypeDescs)
-            if (d.Id == SiggenType.ChannelId) { desc = d; break; }
+        // Only bits the firmware accepts; anything else leaves an empty effective
+        // mask, which SET_CONFIG rejects (a silent no-op from the user's side).
+        ushort bit = (ushort)(1 << outputIndex);
+        ushort valid = _siggenCaps?.UsableChannelMask ?? 0;
+        if (valid != 0 && (bit & valid) == 0) return;
+
+        var desc = SiggenDescFor(SiggenType.ChannelId);
 
         var cfg = new SiggenConfig
         {
             SignalType = SiggenType.ChannelId,
-            ChannelMask = (ushort)(1 << outputIndex),
+            ChannelMask = bit,
             InvertMask = 0,
             Flags = SiggenFlags.None,
-            LevelDb = -20f,
+            LevelDb = SiggenConfig.DefaultLevelDb,
         };
         if (desc != null)
             for (int i = 0; i < 4; i++)
@@ -2722,11 +2783,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
         switch (desc?.TimingModel)
         {
             case SiggenTimingModel.Pattern:
-                cfg.Repeat = 1;      // 0 = continuous; play the ID once then stop
+                cfg.Repeat = 1;      // 0 = infinite; play the ID once then stop
                 break;
             case SiggenTimingModel.Sweep:
                 cfg.DurationMs = 500;
-                cfg.Repeat = 0;      // sweep repeat: 0 = once
+                cfg.Repeat = 1;      // sweep repeat: 0 = infinite, so ask for one
                 break;
             default:                 // Continuous (or unknown desc): bounded burst
                 cfg.DurationMs = 1500;
