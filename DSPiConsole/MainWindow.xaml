@@ -304,8 +304,10 @@
                                 RightTapped="OnSidebarPsybassRightClick"
                                 ToolTipService.ToolTip="Psychoacoustic Bass (right-click for settings)"
                                 PointerEntered="OnShortcutIconPointerEntered" PointerExited="OnShortcutIconPointerExited">
-                            <!-- Bass clef; not in Segoe Fluent Icons, so pull it from Segoe UI Symbol -->
-                            <FontIcon x:Name="PsybassIcon" Glyph="&#x1D122;" FontSize="16"
+                            <!-- Bass clef; not in Segoe Fluent Icons, so pull it from Segoe UI Symbol.
+                                 The glyph sits small within its em box, so it runs a couple of
+                                 points larger than the Fluent icons to match them optically. -->
+                            <FontIcon x:Name="PsybassIcon" Glyph="&#x1D122;" FontSize="18"
                                       FontFamily="Segoe UI Symbol"
                                       HorizontalAlignment="Center"
                                       Foreground="{ThemeResource TextFillColorGhostlyBrush}" IsHitTestVisible="False" />
