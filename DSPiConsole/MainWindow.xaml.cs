@@ -5022,7 +5022,8 @@ public sealed partial class MainWindow : Window
     private async Task ImportSingleChannelFilters(List<FilterParams> filters)
     {
         var dialog = new ChannelSelectionDialog { XamlRoot = Content.XamlRoot };
-        dialog.ConfigureForSingleChannel(filters.Count, ViewModel.ActiveOutputs, ViewModel.IsOutputEnabled);
+        dialog.ConfigureForSingleChannel(filters.Count, ViewModel.ActiveInputs, ViewModel.ActiveOutputs,
+            ViewModel.IsOutputEnabled, ch => ViewModel.GetChannelName(ch));
 
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)
@@ -5048,54 +5049,89 @@ public sealed partial class MainWindow : Window
         Dictionary<int, List<FilterParams>> channelFilters,
         Dictionary<int, List<FilterParams>>? channelXover = null)
     {
+        // Every channel the file mentions, PEQ or crossover.
+        var inFile = new HashSet<int>(channelFilters.Keys);
+        if (channelXover != null)
+            inFile.UnionWith(channelXover.Keys);
+
+        // Channels the file carries that this device can't take (e.g. an
+        // 8-input export opened against a stereo device). Called out explicitly
+        // rather than dropped, which is what used to happen.
+        var selectable = new HashSet<int>(
+            ViewModel.ActiveInputs.Select(c => (int)c.Id)
+                .Concat(ViewModel.ActiveOutputs.Select(c => (int)c.Id)));
+        var unavailable = inFile.Where(id => !selectable.Contains(id)).ToList();
+
         var dialog = new ChannelSelectionDialog { XamlRoot = Content.XamlRoot };
-        dialog.ConfigureForMultiChannel(channelFilters.Keys, ViewModel.ActiveOutputs, ViewModel.IsOutputEnabled);
+        dialog.ConfigureForMultiChannel(inFile, ViewModel.ActiveInputs, ViewModel.ActiveOutputs,
+            ViewModel.IsOutputEnabled, ch => ViewModel.GetChannelName(ch));
 
         var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary)
-        {
-            dialog.CollectSelectedChannels();
-            foreach (var channelId in dialog.SelectedChannelIds)
-            {
-                if (channelFilters.TryGetValue(channelId, out var filters))
-                {
-                    List<FilterParams>? xover = null;
-                    channelXover?.TryGetValue(channelId, out xover);
-                    if (!await ApplyFiltersToChannel(channelId, filters, xover))
-                    {
-                        await ShowErrorDialog("Communication Failure - Unable to perform operation");
-                        return;
-                    }
-                }
-            }
+        if (result != ContentDialogResult.Primary) return;
 
-            if (dialog.SelectedChannelIds.Count > 0)
+        dialog.CollectSelectedChannels();
+        int applied = 0;
+        foreach (var channelId in dialog.SelectedChannelIds)
+        {
+            channelFilters.TryGetValue(channelId, out var filters);
+            List<FilterParams>? xover = null;
+            channelXover?.TryGetValue(channelId, out xover);
+
+            // A channel selected but absent from the file has nothing to apply —
+            // skip it rather than counting it as imported.
+            if (filters == null && xover == null) continue;
+
+            if (!await ApplyFiltersToChannel(channelId, filters, xover))
             {
-                await ShowSuccessDialog("Filters imported successfully");
+                await ShowErrorDialog("Communication Failure - Unable to perform operation");
+                return;
             }
+            applied++;
         }
+
+        var skipped = string.Join(", ", unavailable
+            .Select(id => Channel.All.FirstOrDefault(c => (int)c.Id == id)?.Name ?? $"channel {id}"));
+
+        if (applied == 0)
+        {
+            var message = unavailable.Count > 0
+                ? $"No filters imported. The file's channels are not available on this device: {skipped}."
+                : "No filters imported — none of the selected channels are present in the file.";
+            await ShowErrorDialog(message);
+            return;
+        }
+
+        var summary = $"Filters imported to {applied} channel(s)";
+        if (unavailable.Count > 0)
+            summary += $"\n\nNot imported (not available on this device): {skipped}";
+        await ShowSuccessDialog(summary);
     }
 
     private async Task<bool> ApplyFiltersToChannel(
-        int channelId, List<FilterParams> filters, List<FilterParams>? xover = null)
+        int channelId, List<FilterParams>? filters, List<FilterParams>? xover = null)
     {
         var channel = Channel.All.FirstOrDefault(c => (int)c.Id == channelId);
         if (channel == null) return false;
 
         var bandCount = channel.BandCount;
 
-        // Apply imported filters
-        for (int i = 0; i < Math.Min(filters.Count, bandCount); i++)
+        // A null list means the file carried no PEQ section for this channel
+        // (crossover only) — leave the channel's existing EQ alone.
+        if (filters != null)
         {
-            if (!await SetFilterWithRetry(channelId, i, filters[i].Clone()))
-                return false;
-        }
+            // Apply imported filters
+            for (int i = 0; i < Math.Min(filters.Count, bandCount); i++)
+            {
+                if (!await SetFilterWithRetry(channelId, i, filters[i].Clone()))
+                    return false;
+            }
 
-        // Clear remaining bands
-        for (int i = filters.Count; i < bandCount; i++)
-        {
-            if (!await SetFilterWithRetry(channelId, i, new FilterParams(FilterType.Flat, 1000, 0.707f, 0)))
-                return false;
+            // Clear remaining bands
+            for (int i = filters.Count; i < bandCount; i++)
+            {
+                if (!await SetFilterWithRetry(channelId, i, new FilterParams(FilterType.Flat, 1000, 0.707f, 0)))
+                    return false;
+            }
         }
 
         // Crossover bands — only when the file specified them for this channel and
@@ -5221,6 +5257,7 @@ public sealed partial class MainWindow : Window
         var dialog = new ChannelSelectionDialog { XamlRoot = Content.XamlRoot };
         dialog.ConfigureForAutoEQ(
             filters.Count,
+            ViewModel.ActiveInputs,
             ViewModel.ActiveOutputs,
             ViewModel.IsOutputEnabled,
             ch => ViewModel.GetChannelName(ch));
