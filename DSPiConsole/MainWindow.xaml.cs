@@ -116,8 +116,25 @@ public sealed partial class MainWindow : Window
     // Dashboard rebuild debounce
     private DispatcherTimer? _dashboardDebounce;
 
-    // Dashboard header stats TextBlocks: keyed by channelId
+    // Live TextBlocks owned by the dashboard cards currently on screen, keyed by
+    // channelId. Rebuilt from _dashboardCardTexts so they only ever reference
+    // elements that are actually in the visual tree.
     private readonly Dictionary<int, TextBlock> _dashboardHeaderStats = new();
+    private readonly Dictionary<int, TextBlock> _dashboardNameTexts = new();
+
+    /// <summary>The live TextBlocks one dashboard card owns, keyed by channel id.
+    /// Collected per card because UpdateDashboardCards builds every desired card
+    /// but only inserts the new ones — registering globally from each freshly
+    /// built card would leave the maps above pointing at the discarded (off-tree)
+    /// twins of the cards that stayed put, silently freezing their stats.</summary>
+    private sealed class DashboardCardTexts
+    {
+        public readonly Dictionary<int, TextBlock> Stats = new();
+        public readonly Dictionary<int, TextBlock> Names = new();
+    }
+
+    // Per-card text registrations for the cards currently on screen: keyed by card key
+    private readonly Dictionary<string, DashboardCardTexts> _dashboardCardTexts = new();
 
     // Pre-built output channel items: keyed by output index
     private readonly Dictionary<int, ListViewItem> _outputChannelItems = new();
@@ -214,6 +231,8 @@ public sealed partial class MainWindow : Window
             // same sidebar names; ids 0/1 double as matrix input indices.
             if (_currentRouteNameTexts.TryGetValue(channelId, out var route))
                 route.Text = ViewModel.GetChannelName(LookupChannelById(channelId));
+            if (_dashboardNameTexts.TryGetValue(channelId, out var cardName))
+                cardName.Text = ViewModel.GetChannelName(LookupChannelById(channelId));
         };
 
         ViewModel.InputPreampExtChanged += _ =>
@@ -706,7 +725,7 @@ public sealed partial class MainWindow : Window
 
     private void InitializeDashboard()
     {
-        _dashboardHeaderStats.Clear();
+        _dashboardCardTexts.Clear();
 
         var savedTransitions = DashboardPanel.ChildrenTransitions;
         DashboardPanel.ChildrenTransitions = new Microsoft.UI.Xaml.Media.Animation.TransitionCollection();
@@ -715,16 +734,19 @@ public sealed partial class MainWindow : Window
 
         if (!ViewModel.IsDeviceConnected)
         {
+            RebuildDashboardTextMaps();
             DashboardPanel.ChildrenTransitions = savedTransitions;
             return;
         }
 
-        foreach (var (key, card) in BuildDashboardCards())
+        foreach (var (key, card, texts) in BuildDashboardCards())
         {
             card.Tag = key;
             DashboardPanel.Children.Add(card);
+            _dashboardCardTexts[key] = texts;
         }
 
+        RebuildDashboardTextMaps();
         DashboardPanel.ChildrenTransitions = savedTransitions;
     }
 
@@ -732,7 +754,6 @@ public sealed partial class MainWindow : Window
     {
         if (!ViewModel.IsDeviceConnected) return;
 
-        _dashboardHeaderStats.Clear();
         var desired = BuildDashboardCards();
         var desiredKeys = desired.Select(d => d.key).ToList();
 
@@ -741,7 +762,10 @@ public sealed partial class MainWindow : Window
         {
             var key = ((FrameworkElement)DashboardPanel.Children[i]).Tag as string;
             if (key == null || !desiredKeys.Contains(key))
+            {
                 DashboardPanel.Children.RemoveAt(i);
+                if (key != null) _dashboardCardTexts.Remove(key);
+            }
         }
 
         // Get current keys after removal
@@ -750,53 +774,86 @@ public sealed partial class MainWindow : Window
             .Select(c => c.Tag as string)
             .ToList();
 
-        // Add missing cards at correct positions
+        // Add missing cards at correct positions. Cards that stayed put keep the
+        // TextBlocks they already had — only the freshly inserted ones register.
         for (int i = 0; i < desired.Count; i++)
         {
-            var (key, card) = desired[i];
+            var (key, card, texts) = desired[i];
             if (!currentKeys.Contains(key))
             {
                 card.Tag = key;
                 DashboardPanel.Children.Insert(Math.Min(i, DashboardPanel.Children.Count), card);
                 currentKeys.Insert(Math.Min(i, currentKeys.Count), key);
+                _dashboardCardTexts[key] = texts;
             }
+        }
+
+        RebuildDashboardTextMaps();
+    }
+
+    /// <summary>Flatten the per-card registrations into the channel-keyed maps the
+    /// live-refresh helpers use. Each channel appears on exactly one card.</summary>
+    private void RebuildDashboardTextMaps()
+    {
+        _dashboardHeaderStats.Clear();
+        _dashboardNameTexts.Clear();
+        foreach (var texts in _dashboardCardTexts.Values)
+        {
+            foreach (var (id, tb) in texts.Stats) _dashboardHeaderStats[id] = tb;
+            foreach (var (id, tb) in texts.Names) _dashboardNameTexts[id] = tb;
         }
     }
 
-    private List<(string key, FrameworkElement card)> BuildDashboardCards()
+    private List<(string key, FrameworkElement card, DashboardCardTexts texts)> BuildDashboardCards()
     {
-        var cards = new List<(string key, FrameworkElement card)>();
+        var cards = new List<(string key, FrameworkElement card, DashboardCardTexts texts)>();
 
-        // Stereo Input Card (always shown when connected)
-        cards.Add(("input", CreateStereoDashboardCard("STEREO INPUT (USB)", Channel.MasterLeft, Channel.MasterRight, false)));
-
-        // Build output cards for enabled channels, pairing stereo L/R
-        var outputs = ViewModel.ActiveOutputs;
-        var processed = new HashSet<int>();
-
-        for (int o = 0; o < outputs.Count; o++)
+        // Input cards: the active input set (2 on a stereo source, up to 8 on
+        // USB/ADAT/I2S), paired L/R the same way the sidebar lists them.
+        var inputs = ViewModel.ActiveInputs;
+        for (int i = 0; i < inputs.Count; i += 2)
         {
-            if (!ViewModel.IsOutputEnabled(o) || processed.Contains(o)) continue;
-
-            var ch = outputs[o];
-
-            // Check for stereo pair: consecutive L/R channels with adjacent IDs
-            int pairIndex = -1;
-            if (o + 1 < outputs.Count && (int)outputs[o + 1].Id == (int)ch.Id + 1 && ViewModel.IsOutputEnabled(o + 1))
-                pairIndex = o + 1;
-
-            if (pairIndex >= 0)
+            var texts = new DashboardCardTexts();
+            if (i + 1 < inputs.Count)
             {
-                var left = ch;
-                var right = outputs[pairIndex];
-                cards.Add(($"{left.ShortName}-{right.ShortName}", CreateStereoDashboardCard($"{left.Name} / {right.Name}", left, right, true)));
-                processed.Add(o);
-                processed.Add(pairIndex);
+                var (left, right) = (inputs[i], inputs[i + 1]);
+                cards.Add(($"in-{left.ShortName}-{right.ShortName}",
+                    CreateStereoDashboardCard(left, right, false, texts), texts));
             }
             else
             {
-                cards.Add((ch.ShortName, CreateMonoDashboardCard(ch)));
-                processed.Add(o);
+                // Odd input count (a source reporting an unpaired channel).
+                cards.Add(($"in-{inputs[i].ShortName}",
+                    CreateMonoDashboardCard(inputs[i], false, texts), texts));
+            }
+        }
+
+        // Build output cards for enabled channels, pairing stereo L/R.
+        var outputs = ViewModel.ActiveOutputs;
+
+        for (int o = 0; o < outputs.Count; o++)
+        {
+            if (!ViewModel.IsOutputEnabled(o)) continue;
+
+            var texts = new DashboardCardTexts();
+
+            // Stereo pairs are fixed by position — (0,1), (2,3), … — so a pair
+            // only forms when this channel is the left member and its partner is
+            // enabled. Matching on "the next channel has the adjacent id" instead
+            // slides the pairing by one whenever a left channel is disabled,
+            // which produces cards like "SPDIF 3 R / SPDIF 4 L" and pairs the
+            // mono PDM output in as a right half. PDM always sits last at an even
+            // index, so it can never become the right half here.
+            if (o % 2 == 0 && o + 1 < outputs.Count && ViewModel.IsOutputEnabled(o + 1))
+            {
+                var (left, right) = (outputs[o], outputs[o + 1]);
+                cards.Add(($"{left.ShortName}-{right.ShortName}",
+                    CreateStereoDashboardCard(left, right, true, texts), texts));
+                o++; // partner consumed
+            }
+            else
+            {
+                cards.Add((outputs[o].ShortName, CreateMonoDashboardCard(outputs[o], true, texts), texts));
             }
         }
 
@@ -827,7 +884,7 @@ public sealed partial class MainWindow : Window
         return brush;
     }
 
-    private Border CreateStereoDashboardCard(string title, Channel left, Channel right, bool showDelay)
+    private Border CreateStereoDashboardCard(Channel left, Channel right, bool showDelay, DashboardCardTexts texts)
     {
         var card = new Border
         {
@@ -844,8 +901,8 @@ public sealed partial class MainWindow : Window
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        headerGrid.Children.Add(CreateChannelHeader(left, showDelay, 0));
-        headerGrid.Children.Add(CreateChannelHeader(right, showDelay, 1));
+        headerGrid.Children.Add(CreateChannelHeader(left, showDelay, 0, texts));
+        headerGrid.Children.Add(CreateChannelHeader(right, showDelay, 1, texts));
 
         mainStack.Children.Add(headerGrid);
         mainStack.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(Color.FromArgb(51, 128, 128, 128)) });
@@ -874,7 +931,7 @@ public sealed partial class MainWindow : Window
         return card;
     }
 
-    private Border CreateChannelHeader(Channel channel, bool showDelay, int column)
+    private Border CreateChannelHeader(Channel channel, bool showDelay, int column, DashboardCardTexts texts)
     {
         var header = new Border
         {
@@ -892,9 +949,12 @@ public sealed partial class MainWindow : Window
             Fill = new SolidColorBrush(channel.Color)
         });
 
-        panel.Children.Add(new TextBlock
+        // Renames live in the ViewModel (and on the device) — channel.Name is only
+        // the factory default, and the sidebar, matrix and editor all show the
+        // override, so the cards have to as well.
+        var nameText = new TextBlock
         {
-            Text = channel.Name,
+            Text = ViewModel.GetChannelName(channel),
             FontSize = 11,
             FontWeight = Microsoft.UI.Text.FontWeights.Bold,
             Foreground = new SolidColorBrush(Color.FromArgb(
@@ -902,7 +962,9 @@ public sealed partial class MainWindow : Window
                 (byte)(channel.Color.R * 0.7),
                 (byte)(channel.Color.G * 0.7),
                 (byte)(channel.Color.B * 0.7)))
-        });
+        };
+        texts.Names[(int)channel.Id] = nameText;
+        panel.Children.Add(nameText);
 
         if (showDelay)
         {
@@ -917,7 +979,7 @@ public sealed partial class MainWindow : Window
                 Foreground = new SolidColorBrush(isMuted ? Color.FromArgb(255, 200, 80, 80) : Colors.Gray),
                 Margin = new Thickness(8, 0, 0, 0)
             };
-            _dashboardHeaderStats[(int)channel.Id] = statsText;
+            texts.Stats[(int)channel.Id] = statsText;
             panel.Children.Add(statsText);
         }
 
@@ -1061,7 +1123,7 @@ public sealed partial class MainWindow : Window
         return grid;
     }
 
-    private Border CreateMonoDashboardCard(Channel channel)
+    private Border CreateMonoDashboardCard(Channel channel, bool showDelay, DashboardCardTexts texts)
     {
         var card = new Border
         {
@@ -1072,7 +1134,7 @@ public sealed partial class MainWindow : Window
         };
 
         var stack = new StackPanel();
-        stack.Children.Add(CreateChannelHeader(channel, true, 0));
+        stack.Children.Add(CreateChannelHeader(channel, showDelay, 0, texts));
         stack.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(Color.FromArgb(51, channel.Color.R, channel.Color.G, channel.Color.B)) });
         stack.Children.Add(CreateDashboardFilterList(channel));
 
@@ -2545,9 +2607,14 @@ public sealed partial class MainWindow : Window
                     break;
                 case nameof(MainViewModel.ActiveInputChannelCount):
                     // The number of USB input channels changed (Windows format /
-                    // input source) — rebuild the input rows.
+                    // input source) — rebuild the input rows, and the dashboard
+                    // with them since it carries one card per input pair.
                     if (ViewModel.IsDeviceConnected)
+                    {
                         InitializeChannelLists();
+                        if (DashboardPanel.Visibility == Visibility.Visible)
+                            InitializeDashboard();
+                    }
                     break;
                 case nameof(MainViewModel.ErrorMessage):
                     UpdateConnectionStatus();
@@ -2621,6 +2688,8 @@ public sealed partial class MainWindow : Window
             ChannelEditorPanel.Children.Clear();
             DashboardPanel.Visibility = Visibility.Visible;
             DashboardPanel.Children.Clear();
+            _dashboardCardTexts.Clear();
+            RebuildDashboardTextMaps();
         }
         else
         {
