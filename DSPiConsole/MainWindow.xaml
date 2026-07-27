@@ -26,16 +26,30 @@
                 <FontIcon Glyph="&#xE700;" FontSize="14"/>
                 <Button.Flyout>
                     <MenuFlyout Placement="BottomEdgeAlignedLeft" Opening="OnMainMenuOpening">
-                        <MenuFlyoutItem Text="Import Filters..." Click="OnImportFiltersClick">
-                            <MenuFlyoutItem.KeyboardAccelerators>
-                                <KeyboardAccelerator Modifiers="Control" Key="I"/>
-                            </MenuFlyoutItem.KeyboardAccelerators>
-                        </MenuFlyoutItem>
-                        <MenuFlyoutItem Text="Export Filters..." Click="OnExportFiltersClick">
-                            <MenuFlyoutItem.KeyboardAccelerators>
-                                <KeyboardAccelerator Modifiers="Control" Key="E"/>
-                            </MenuFlyoutItem.KeyboardAccelerators>
-                        </MenuFlyoutItem>
+                        <MenuFlyoutSubItem Text="Import">
+                            <MenuFlyoutItem x:Name="ImportPresetMenuItem" Text="Preset File..." Click="OnImportPresetClick">
+                                <MenuFlyoutItem.KeyboardAccelerators>
+                                    <KeyboardAccelerator Modifiers="Control,Shift" Key="I"/>
+                                </MenuFlyoutItem.KeyboardAccelerators>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem Text="Filters..." Click="OnImportFiltersClick">
+                                <MenuFlyoutItem.KeyboardAccelerators>
+                                    <KeyboardAccelerator Modifiers="Control" Key="I"/>
+                                </MenuFlyoutItem.KeyboardAccelerators>
+                            </MenuFlyoutItem>
+                        </MenuFlyoutSubItem>
+                        <MenuFlyoutSubItem Text="Export">
+                            <MenuFlyoutItem x:Name="ExportPresetMenuItem" Text="Preset File..." Click="OnExportPresetClick">
+                                <MenuFlyoutItem.KeyboardAccelerators>
+                                    <KeyboardAccelerator Modifiers="Control,Shift" Key="E"/>
+                                </MenuFlyoutItem.KeyboardAccelerators>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem Text="Filters..." Click="OnExportFiltersClick">
+                                <MenuFlyoutItem.KeyboardAccelerators>
+                                    <KeyboardAccelerator Modifiers="Control" Key="E"/>
+                                </MenuFlyoutItem.KeyboardAccelerators>
+                            </MenuFlyoutItem>
+                        </MenuFlyoutSubItem>
                         <MenuFlyoutSeparator/>
                         <MenuFlyoutSubItem x:Name="AutoEQMenu" Text="AutoEQ">
                             <MenuFlyoutItem Text="Browse Profiles..." Click="OnAutoEQBrowseClick">

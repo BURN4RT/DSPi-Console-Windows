@@ -4308,6 +4308,10 @@ public sealed partial class MainWindow : Window
         // Preset). See output_config_independent_load_spec.md.
         SaveOutputConfigMenuItem.IsEnabled =
             ViewModel.IsDeviceConnected && ViewModel.OutputConfigMode == 0;
+        // A whole-device configuration is captured from, and pushed to, live
+        // device state — neither direction means anything while disconnected.
+        ImportPresetMenuItem.IsEnabled = ViewModel.IsDeviceConnected;
+        ExportPresetMenuItem.IsEnabled = ViewModel.IsDeviceConnected;
     }
 
     private async void OnSaveMasterVolumeClick(object sender, RoutedEventArgs e)
@@ -5213,6 +5217,258 @@ public sealed partial class MainWindow : Window
         {
             await ShowErrorDialog($"Failed to write file: {ex.Message}");
         }
+    }
+
+    // ── Whole-device configuration (.dspipreset) ──
+
+    private async void OnExportPresetClick(object sender, RoutedEventArgs e)
+    {
+        if (!ViewModel.IsDeviceConnected)
+        {
+            await ShowErrorDialog("Not connected to device");
+            return;
+        }
+
+        var picker = new FileSavePicker();
+        picker.SuggestedStartLocation = PickerLocationId.DocumentsLibrary;
+        picker.SuggestedFileName = "DSPi Preset";
+        picker.FileTypeChoices.Add("DSPi Preset File",
+            new List<string> { PresetFileService.FileExtension });
+
+        var hwnd = WindowNative.GetWindowHandle(this);
+        InitializeWithWindow.Initialize(picker, hwnd);
+
+        var file = await picker.PickSaveFileAsync();
+        if (file == null) return;
+
+        try
+        {
+            var doc = PresetFileService.Capture(
+                ViewModel, System.IO.Path.GetFileNameWithoutExtension(file.Name));
+
+            // Firmware version is only available from the device, and the fetch
+            // is a blocking control transfer — keep it off the UI thread and
+            // treat a failure as "unknown" rather than failing the export.
+            var info = await Task.Run(() => ViewModel.Device.GetDeviceInfo());
+            if (info.HasValue)
+            {
+                doc.Meta.FirmwareVersion = info.Value.FirmwareVersion;
+                if (!string.IsNullOrWhiteSpace(info.Value.Platform))
+                    doc.Meta.Platform = info.Value.Platform;
+            }
+
+            await Windows.Storage.FileIO.WriteTextAsync(file, PresetFileService.Serialize(doc));
+
+            int bands = doc.Channels.Sum(c => c.Eq.Count(b => b.Type != 0));
+            int xover = doc.Channels.Sum(c => c.Crossover.Count(b => b.Type != 0));
+            await ShowSuccessDialog(
+                $"Preset file exported.\n\n" +
+                $"{doc.Channels.Count} channels, {bands} active EQ bands, " +
+                $"{xover} crossover bands, {doc.Matrix.Count} crosspoints.");
+        }
+        catch (Exception ex)
+        {
+            await ShowErrorDialog($"Failed to write file: {ex.Message}");
+        }
+    }
+
+    private async void OnImportPresetClick(object sender, RoutedEventArgs e)
+    {
+        if (!ViewModel.IsDeviceConnected)
+        {
+            await ShowErrorDialog("Not connected to device");
+            return;
+        }
+
+        var picker = new FileOpenPicker();
+        picker.SuggestedStartLocation = PickerLocationId.DocumentsLibrary;
+        picker.FileTypeFilter.Add(PresetFileService.FileExtension);
+        picker.FileTypeFilter.Add(".json");
+
+        var hwnd = WindowNative.GetWindowHandle(this);
+        InitializeWithWindow.Initialize(picker, hwnd);
+
+        var file = await picker.PickSingleFileAsync();
+        if (file == null) return;
+
+        PresetDocument doc;
+        try
+        {
+            var json = await Windows.Storage.FileIO.ReadTextAsync(file);
+            doc = PresetFileService.Deserialize(json);
+        }
+        catch (Exception ex)
+        {
+            await ShowErrorDialog($"Failed to read file: {ex.Message}");
+            return;
+        }
+
+        var options = await AskPresetImportOptions(doc);
+        if (options == null) return;
+
+        // The apply issues hundreds of control transfers; unplugging the device
+        // partway through surfaces as a USB exception. Catch it here — this is
+        // an async void handler, so an escaping exception takes the app down,
+        // and the device is left half-configured either way.
+        PresetApplyReport report;
+        try
+        {
+            report = await ApplyPresetWithProgress(doc, options);
+        }
+        catch (Exception ex)
+        {
+            await ShowErrorDialog(
+                $"The import stopped partway through: {ex.Message}\n\n" +
+                "The device now holds a mix of its previous settings and the imported ones. " +
+                "Reconnect and import again, or load a stored preset to get back to a known state.");
+            return;
+        }
+
+        await ShowPresetImportResult(report);
+    }
+
+    /// <summary>
+    /// Ask what to bring in. Audio processing is the point of the file so it is
+    /// fixed on; volume and physical wiring are opt-in, since neither
+    /// necessarily belongs to the machine the file is being applied to.
+    /// </summary>
+    private async Task<PresetApplyOptions?> AskPresetImportOptions(PresetDocument doc)
+    {
+        var volumeCheck = new CheckBox { Content = "Volume levels (master / listening volume)" };
+        var ioCheck = new CheckBox { Content = "Hardware I/O configuration (GPIO pins, clocks, ADAT, inputs)" };
+
+        var panel = new StackPanel { Spacing = 8 };
+
+        var provenance = new List<string>();
+        if (!string.IsNullOrWhiteSpace(doc.Meta.Platform)) provenance.Add(doc.Meta.Platform!);
+        if (!string.IsNullOrWhiteSpace(doc.Meta.FirmwareVersion)) provenance.Add($"firmware {doc.Meta.FirmwareVersion}");
+        if (doc.Meta.SavedUtc != default) provenance.Add(doc.Meta.SavedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
+
+        panel.Children.Add(new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            Text = provenance.Count > 0
+                ? $"Saved from {string.Join(", ", provenance)}."
+                : "Applies the settings in this file to the connected device.",
+        });
+
+        // A document from a device with a different channel count still applies;
+        // say so up front rather than burying it in the result. Only when both
+        // platforms are actually known — MainViewModel.Platform is "" until the
+        // device reports in, and "" is not a mismatch worth warning about.
+        var sourcePlatform = doc.Meta.Platform;
+        if (!string.IsNullOrWhiteSpace(sourcePlatform) &&
+            !string.IsNullOrWhiteSpace(ViewModel.Platform) &&
+            !string.Equals(sourcePlatform, ViewModel.Platform, StringComparison.OrdinalIgnoreCase))
+        {
+            panel.Children.Add(new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Text = $"This file came from a {sourcePlatform} device and you are connected to " +
+                       $"{ViewModel.Platform}. Anything the connected device doesn't have " +
+                       $"will be skipped.",
+                Foreground = (SolidColorBrush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            });
+        }
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = "EQ, crossover, delays, gains, routing and the DSP features are always applied.",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+        });
+        panel.Children.Add(volumeCheck);
+        panel.Children.Add(ioCheck);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Import Preset File",
+            Content = panel,
+            PrimaryButtonText = "Import",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot,
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return null;
+
+        return new PresetApplyOptions
+        {
+            AudioProcessing = true,
+            VolumeLevels = volumeCheck.IsChecked == true,
+            HardwareIo = ioCheck.IsChecked == true,
+        };
+    }
+
+    /// <summary>
+    /// Run the import behind a modal progress dialog. Applying a full document
+    /// is several hundred control transfers, so the window would otherwise sit
+    /// unresponsive-looking for a few seconds with the device half-configured.
+    /// </summary>
+    private async Task<PresetApplyReport> ApplyPresetWithProgress(
+        PresetDocument doc, PresetApplyOptions options)
+    {
+        var bar = new ProgressBar { Minimum = 0, Maximum = 1, Value = 0, Width = 280 };
+        var progressDialog = new ContentDialog
+        {
+            Title = "Importing Preset File",
+            Content = new StackPanel
+            {
+                Spacing = 12,
+                Children =
+                {
+                    new TextBlock { Text = "Writing settings to the device..." },
+                    bar,
+                },
+            },
+            XamlRoot = Content.XamlRoot,
+        };
+
+        var progress = new Progress<double>(v => bar.Value = v);
+        var showTask = progressDialog.ShowAsync();
+
+        PresetApplyReport report;
+        try
+        {
+            report = await PresetFileService.ApplyAsync(doc, ViewModel, options, progress);
+        }
+        finally
+        {
+            progressDialog.Hide();
+            try { await showTask; } catch { }
+        }
+
+        return report;
+    }
+
+    private async Task ShowPresetImportResult(PresetApplyReport report)
+    {
+        var lines = new List<string>
+        {
+            $"Applied {report.ChannelsApplied} channels, {report.BandsApplied} EQ bands, " +
+            $"{report.CrossoverBandsApplied} crossover bands, {report.CrosspointsApplied} crosspoints.",
+        };
+
+        if (report.MissingChannels.Count > 0)
+            lines.Add($"Not present on this device: {string.Join(", ", report.MissingChannels)}");
+
+        foreach (var skipped in report.Skipped)
+            lines.Add($"Skipped: {skipped}");
+
+        // Everything landed in RAM. Saying so avoids the trap of power-cycling
+        // and losing the whole import. "Preset slot" rather than "preset", to
+        // keep it distinct from the file that was just imported.
+        lines.Add("These changes are live but not yet stored on the device. " +
+                  "Save them to a preset slot to keep them.");
+
+        // Anything the device refused or couldn't do isn't a success, so don't
+        // put a "Success" heading over it.
+        bool clean = report.MissingChannels.Count == 0 && report.Skipped.Count == 0;
+        var text = string.Join("\n\n", lines);
+        if (clean)
+            await ShowSuccessDialog(text);
+        else
+            await ShowInfoDialog(text);
     }
 
     #endregion
