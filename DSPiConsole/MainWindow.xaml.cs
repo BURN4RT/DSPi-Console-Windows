@@ -1946,7 +1946,7 @@ public sealed partial class MainWindow : Window
         if (bypassSupported)
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });    // Bypass toggle
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) }); // Type
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(170) }); // Type
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) }); // Freq
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(56) }); // Q
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(54) }); // Gain
@@ -2033,7 +2033,7 @@ public sealed partial class MainWindow : Window
         // bass-extension tool that only makes sense on outputs feeding speakers.
         if (channel.IsOutput && ViewModel.LinkwitzTransformSupported)
             typeItems.Add(("Linkwitz Transform", FilterType.LinkwitzTransform));
-        var typeCombo = new ComboBox { Width = 150, Tag = (channel, bandIndex), Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] };
+        var typeCombo = new ComboBox { Width = 170, Tag = (channel, bandIndex), Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] };
         int selectedTypeIndex = 0; // fall back to "Off" for stray crossover types
         for (int i = 0; i < typeItems.Count; i++)
         {
@@ -2054,6 +2054,7 @@ public sealed partial class MainWindow : Window
             // opens a flyout with all four (matching the macOS popover).
             var ltButton = BuildLinkwitzEditorButton(channel, bandIndex, p);
             ltButton.Opacity = p.Bypass ? 0.4 : 1.0;
+            ltButton.Margin = new Thickness(15, 0, 0, 0); // breathing room off the type combo
             Grid.SetColumn(ltButton, col);   // freq column
             Grid.SetColumnSpan(ltButton, 3); // span freq/Q/gain
             grid.Children.Add(ltButton);
@@ -2439,10 +2440,23 @@ public sealed partial class MainWindow : Window
     private static string FormatFilterValueSigned(float value) =>
         (value >= 0 ? "+" : "") + FormatFilterValue(value);
 
+    // Linkwitz Transform editor limits. f0/fp match the inline frequency field's
+    // range; Qp matches the wire clamp in FilterParams.QpEncoded.
+    private const float LtFreqMin = 20f, LtFreqMax = 20000f;
+    private const float LtQMin = 0.1f, LtQMax = 20f;
+
     /// <summary>A compact button that opens a flyout to edit the four Linkwitz
     /// Transform parameters (driver f0/Q0, target fp/Qp) plus a DC-boost readout.
     /// The four fields don't fit the three inline value columns, so they live in a
-    /// popover (matching the macOS reference).</summary>
+    /// popover (matching the macOS reference).
+    ///
+    /// The popover edits a *draft* and only pushes it to the device on Apply.
+    /// Committing per keystroke (as the inline fields do) was wrong here twice
+    /// over: SetFilter raises FiltersChanged, which rebuilds the channel editor
+    /// and so destroys the button hosting this flyout — the popover snapped shut
+    /// the moment you tabbed or clicked between fields — and a half-typed target
+    /// frequency would reach the speakers in the meantime, where LT's DC boost
+    /// can be tens of dB.</summary>
     private Button BuildLinkwitzEditorButton(Channel channel, int bandIndex, FilterParams p)
     {
         var button = new Button
@@ -2451,10 +2465,14 @@ public sealed partial class MainWindow : Window
             FontSize = 11,
             FontFamily = new FontFamily("Cascadia Code, Consolas"),
             Padding = new Thickness(8, 2, 8, 2),
-            HorizontalAlignment = HorizontalAlignment.Left
+            HorizontalAlignment = HorizontalAlignment.Left,
+            // Match the inline freq/Q/gain fields (InlineValueTextBoxStyle).
+            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
         };
 
-        var content = new StackPanel { Spacing = 10, MinWidth = 260 };
+        var flyout = new Flyout();
+
+        var content = new StackPanel { Spacing = 10, MinWidth = 280 };
         content.Children.Add(new TextBlock
         {
             Text = "Linkwitz Transform",
@@ -2468,25 +2486,150 @@ public sealed partial class MainWindow : Window
             Foreground = (SolidColorBrush)Application.Current.Resources["TextFillColorSecondaryBrush"]
         });
 
-        content.Children.Add(LtRow("Driver",
-            CreateValueField("Hz", p.Frequency, 66, (channel, bandIndex, "freq")),
-            CreateValueField("Q0", p.Q, 56, (channel, bandIndex, "q"), decimals: 3)));
-        content.Children.Add(LtRow("Target",
-            CreateValueField("Hz", p.Gain, 66, (channel, bandIndex, "fp")),
-            CreateValueField("Qp", p.Qp, 56, (channel, bandIndex, "qp"), decimals: 3)));
+        var f0Box = LtValueBox(p.Frequency, 66, 0);
+        var q0Box = LtValueBox(p.Q, 56, 3);
+        var fpBox = LtValueBox(p.Gain, 66, 0);
+        var qpBox = LtValueBox(p.Qp, 56, 3);
 
-        double dcBoost = (p.Gain > 0 && p.Frequency > 0) ? 40.0 * Math.Log10(p.Frequency / p.Gain) : 0.0;
-        content.Children.Add(new TextBlock
+        content.Children.Add(LtRow("Driver", LtLabelled(f0Box, "Hz"), LtLabelled(q0Box, "Q0")));
+        content.Children.Add(LtRow("Target", LtLabelled(fpBox, "Hz"), LtLabelled(qpBox, "Qp")));
+
+        var statusText = new TextBlock { FontSize = 11, TextWrapping = TextWrapping.Wrap };
+        content.Children.Add(statusText);
+
+        var cancelButton = new Button { Content = "Cancel", MinWidth = 80 };
+        var applyButton = new Button
         {
-            Text = $"DC boost ≈ {dcBoost:+0.0;-0.0;0.0} dB",
-            FontSize = 11,
-            Foreground = new SolidColorBrush(dcBoost > 15
-                ? Color.FromArgb(255, 240, 180, 90)
-                : ((SolidColorBrush)Application.Current.Resources["TextFillColorSecondaryBrush"]).Color)
-        });
+            Content = "Apply",
+            MinWidth = 80,
+            Style = Application.Current.Resources.TryGetValue("AccentButtonStyle", out var accent)
+                ? accent as Style
+                : null
+        };
+        var buttonRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+        buttonRow.Children.Add(cancelButton);
+        buttonRow.Children.Add(applyButton);
+        content.Children.Add(buttonRow);
 
-        button.Flyout = new Flyout { Content = content };
+        var warnBrush = new SolidColorBrush(Color.FromArgb(255, 240, 180, 90));
+        var secondaryBrush = (SolidColorBrush)Application.Current.Resources["TextFillColorSecondaryBrush"];
+
+        // Reads the draft out of the four boxes; false if anything is unparseable
+        // or out of range. Non-short-circuiting `&` so every out value is assigned.
+        bool TryReadDraft(out float f0, out float q0, out float fp, out float qp) =>
+            LtTryRead(f0Box, LtFreqMin, LtFreqMax, out f0)
+          & LtTryRead(q0Box, LtQMin, LtQMax, out q0)
+          & LtTryRead(fpBox, LtFreqMin, LtFreqMax, out fp)
+          & LtTryRead(qpBox, LtQMin, LtQMax, out qp);
+
+        void RefreshPreview()
+        {
+            bool valid = TryReadDraft(out float f0, out _, out float fp, out _);
+            applyButton.IsEnabled = valid;
+
+            if (!valid)
+            {
+                statusText.Text = $"f0 and fp: {LtFreqMin:F0}–{LtFreqMax:F0} Hz · Q0 and Qp: {LtQMin:0.#}–{LtQMax:0.#}";
+                statusText.Foreground = warnBrush;
+                return;
+            }
+
+            double dcBoost = 40.0 * Math.Log10(f0 / fp);
+            statusText.Text = $"DC boost ≈ {dcBoost:+0.0;-0.0;0.0} dB";
+            statusText.Foreground = secondaryBrush;
+        }
+
+        void Apply()
+        {
+            if (!TryReadDraft(out float f0, out float q0, out float fp, out float qp)) return;
+
+            var filters = ViewModel.GetFilters(channel);
+            if (bandIndex >= filters.Count) return;
+            var draft = filters[bandIndex].Clone();
+            draft.Frequency = f0;
+            draft.Q = q0;
+            draft.Gain = fp;   // LT carries the target frequency in the gain field
+            draft.Qp = qp;
+
+            // Hide first: SetFilter rebuilds the channel editor out from under
+            // this button, and dismissing an already-orphaned flyout throws.
+            flyout.Hide();
+            _ = ViewModel.SetFilter((int)channel.Id, bandIndex, draft);
+        }
+
+        foreach (var box in new[] { f0Box, q0Box, fpBox, qpBox })
+        {
+            box.TextChanged += (_, _) => RefreshPreview();
+            box.KeyDown += (_, e) =>
+            {
+                if (e.Key == Windows.System.VirtualKey.Enter)
+                {
+                    e.Handled = true;
+                    Apply();
+                }
+                else if (e.Key == Windows.System.VirtualKey.Escape)
+                {
+                    e.Handled = true;
+                    flyout.Hide();
+                }
+            };
+        }
+
+        cancelButton.Click += (_, _) => flyout.Hide();
+        applyButton.Click += (_, _) => Apply();
+
+        // Re-seed from the live filter each time it opens, so a discarded edit
+        // (Cancel or light dismiss) doesn't linger in the boxes.
+        flyout.Opening += (_, _) =>
+        {
+            var filters = ViewModel.GetFilters(channel);
+            if (bandIndex < filters.Count)
+            {
+                var cur = filters[bandIndex];
+                f0Box.Text = FormatFilterValue(cur.Frequency, 0);
+                q0Box.Text = FormatFilterValue(cur.Q, 3);
+                fpBox.Text = FormatFilterValue(cur.Gain, 0);
+                qpBox.Text = FormatFilterValue(cur.Qp, 3);
+            }
+            RefreshPreview();
+        };
+
+        RefreshPreview();
+        flyout.Content = content;
+        button.Flyout = flyout;
         return button;
+    }
+
+    private TextBox LtValueBox(float value, double width, int decimals) => new()
+    {
+        Width = width,
+        Text = FormatFilterValue(value, decimals),
+        FontSize = 13,
+        FontFamily = new FontFamily("Cascadia Code, Consolas"),
+        Style = (Style)RootGrid.Resources["InlineValueTextBoxStyle"]
+    };
+
+    private static bool LtTryRead(TextBox box, float min, float max, out float value) =>
+        float.TryParse(box.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+        && value >= min && value <= max;
+
+    private static StackPanel LtLabelled(TextBox box, string label)
+    {
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+        panel.Children.Add(box);
+        panel.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 10,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TextFillColorTertiaryBrush"],
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        return panel;
     }
 
     private static Grid LtRow(string label, FrameworkElement a, FrameworkElement b)
@@ -3507,7 +3650,35 @@ public sealed partial class MainWindow : Window
                 if (bandIndex < filters.Count)
                 {
                     var p = filters[bandIndex].Clone();
+                    bool wasLt = p.Type.IsLinkwitzTransform();
+                    bool isLt = newType.IsLinkwitzTransform();
                     p.Type = newType;
+
+                    // LT overloads the wire fields — Gain carries fp in *Hz*, Q
+                    // carries the driver Q0 — so the values are not transferable
+                    // in either direction. Carrying an LT band's Gain into a
+                    // peaking band would turn a 30 Hz target into +30 dB of
+                    // boost; carrying a peaking band's Gain into LT would set a
+                    // negative or zero target frequency. Crossing the boundary
+                    // discards them.
+                    if (wasLt && !isLt)
+                    {
+                        // Back to a no-op band. f0 is a genuine frequency, so it
+                        // survives as the new band's centre.
+                        p.Gain = 0f;
+                        p.Q = FilterParams.DefaultQ;
+                        p.Qp = FilterParams.DefaultQp;
+                    }
+                    else if (isLt && !wasLt)
+                    {
+                        // Seed an identity transform (fp == f0, Qp == Q0): audibly
+                        // nothing until the user applies real driver/target values
+                        // in the popover.
+                        p.Q = FilterParams.DefaultQ;
+                        p.Qp = FilterParams.DefaultQ;
+                        p.Gain = p.Frequency;
+                    }
+
                     _ = ViewModel.SetFilter((int)channel.Id, bandIndex, p);
 
                     // Refresh the row (freq/Q/gain field visibility follows the type)
@@ -3566,12 +3737,8 @@ public sealed partial class MainWindow : Window
                         case "gain":
                             p.Gain = Math.Clamp(value, -20, 20);
                             break;
-                        case "fp":   // Linkwitz Transform target freq (Hz, carried in Gain)
-                            p.Gain = Math.Clamp(value, 10, 20000);
-                            break;
-                        case "qp":   // Linkwitz Transform target Q
-                            p.Qp = Math.Clamp(value, 0.1f, 20);
-                            break;
+                        // LT's fp/Qp are not edited inline — they live in the
+                        // Apply/Cancel popover (BuildLinkwitzEditorButton).
                     }
 
                     _ = ViewModel.SetFilter((int)channel.Id, bandIndex, p);
