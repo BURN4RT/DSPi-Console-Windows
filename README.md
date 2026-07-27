@@ -1,8 +1,8 @@
 # DSPi Console for Windows
 
-A native WinUI 3 control application for the [DSPi audio processor](https://github.com/WeebLabs/DSPi), the open
-source DSP firmware that turns a Raspberry Pi Pico (RP2040) or Pico 2 (RP2350) into a capable multi-output USB
-audio interface with an onboard signal processor.
+A native WinUI 3 control application for the [DSPi audio processor](https://github.com/WeebLabs/DSPi), open source
+DSP Firmware that turns a Raspberry Pi Pico (RP2040) or Pico 2 (RP2350) into a capable multi-output USB audio
+interface with an onboard signal processor.
 
 DSPi Console provides complete control over the device: parametric equalisation, active crossovers, routing, time
 alignment, loudness compensation, headphone crossfeed, dynamics processing, bass enhancement, stereo upmixing,
@@ -14,7 +14,7 @@ physical control surfaces and hardware configuration, all applied live over USB 
 
 ## Contents
 
-- [Important: match Console and firmware versions](#important-match-console-and-firmware-versions)
+- [Important: match Console and Firmware versions](#important-match-console-and-firmware-versions)
 - [Getting started](#getting-started)
 - [The main window at a glance](#the-main-window-at-a-glance)
 - [Feature reference](#feature-reference)
@@ -28,12 +28,12 @@ physical control surfaces and hardware configuration, all applied live over USB 
 
 ---
 
-## Important: match Console and firmware versions
+## Important: match Console and Firmware versions
 
-**Run Console and firmware at exactly the same version, including the same beta or hotfix suffix, unless a
+**Run Console and Firmware at exactly the same version, including the same beta or hotfix suffix, unless a
 particular release explicitly states otherwise.**
 
-Console and the firmware share a private USB control protocol that evolves with each release. New parameters,
+Console and Firmware share a private USB control protocol that evolves with each release. New parameters,
 new wire layouts and new bulk-transfer sections are introduced together on both sides. Mixing versions is not a
 supported configuration, and the consequences range from the merely confusing to the potentially damaging:
 
@@ -41,15 +41,15 @@ supported configuration, and the consequences range from the merely confusing to
 - Values are written to the wrong field, so a control that should set a frequency may set a gain instead.
 - Bulk configuration reads are misparsed, which can leave the interface misrepresenting the state of the device.
 
-Every release of DSPi Console names the firmware version against which it is built, and every firmware release
+Every release of DSPi Console names the Firmware version against which it is built, and every Firmware release
 names the Console version that accompanies it. Update both together, and consult the release notes beforehand: if
 a release is compatible with a wider range of versions, it will say so.
 
 Console degrades gracefully where it can. It probes the device for each capability at connection time and hides
-the controls the connected firmware cannot support, rather than issuing commands the device would reject. This
-behaviour is a mitigation, not a substitute for matched versions.
+the controls the connected device's Firmware cannot support, rather than issuing commands the device would reject.
+This behaviour is a mitigation, not a substitute for matched versions.
 
-Firmware releases are published in the [DSPi firmware repository](https://github.com/WeebLabs/DSPi/releases), and
+Firmware releases are published in the [DSPi Firmware repository](https://github.com/WeebLabs/DSPi/releases), and
 Console releases on [this repository's releases page](https://github.com/WeebLabs/DSPi-Console-Windows/releases).
 
 ---
@@ -60,9 +60,9 @@ Console releases on [this repository's releases page](https://github.com/WeebLab
 
 **Hardware**
 
-- A Raspberry Pi Pico (RP2040) or Pico 2 (RP2350) running the DSPi firmware, together with the DACs, amplifiers
-  and optical receivers appropriate to your installation. The
-  [firmware repository](https://github.com/WeebLabs/DSPi) documents the wiring, the default GPIO assignments and
+- A Raspberry Pi Pico (RP2040) or Pico 2 (RP2350) running DSPi Firmware, together with the DACs, amplifiers and
+  optical receivers appropriate to your installation. The
+  [Firmware repository](https://github.com/WeebLabs/DSPi) documents the wiring, the default GPIO assignments and
   the signal chain in detail.
 - A USB cable that carries data. Charge-only cables will not enumerate the device.
 
@@ -72,11 +72,11 @@ Console releases on [this repository's releases page](https://github.com/WeebLab
 - The [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0). The Windows App SDK is bundled
   with the application, so this is the only prerequisite you need to install yourself.
 
-### 2. Install the firmware
+### 2. Install Firmware
 
 If your device is new, or if you are updating to match a new Console release:
 
-1. Download the `.uf2` firmware for your board from the
+1. Download the `.uf2` Firmware image for your board from the
    [DSPi releases page](https://github.com/WeebLabs/DSPi/releases). RP2040 and RP2350 builds are separate files;
    ensure you select the one that matches your board.
 2. Put the board into bootloader mode. On a new board, hold the BOOTSEL button while connecting it to USB. If
@@ -89,7 +89,7 @@ If your device is new, or if you are updating to match a new Console release:
 
 1. Download the latest `DSPi.Console.v<version>.zip` from the
    [releases page](https://github.com/WeebLabs/DSPi-Console-Windows/releases), choosing the release that matches
-   your firmware.
+   your Firmware version.
 2. Extract the archive to a location of your choosing. The application is portable and requires no installer.
 3. Run `DSPiConsole.exe`.
 
@@ -122,8 +122,8 @@ crosspoint carries an independent gain and a phase invert. Routing both input ch
 -6 dB, for example, produces a summed mono feed suitable for a subwoofer. Per-output gain, delay, mute and enable
 controls sit alongside the matrix, and channels can be renamed to reflect their role in your system.
 
-**Align your speakers.** Per-output delay is set in milliseconds from the matrix mixer or the channel editor. The
-firmware compensates automatically for the differing latencies of the S/PDIF, I2S and PDM output paths, so the
+**Align your speakers.** Per-output delay is set in milliseconds from the matrix mixer or the channel editor.
+Firmware compensates automatically for the differing latencies of the S/PDIF, I2S and PDM output paths, so the
 values you enter correspond to acoustic delay.
 
 **Save your work.** Adjustments are applied to the device immediately, but they reside in volatile memory until
@@ -192,7 +192,7 @@ Reset** returns the device to its defaults.
 
 Loudness compensation applies volume-dependent equalisation derived from the ISO 226 equal-loudness contours,
 restoring the bass and treble that the ear loses at low listening levels. The reference SPL and the strength of the
-correction are both adjustable, the resulting curve is drawn live, and on firmware that supports it you may choose
+correction are both adjustable, the resulting curve is drawn live, and on Firmware that supports it you may choose
 precisely which output channels receive the compensation.
 
 ### Headphone crossfeed
@@ -200,7 +200,7 @@ precisely which output channels receive the compensation.
 Crossfeed applies a BS2B-derived process, with optional interaural time delay, that softens the unnaturally wide
 channel separation of headphone listening. Three classic presets are provided (Default, Chu Moy and Jan Meier)
 along with a custom mode that exposes the cutoff frequency and feed level directly. The set of output pairs that
-receives crossfeed is selectable on firmware that supports it.
+receives crossfeed is selectable on Firmware that supports it.
 
 ### Volume leveller
 
@@ -247,12 +247,12 @@ channel names.
 
 ### Input sources and hardware configuration
 
-The device is not limited to USB. Depending on your hardware and firmware, the input source selector offers USB,
+The device is not limited to USB. Depending on your hardware and Firmware, the input source selector offers USB,
 S/PDIF, I2S and ADAT, and the settings window provides a page for each:
 
 - **Mains Outputs** assigns a GPIO pin to each output, with duplicate detection and conflict warnings.
 - **I²S Configuration** covers clock mode, the shared bit and word clocks, and the optional master clock.
-- **S/PDIF Input** configures the receiver, including multiple selectable instances on firmware that supports them,
+- **S/PDIF Input** configures the receiver, including multiple selectable instances on Firmware that supports them,
   and LG Sound Sync, which decodes volume and mute messages sent by LG televisions over TOSLINK.
 - **I2S Input** and **ADAT Input** configure the corresponding digital inputs.
 - **ADAT Output** configures the optical multichannel output on RP2350 devices.
@@ -282,7 +282,7 @@ S/PDIF, I2S and ADAT, and the settings window provides a page for each:
 
 - Peak metering on every channel, with clip indication.
 - Per-core CPU load, which indicates the processing headroom remaining.
-- The statistics window (Ctrl+Shift+T) reports the platform, firmware version and serial number, the system clock,
+- The statistics window (Ctrl+Shift+T) reports the platform, Firmware version and serial number, the system clock,
   core voltage, sample rate and temperature, PDM and S/PDIF error counters, USB audio ring statistics, and buffer
   fill levels with high and low watermarks that can be reset on demand.
 - A bulk endpoint monitor (Ctrl+Shift+B) decodes the raw control traffic between Console and the device. It is
@@ -332,7 +332,7 @@ The settings window is organised into sections:
 - **Presets > UI.** Determines how presets are presented in the main window.
 - **Advanced > Debug.** Provides diagnostic options intended for development and for investigating unexpected
   behaviour.
-- **About.** Shows the application version, the platform and the firmware version reported by the connected device.
+- **About.** Shows the application version, the platform and the Firmware version reported by the connected device.
 
 Settings that must be written to the device are staged rather than applied piecemeal. The settings window shows a
 count of pending device changes, which you may then either save to the device's flash or discard.
@@ -346,12 +346,12 @@ the WinUSB driver. Assigning WinUSB to the vendor interface with a tool such as 
 this applies to the vendor control interface only, and does not affect the standard USB audio interface that
 Windows uses for playback.
 
-**Controls or entire windows are missing.** Console hides any feature for which the connected firmware does not
-report support. This is almost always a version mismatch: confirm that the firmware version matches the Console
-version, including any beta or hotfix suffix.
+**Controls or entire windows are missing.** Console hides any feature for which the connected device's Firmware
+does not report support. This is almost always a version mismatch: confirm that the Firmware version matches the
+Console version, including any beta or hotfix suffix.
 
 **The device is not detected at all.** Verify that the cable carries data, that the device enumerates as a USB
-audio interface in the Windows sound settings, and that the firmware has finished flashing (a board left in
+audio interface in the Windows sound settings, and that Firmware has finished flashing (a board left in
 bootloader mode presents itself as a removable drive rather than an audio device).
 
 **Changes are lost after a power cycle.** Adjustments are applied live but are not persistent until saved. Press
@@ -411,7 +411,7 @@ DSPiConsole-Windows/
 
 ## Related projects
 
-- [DSPi](https://github.com/WeebLabs/DSPi): the firmware itself, along with the hardware documentation, the signal
+- [DSPi](https://github.com/WeebLabs/DSPi): Firmware itself, along with the hardware documentation, the signal
   chain reference and the USB control protocol specification.
 - [DSPi Console for macOS](https://github.com/WeebLabs/DSPi-Console): the macOS application.
 - [DSPi Console for Linux](https://github.com/WeebLabs/DSPi-Console-Linux): a Qt and Rust port for Linux.
