@@ -1,12 +1,12 @@
 # DSPi Console for Windows
 
-A native WinUI 3 control application for the [DSPi audio processor](https://github.com/WeebLabs/DSPi), the open source
-DSP firmware that turns a Raspberry Pi Pico (RP2040) or Pico 2 (RP2350) into a capable multi-output USB audio
-interface with an onboard signal processor.
+A native WinUI 3 control application for the [DSPi audio processor](https://github.com/WeebLabs/DSPi), the open
+source DSP firmware that turns a Raspberry Pi Pico (RP2040) or Pico 2 (RP2350) into a capable multi-output USB
+audio interface with an onboard signal processor.
 
-DSPi Console gives you complete control over the device: parametric equalisation, active crossovers, routing,
-time alignment, loudness compensation, headphone crossfeed, dynamics, bass enhancement, stereo upmixing,
-physical control surfaces and hardware configuration, all applied live over USB with no reflashing required.
+DSPi Console provides complete control over the device: parametric equalisation, active crossovers, routing, time
+alignment, loudness compensation, headphone crossfeed, dynamics processing, bass enhancement, stereo upmixing,
+physical control surfaces and hardware configuration, all applied live over USB and requiring no reflashing.
 
 ![Screenshot](Images/screenshot.png)
 
@@ -14,7 +14,7 @@ physical control surfaces and hardware configuration, all applied live over USB 
 
 ## Contents
 
-- [Important: match your console and firmware versions](#important-match-your-console-and-firmware-versions)
+- [Important: match Console and firmware versions](#important-match-console-and-firmware-versions)
 - [Getting started](#getting-started)
 - [The main window at a glance](#the-main-window-at-a-glance)
 - [Feature reference](#feature-reference)
@@ -28,42 +28,43 @@ physical control surfaces and hardware configuration, all applied live over USB 
 
 ---
 
-## Important: match your console and firmware versions
+## Important: match Console and firmware versions
 
-**Run the console and the firmware at exactly the same version, including the same beta or hotfix suffix, unless a
+**Run Console and firmware at exactly the same version, including the same beta or hotfix suffix, unless a
 particular release explicitly states otherwise.**
 
-The console and the firmware share a private USB control protocol that evolves with each release. New parameters,
+Console and the firmware share a private USB control protocol that evolves with each release. New parameters,
 new wire layouts and new bulk-transfer sections are introduced together on both sides. Mixing versions is not a
-supported configuration and can produce symptoms ranging from the merely confusing to the genuinely unpleasant:
+supported configuration, and the consequences range from the merely confusing to the potentially damaging:
 
 - Features silently disappear from the interface because the device does not answer the capability probe for them.
 - Values are written to the wrong field, so a control that should set a frequency may set a gain instead.
-- Bulk configuration reads are misparsed, which can leave the interface displaying a state the device is not in.
+- Bulk configuration reads are misparsed, which can leave the interface misrepresenting the state of the device.
 
-Every release of DSPi Console names the firmware version it is built against, and every firmware release names the
-console version that accompanies it. Update both together, and read the release notes before you do: if a release
-is compatible with a wider range of versions, it will say so.
+Every release of DSPi Console names the firmware version against which it is built, and every firmware release
+names the Console version that accompanies it. Update both together, and consult the release notes beforehand: if
+a release is compatible with a wider range of versions, it will say so.
 
-The console does its best to fail gracefully. It probes the device for each capability at connection time and hides
-the controls that the connected firmware cannot support, rather than sending commands it will reject. That safety
-net is not a substitute for matched versions.
+Console degrades gracefully where it can. It probes the device for each capability at connection time and hides
+the controls the connected firmware cannot support, rather than issuing commands the device would reject. This
+behaviour is a mitigation, not a substitute for matched versions.
 
-Firmware releases live in the [DSPi firmware repository](https://github.com/WeebLabs/DSPi/releases). Console
-releases live [here](https://github.com/WeebLabs/DSPi-Console-Windows/releases).
+Firmware releases are published in the [DSPi firmware repository](https://github.com/WeebLabs/DSPi/releases), and
+Console releases on [this repository's releases page](https://github.com/WeebLabs/DSPi-Console-Windows/releases).
 
 ---
 
 ## Getting started
 
-### 1. What you need
+### 1. Requirements
 
 **Hardware**
 
-- A Raspberry Pi Pico (RP2040) or Pico 2 (RP2350) running the DSPi firmware, plus whatever DACs, amplifiers or
-  optical receivers your setup calls for. The [firmware repository](https://github.com/WeebLabs/DSPi) documents
-  the wiring, the default GPIO assignments and the signal chain in detail.
-- A USB cable capable of carrying data. Charge-only cables are a common source of confusion.
+- A Raspberry Pi Pico (RP2040) or Pico 2 (RP2350) running the DSPi firmware, together with the DACs, amplifiers
+  and optical receivers appropriate to your installation. The
+  [firmware repository](https://github.com/WeebLabs/DSPi) documents the wiring, the default GPIO assignments and
+  the signal chain in detail.
+- A USB cable that carries data. Charge-only cables will not enumerate the device.
 
 **Software**
 
@@ -73,83 +74,84 @@ releases live [here](https://github.com/WeebLabs/DSPi-Console-Windows/releases).
 
 ### 2. Install the firmware
 
-If your device is new, or if you are updating to match a new console release:
+If your device is new, or if you are updating to match a new Console release:
 
 1. Download the `.uf2` firmware for your board from the
-   [DSPi releases page](https://github.com/WeebLabs/DSPi/releases). RP2040 and RP2350 builds are separate files,
-   so take care to choose the right one.
-2. Put the board into bootloader mode. On a fresh board, hold the BOOTSEL button while connecting it to USB. If
-   DSPi is already running and the console can see it, use **File > Update Firmware**, which reboots the device
-   into its bootloader for you and saves you reaching for the button.
+   [DSPi releases page](https://github.com/WeebLabs/DSPi/releases). RP2040 and RP2350 builds are separate files;
+   ensure you select the one that matches your board.
+2. Put the board into bootloader mode. On a new board, hold the BOOTSEL button while connecting it to USB. If
+   DSPi is already running and Console can see the device, use **File > Update Firmware**, which reboots it into
+   the bootloader without requiring physical access to the button.
 3. The board appears as a removable drive named `RPI-RP2` or similar. Copy the `.uf2` file onto it. The board
    reboots automatically once the copy completes.
 
-### 3. Install the console
+### 3. Install Console
 
 1. Download the latest `DSPi.Console.v<version>.zip` from the
    [releases page](https://github.com/WeebLabs/DSPi-Console-Windows/releases), choosing the release that matches
    your firmware.
-2. Extract the archive to a folder of your choosing. The application is portable and requires no installer.
+2. Extract the archive to a location of your choosing. The application is portable and requires no installer.
 3. Run `DSPiConsole.exe`.
 
 ### 4. Connect
 
-Plug the device in and launch the console. Detection is automatic: the title bar shows the connected device, and
+Connect the device and launch Console. Detection is automatic: the title bar shows the connected device, and
 the sidebar populates with the input and output channels your platform provides. If more than one DSPi device is
-attached, a picker appears so you can choose between them.
+attached, a selection dialog appears.
 
-Windows will also present the device as a standard USB audio interface. Select it as your playback device in the
-Windows sound settings, and choose the format you want in the device's advanced properties. The number of input
-channels the console displays follows the format Windows is streaming, so an eight-channel format gives you eight
+Windows also presents the device as a standard USB audio interface. Select it as your playback device in the
+Windows sound settings, and choose the desired format in the device's advanced properties. The number of input
+channels Console displays follows the format Windows is streaming, so an eight-channel format yields eight
 independently processed input channels.
 
 ### 5. Your first adjustments
 
 **Equalise a channel.** Click a channel in the sidebar to open its editor. Each channel provides ten parametric
 bands. Choose a filter type from the dropdown, then set the frequency, Q and gain. Values accept typed entry,
-respond to the scroll wheel while Ctrl is held, and reset to their default on a right-click. The graph updates as
-you work, and every change is applied to the device immediately. Click the channel again to return to the
+respond to the scroll wheel while Ctrl is held, and reset to their default on a right-click. The graph updates
+continuously, and every change is applied to the device immediately. Click the channel again to return to the
 dashboard.
 
 **Build a crossover.** On an output channel, switch to the crossover tab. Each output provides four crossover
 bands, each configured by family (Linkwitz-Riley, Butterworth or Bessel), type (low pass or high pass) and slope.
-This is what you want for driving an active two-way or three-way system directly from the device's outputs.
+This is the configuration required to drive an active two-way or three-way system directly from the device's
+outputs.
 
 **Route your signal.** Open the matrix mixer with Ctrl+Shift+M. Rows are inputs, columns are outputs, and each
-crosspoint carries an independent gain and a phase invert. Sending both input channels to a single output at
--6 dB, for example, gives you a summed mono feed for a subwoofer. Per-output gain, delay, mute and enable controls
-sit alongside the matrix, and channels can be renamed to something more useful than "SPDIF 1 L".
+crosspoint carries an independent gain and a phase invert. Routing both input channels to a single output at
+-6 dB, for example, produces a summed mono feed suitable for a subwoofer. Per-output gain, delay, mute and enable
+controls sit alongside the matrix, and channels can be renamed to reflect their role in your system.
 
 **Align your speakers.** Per-output delay is set in milliseconds from the matrix mixer or the channel editor. The
-firmware compensates automatically for the differing latencies of the S/PDIF, I2S and PDM output paths, so you are
-setting acoustic delay rather than fighting the hardware.
+firmware compensates automatically for the differing latencies of the S/PDIF, I2S and PDM output paths, so the
+values you enter correspond to acoustic delay.
 
-**Save your work.** Adjustments are applied to the device instantly, but they live in volatile memory until you
-save them. Press Ctrl+S, or use **File > Save Preset**, to commit the current configuration to one of the device's
-ten preset slots so that it survives a power cycle. An asterisk beside the preset selector tells you when there
-are unsaved changes. **File > Revert Preset** discards them and reloads the stored version, and **File > Factory
+**Save your work.** Adjustments are applied to the device immediately, but they reside in volatile memory until
+you save them. Press Ctrl+S, or use **File > Save Preset**, to commit the current configuration to one of the
+device's ten preset slots so that it survives a power cycle. An asterisk beside the preset selector indicates
+unsaved changes. **File > Revert Preset** discards them and reloads the stored version, and **File > Factory
 Reset** returns the device to its defaults.
 
 ---
 
 ## The main window at a glance
 
-- **Sidebar.** Inputs at the top, outputs beneath. Selecting a channel opens its editor; selecting it again
-  returns you to the dashboard. Input pairs can be linked so that edits apply to both halves of a stereo pair at
-  once. Each channel carries a colour that identifies its trace on the graph.
-- **Dashboard.** The default view. One card per channel or channel pair, summarising the filters in use along with
-  live gain, delay and mute state.
-- **Graph.** A hardware-accelerated frequency response plot rendered with Win2D, showing the combined response of
-  every visible channel. Visibility pills below the plot toggle individual channels and remember your choices
-  between sessions. Opening a channel editor narrows the graph to the channel you are working on, and backing out
+- **Sidebar.** Lists the inputs at the top and the outputs beneath. Selecting a channel opens its editor;
+  selecting it again returns you to the dashboard. Input pairs can be linked so that edits apply to both halves of
+  a stereo pair at once. Each channel carries a colour that identifies its trace on the graph.
+- **Dashboard.** The default view, which presents one card per channel or channel pair, summarising the filters in
+  use along with live gain, delay and mute state.
+- **Graph.** A hardware-accelerated frequency response plot, rendered with Win2D, that shows the combined response
+  of every visible channel. Visibility pills below the plot toggle individual channels and retain their state
+  between sessions. Opening a channel editor narrows the graph to that channel; returning to the dashboard
   restores your saved configuration. The graph can also be detached into its own window, which optionally follows
-  the channel you have selected.
-- **Toolbar.** Quick access to the matrix mixer, settings, loudness compensation, crossfeed, psychoacoustic bass,
-  the volume leveller, the statistics window and the master EQ bypass. Left-clicking a processing icon toggles the
-  feature; right-clicking opens its settings window.
-- **Preset selector, source selector and master volume.** Along the bottom of the window: the active preset slot
-  and its dirty indicator, the input source (USB, S/PDIF, I2S or ADAT, according to what the hardware supports),
-  and the device-side master volume.
+  the selected channel.
+- **Toolbar.** Provides direct access to the matrix mixer, settings, loudness compensation, crossfeed,
+  psychoacoustic bass, the volume leveller, the statistics window and the master EQ bypass. Left-clicking a
+  processing icon toggles the feature; right-clicking opens its settings window.
+- **Preset selector, source selector and master volume.** These occupy the foot of the window, and comprise the
+  active preset slot with its dirty indicator, the input source (USB, S/PDIF, I2S or ADAT, according to what the
+  hardware supports), and the device-side master volume.
 
 ---
 
@@ -161,9 +163,10 @@ Reset** returns the device to its defaults.
 - Filter types: peaking, low shelf and high shelf at both 6 dB and 12 dB per octave, low pass, high pass, notch,
   all pass at 6 dB and 12 dB per octave, and Linkwitz Transform.
 - Per-band bypass, so a band can be taken out of circuit without losing its settings.
-- Linkwitz Transform is offered on output channels only, since it exists to reshape a sealed-box driver's roll-off.
+- Linkwitz Transform is offered on output channels only, as it exists to reshape a sealed-box driver's roll-off.
   Its four parameters (driver f0 and Q0, target fp and Qp) are edited in a popover with Cancel and Apply buttons,
-  so a partly entered value never reaches your speakers, and the popover reports the resulting DC boost as you work.
+  so a partially entered value is never applied to your speakers. The popover reports the resulting DC boost as
+  the parameters are edited.
 - Input channels can be linked so that a single edit applies to both halves of a stereo pair.
 
 ### Crossovers
@@ -172,8 +175,8 @@ Reset** returns the device to its defaults.
 - Linkwitz-Riley at 12, 24, 36 and 48 dB per octave.
 - Butterworth from 6 to 48 dB per octave in 6 dB steps.
 - Bessel at 12, 24, 36 and 48 dB per octave.
-- Family, type and slope are chosen from separate pickers, which keeps the common case (an LR4 pair at a given
-  frequency) to a couple of clicks.
+- Family, type and slope are chosen from separate pickers, which reduces the common case (a Linkwitz-Riley
+  fourth-order pair at a given frequency) to a small number of selections.
 
 ### Matrix mixer
 
@@ -183,63 +186,64 @@ Reset** returns the device to its defaults.
 - Editable channel names that propagate throughout the interface, including the dashboard, the graph legend and
   the control surface binding targets.
 - A safety interlock warns before you enable outputs that contend for the same hardware resource.
-- Disabled output columns are dimmed and inert, so it is obvious why a channel is silent.
+- Disabled output columns are dimmed and inert, making the reason for a silent channel immediately apparent.
 
 ### Loudness compensation
 
-Volume-dependent equalisation derived from the ISO 226 equal-loudness contours, which restores the bass and treble
-that the ear loses at low listening levels. The reference SPL and the strength of the correction are both
-adjustable, the resulting curve is drawn live, and on firmware that supports it you can choose exactly which output
-channels the compensation applies to.
+Loudness compensation applies volume-dependent equalisation derived from the ISO 226 equal-loudness contours,
+restoring the bass and treble that the ear loses at low listening levels. The reference SPL and the strength of the
+correction are both adjustable, the resulting curve is drawn live, and on firmware that supports it you may choose
+precisely which output channels receive the compensation.
 
 ### Headphone crossfeed
 
-BS2B-derived crossfeed with optional interaural time delay, which softens the unnaturally wide separation of
-headphone listening. Three classic presets are provided (Default, Chu Moy and Jan Meier) along with a custom mode
-that exposes the cutoff frequency and feed level directly. The set of output pairs that receive crossfeed is
-selectable on firmware that supports it.
+Crossfeed applies a BS2B-derived process, with optional interaural time delay, that softens the unnaturally wide
+channel separation of headphone listening. Three classic presets are provided (Default, Chu Moy and Jan Meier)
+along with a custom mode that exposes the cutoff frequency and feed level directly. The set of output pairs that
+receives crossfeed is selectable on firmware that supports it.
 
 ### Volume leveller
 
-An RMS-based, soft-knee upward compressor that lifts quiet passages toward a target level without ever making loud
-passages louder. Controls cover the amount, the speed (slow, medium or fast), the maximum gain it is permitted to
-apply, a gate threshold below which it stays out of the way, and an optional 10 ms lookahead for cleaner transient
-handling. The channels that feed the shared level detector and the channels the resulting gain is applied to are
-selected independently.
+The volume leveller is an RMS-based, soft-knee upward compressor that lifts quiet passages toward a target level
+without ever making loud passages louder. Controls cover the amount, the speed (slow, medium or fast), the maximum
+gain it is permitted to apply, a gate threshold below which it remains inactive, and an optional 10 ms lookahead
+for improved transient handling. The channels that feed the shared level detector and the channels to which the
+resulting gain is applied are selected independently.
 
 ### Psychoacoustic bass
 
-Missing-fundamental bass enhancement for small speakers, which synthesises a harmonic series that the ear
-interprets as bass the driver cannot physically reproduce. The cutoff frequency, harmonic level, clipper drive,
-even-to-odd harmonic character and the amount of original bass retained are all adjustable, with starting-point
-presets and per-output selection.
+Psychoacoustic bass provides missing-fundamental enhancement for small speakers, synthesising a harmonic series
+that the ear interprets as bass the driver cannot physically reproduce. The cutoff frequency, harmonic level,
+clipper drive, even-to-odd harmonic character and the amount of original bass retained are all adjustable, with
+starting-point presets and per-output selection.
 
 ### Stereo upmixer
 
-Derives centre and surround channels from a stereo source, for RP2350 devices. Centre and surround extraction each
-offer two engine modes (Sinner and Logician) with their own conditioning controls: extraction strength, centre
-width, presence, correlation threshold, attack and release, detector bass cut, surround delay, high-pass and
-low-pass filtering, and decorrelation. A live telemetry strip shows the measured correlation and explains why the
-upmixer is parked whenever it is not producing output. Controls that do not apply to the current mode are hidden
-rather than greyed out, and the matrix mixer labels the derived rows while the upmixer runs.
+The upmixer derives centre and surround channels from a stereo source on RP2350 devices. Centre and surround
+extraction each offer two engine modes (Sinner and Logician) with their own conditioning controls: extraction
+strength, centre width, presence, correlation threshold, attack and release, detector bass cut, surround delay,
+high-pass and low-pass filtering, and decorrelation. A live telemetry strip shows the measured correlation and
+explains why the upmixer is parked whenever it is not producing output. Controls that do not apply to the current
+mode are hidden rather than greyed out, and the matrix mixer labels the derived rows while the upmixer runs.
 
 ### Test signal generator
 
-An onboard generator for calibration and troubleshooting, producing sine, square, white noise, pink noise, and
-logarithmic, linear or stepped sweeps. You choose the target channels and level, and can optionally bypass the DSP
-chain entirely (useful for verifying an output path), decorrelate the channels, or walk the signal through one
-channel at a time. Because the generator runs on the device, it tests the entire output path rather than just
-your computer's playback stack.
+The test signal generator runs on the device itself, and produces sine and square tones, white and pink noise, and
+logarithmic, linear or stepped sweeps for calibration and troubleshooting. The target channels and the level are
+both selectable. The generator can optionally bypass the DSP chain entirely, which is useful for verifying an
+output path in isolation, decorrelate the channels, or step through one channel at a time. Because it runs on the
+device, it exercises the entire output path rather than the host playback stack alone.
 
 ### Control surfaces
 
-Bind physical controls attached to the device's spare GPIO pins to DSP parameters, so the device can be operated
-without a computer. Supported control types are buttons, switches, potentiometers, rotary encoders, plain LEDs,
-PWM LEDs and infrared receivers. Each binding pairs a control with a parameter and an action: absolute adjustment,
-stepped increment or decrement, toggle, set, follow, momentary, trigger, or one of the LED indicator behaviours.
-Parameters cover volume, mute, preset selection, input source, the processing blocks, per-output gain and delay,
-individual filter parameters, and more. Infrared remotes are handled by a learning mode that captures NEC, RC5 and
-RC6 codes directly from your handset. Channel targets are presented using your own channel names.
+Control surfaces bind physical controls attached to the device's spare GPIO pins to DSP parameters, so that the
+device can be operated without a computer. Supported control types are buttons, switches, potentiometers, rotary
+encoders, plain LEDs, PWM LEDs and infrared receivers. Each binding pairs a control with a parameter and an
+action: absolute adjustment, stepped increment or decrement, toggle, set, follow, momentary, trigger, or one of
+the LED indicator behaviours. Parameters include volume, mute, preset selection, input source, the processing
+blocks, per-output gain and delay, and individual filter parameters. Infrared remotes are handled by a learning
+mode that captures NEC, RC5 and RC6 codes directly from the handset. Channel targets are presented using your own
+channel names.
 
 ### Input sources and hardware configuration
 
@@ -252,8 +256,8 @@ S/PDIF, I2S and ADAT, and the settings window provides a page for each:
   and LG Sound Sync, which decodes volume and mute messages sent by LG televisions over TOSLINK.
 - **I2S Input** and **ADAT Input** configure the corresponding digital inputs.
 - **ADAT Output** configures the optical multichannel output on RP2350 devices.
-- **External Mute Control** drives a DAC's hardware mute pin, so muting is genuinely silent rather than merely
-  quiet.
+- **External Mute Control** drives a DAC's hardware mute pin, so that muting produces true silence rather than a
+  low signal level.
 - **Control Interfaces** configures the device's UART and I2C interfaces.
 
 ### Presets and files
@@ -261,28 +265,28 @@ S/PDIF, I2S and ADAT, and the settings window provides a page for each:
 - **Device presets.** Ten slots on the device, each with a user-defined name. Save with Ctrl+S, revert to the
   stored version, or choose which slot loads at startup. Master volume and the physical output configuration can
   each be stored globally or as part of each preset, according to your preference.
-- **Preset files.** Export the entire device configuration to a `.dspipreset` file and import it later or onto
-  another device. A preset file carries the input preamps, volumes, input source, loudness, crossfeed, volume
-  leveller, psychoacoustic bass, upmixer, every channel's name, delay, gain, mute and enable state along with its
-  EQ and crossover bands, every matrix crosspoint, and the physical I/O wiring. Volume levels and I/O
-  configuration are separate opt-ins when importing, disabled by default, and anything the connected device cannot
-  accept is reported rather than dropped silently.
-- **Filter files.** Import and export filter sets in the DSPi multi-channel text format or in Room EQ Wizard (REW)
-  format, which makes it straightforward to bring in a measured room correction. A channel picker lets you choose
-  where an imported file lands.
-- **AutoEQ.** Search the AutoEQ database of over a thousand headphone measurements, apply a profile with its
-  recommended preamp adjustment in a single step, and keep the models you use in a favourites menu. The bundled
-  database can be refreshed from within the application.
+- **Preset files.** The entire device configuration can be exported to a `.dspipreset` file, which may then be
+  imported at a later date or onto another device. A preset file carries the input preamps, volumes, input source,
+  loudness, crossfeed, volume leveller, psychoacoustic bass, upmixer, every channel's name, delay, gain, mute and
+  enable state along with its EQ and crossover bands, every matrix crosspoint, and the physical I/O wiring. Volume
+  levels and I/O configuration are separate options when importing, disabled by default, and anything the
+  connected device cannot accept is reported rather than discarded silently.
+- **Filter files.** Filter sets can be imported and exported in the DSPi multi-channel text format or in Room EQ
+  Wizard (REW) format, which allows a measured room correction to be applied directly. A channel selection dialog
+  determines the channels to which an imported file is applied.
+- **AutoEQ.** Search the AutoEQ database of over a thousand headphone measurements and apply a profile together
+  with its recommended preamp adjustment in a single step. Frequently used models can be kept in a favourites
+  menu, and the bundled database can be refreshed from within the application.
 
 ### Monitoring and diagnostics
 
 - Peak metering on every channel, with clip indication.
-- Per-core CPU load, so you can see how much processing headroom remains.
+- Per-core CPU load, which indicates the processing headroom remaining.
 - The statistics window (Ctrl+Shift+T) reports the platform, firmware version and serial number, the system clock,
   core voltage, sample rate and temperature, PDM and S/PDIF error counters, USB audio ring statistics, and buffer
   fill levels with high and low watermarks that can be reset on demand.
-- A bulk endpoint monitor (Ctrl+Shift+B) decodes the raw control traffic between the console and the device, which
-  is primarily a development aid but is occasionally invaluable when diagnosing an unusual setup.
+- A bulk endpoint monitor (Ctrl+Shift+B) decodes the raw control traffic between Console and the device. It is
+  primarily a development aid, but it is also valuable when diagnosing an unusual configuration.
 
 ---
 
@@ -318,38 +322,39 @@ to adjust it, or right-click to reset it to its default.
 
 The settings window is organised into sections:
 
-- **General > Globals.** Whether master volume is stored globally or per preset, whether the device loads its
-  default preset or the last used preset at startup, and whether the output configuration travels with presets or
-  is saved independently.
-- **Graphing > Style, Scale, and Grid & Labels.** The appearance of the frequency response plot, including its
-  frequency and amplitude ranges, gridlines, labels, and whether inactive channels are drawn as dotted traces.
-- **Hardware.** Output pin assignment, ADAT output, I²S configuration, S/PDIF input, I2S input, ADAT input,
+- **General > Globals.** Determines whether master volume is stored globally or per preset, whether the device
+  loads its default preset or the last used preset at startup, and whether the output configuration travels with
+  presets or is saved independently.
+- **Graphing > Style, Scale and Grid & Labels.** Control the appearance of the frequency response plot, including
+  its frequency and amplitude ranges, gridlines, labels, and whether inactive channels are drawn as dotted traces.
+- **Hardware.** Covers output pin assignment, ADAT output, I²S configuration, S/PDIF input, I2S input, ADAT input,
   external mute control and control interfaces, as described above.
-- **Presets > UI.** How presets are presented in the main window.
-- **Advanced > Debug.** Diagnostic options, intended for development and for chasing down unusual behaviour.
-- **About.** Application version, platform and the firmware version reported by the connected device.
+- **Presets > UI.** Determines how presets are presented in the main window.
+- **Advanced > Debug.** Provides diagnostic options intended for development and for investigating unexpected
+  behaviour.
+- **About.** Shows the application version, the platform and the firmware version reported by the connected device.
 
 Settings that must be written to the device are staged rather than applied piecemeal. The settings window shows a
-count of pending device changes, which you then either save to the device's flash or discard.
+count of pending device changes, which you may then either save to the device's flash or discard.
 
 ---
 
 ## Troubleshooting
 
-**The console reports that no USB devices are visible to libusb.** The DSPi vendor interface has not been bound to
+**Console reports that no USB devices are visible to libusb.** The DSPi vendor interface has not been bound to
 the WinUSB driver. Assigning WinUSB to the vendor interface with a tool such as Zadig resolves this. Note that
 this applies to the vendor control interface only, and does not affect the standard USB audio interface that
 Windows uses for playback.
 
-**Controls or entire windows are missing.** The console hides anything the connected firmware does not report
-support for. This is nearly always a version mismatch: confirm that the firmware version matches the console
+**Controls or entire windows are missing.** Console hides any feature for which the connected firmware does not
+report support. This is almost always a version mismatch: confirm that the firmware version matches the Console
 version, including any beta or hotfix suffix.
 
-**The device is not detected at all.** Confirm the cable carries data, confirm the device enumerates as a USB
-audio interface in the Windows sound settings, and confirm that the firmware finished flashing (a board left in
+**The device is not detected at all.** Verify that the cable carries data, that the device enumerates as a USB
+audio interface in the Windows sound settings, and that the firmware has finished flashing (a board left in
 bootloader mode presents itself as a removable drive rather than an audio device).
 
-**Changes disappear after a power cycle.** Adjustments are applied live but are not persistent until saved. Press
+**Changes are lost after a power cycle.** Adjustments are applied live but are not persistent until saved. Press
 Ctrl+S to write the current configuration to a preset slot.
 
 ---
@@ -410,8 +415,9 @@ DSPiConsole-Windows/
   chain reference and the USB control protocol specification.
 - [DSPi Console for macOS](https://github.com/WeebLabs/DSPi-Console): the macOS application.
 - [DSPi Console for Linux](https://github.com/WeebLabs/DSPi-Console-Linux): a Qt and Rust port for Linux.
-- [dspictl](https://github.com/WeebLabs/dspictl): command line control, useful for scripting and automation.
-- [DSPiCliRemote](https://github.com/WeebLabs/DSPiCliRemote): web and app based remote control.
+- [dspictl](https://github.com/WeebLabs/dspictl): command line control, which is useful for scripting and
+  automation.
+- [DSPiCliRemote](https://github.com/WeebLabs/DSPiCliRemote): web- and application-based remote control.
 
 The [official Discord server](https://discord.gg/RCyqxAQ5xS) is the best place for development updates,
 discussion and assistance.
@@ -422,6 +428,6 @@ discussion and assistance.
 
 Released under the GNU General Public License v3.0.
 
-- Headphone correction profiles come from the [AutoEQ project](https://github.com/jaakkopasanen/AutoEq).
+- Headphone correction profiles are drawn from the [AutoEQ project](https://github.com/jaakkopasanen/AutoEq).
 - Crossfeed is derived from the BS2B algorithm.
 - Loudness compensation follows the ISO 226:2003 equal-loudness contours.
