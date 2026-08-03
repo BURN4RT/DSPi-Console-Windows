@@ -153,7 +153,7 @@ internal static class HardwarePins
         {
             if (vm.MultiSpdifSupported)
             {
-                for (int i = 0; i < MainViewModel.SpdifRxNumInputs; i++)
+                for (int i = 0; i < vm.SpdifInputCount; i++)
                 {
                     if (i == excludeSpdifRxIndex) continue;
                     if (excludeSpdifRxSelf && i == 0) continue;

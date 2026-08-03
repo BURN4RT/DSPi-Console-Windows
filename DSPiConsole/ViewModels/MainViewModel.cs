@@ -73,13 +73,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private byte _i2sRxPin = 4;       // firmware default (PICO_I2S_RX_PIN_DEFAULT)
     private uint _i2sInputRateHz = 48000; // selected I2S-input master rate
 
-    // Multiple SPDIF inputs (firmware v1.1.5+). Always 3 selectable inputs sharing
+    // Multiple SPDIF inputs (firmware v1.1.5+). Several selectable inputs share
     // one receiver; input 0 (_spdifRxPin) is always enabled. Ext arrays cover
-    // inputs 1 (SPDIF2) and 2 (SPDIF3). _spdifEnabledExt is the 2-bit enable mask
-    // (bit0 = SPDIF2, bit1 = SPDIF3).
-    private readonly byte[] _spdifRxPinsExt = { 20, 21 }; // SPDIF2, SPDIF3 pin defaults
-    private byte _spdifEnabledExt;                        // bit0=SPDIF2, bit1=SPDIF3
-    public const int SpdifRxNumInputs = 3;
+    // inputs 1..3 (SPDIF2/3/4). _spdifEnabledExt is the enable mask (bit0 =
+    // SPDIF2 .. bit2 = SPDIF4). How many inputs exist is the device's answer,
+    // not ours: firmware carried 3 before wire V28 and 4 from V28, so
+    // SpdifInputCount tracks REQ_GET_SPDIF_INPUT_CONFIG and SpdifRxNumInputs is
+    // only the ceiling this client can represent.
+    private readonly byte[] _spdifRxPinsExt = { 20, 21, 22 }; // SPDIF2/3/4 pin defaults
+    private byte _spdifEnabledExt;                            // bit0=SPDIF2 .. bit2=SPDIF4
+    public const int SpdifRxNumInputs = DspDevice.MaxSpdifInputs;
+    private int _spdifInputCount = 3;   // until 0xEF answers
 
     // Multichannel I2S input (RP2350). N channels use N/2 stereo pairs; pair 0
     // uses _i2sRxPin, pairs 1..3 use the ext pins.
@@ -1166,11 +1170,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     // ── Multiple SPDIF inputs ──
-    // Accessors are index-based (0..2); input 0 is always enabled. PropertyChanged
-    // for SpdifRxPin doubles as the "SPDIF input config changed" signal — pages
-    // re-read the pins/enables through these accessors on it.
+    // Accessors are index-based (0..SpdifInputCount-1); input 0 is always enabled.
+    // PropertyChanged for SpdifRxPin doubles as the "SPDIF input config changed"
+    // signal — pages re-read the pins/enables through these accessors on it.
 
-    /// <summary>GPIO pin for SPDIF input <paramref name="index"/> (0..2).</summary>
+    /// <summary>How many selectable S/PDIF inputs the connected firmware has
+    /// (3 before wire V28, 4 from V28). Reported by the device, never assumed.</summary>
+    public int SpdifInputCount => _spdifInputCount;
+
+    /// <summary>GPIO pin for SPDIF input <paramref name="index"/>.</summary>
     public byte SpdifRxPinAt(int index) =>
         index <= 0 ? _spdifRxPin
         : index - 1 < _spdifRxPinsExt.Length ? _spdifRxPinsExt[index - 1]
@@ -1178,15 +1186,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>Whether SPDIF input <paramref name="index"/> is enabled (input 0 always is).</summary>
     public bool SpdifInputEnabled(int index) =>
-        index <= 0 || (index - 1 < 2 && (_spdifEnabledExt & (1 << (index - 1))) != 0);
+        index <= 0 || (index - 1 < _spdifRxPinsExt.Length
+                       && (_spdifEnabledExt & (1 << (index - 1))) != 0);
 
-    /// <summary>Contiguously-enabled SPDIF input count (1..3) — the "Instances" value.</summary>
+    /// <summary>Contiguously-enabled SPDIF input count — the "Instances" value.</summary>
     public int SpdifEnabledCount
     {
         get
         {
             int count = 1; // input 0 always on
-            for (int i = 1; i < SpdifRxNumInputs; i++)
+            for (int i = 1; i < _spdifInputCount; i++)
                 if (SpdifInputEnabled(i)) count = i + 1;
             return count;
         }
@@ -1209,20 +1218,25 @@ public partial class MainViewModel : ObservableObject, IDisposable
             FetchSpdifRxPin();
             return;
         }
-        var (_, mask, pins) = cfg.Value;
-        _spdifRxPin = pins[0];
-        _spdifRxPinsExt[0] = pins[1];
-        _spdifRxPinsExt[1] = pins[2];
-        // 0xEF byte1 mask is (ext<<1)|1: bit1=SPDIF2, bit2=SPDIF3.
-        _spdifEnabledExt = (byte)((mask >> 1) & 0x03);
+        var (count, mask, pins) = cfg.Value;
+        // Trust the device's count, bounded by what it actually sent and by what
+        // this client can hold, so a firmware with more inputs than we know about
+        // degrades to the ones we can address instead of indexing past the array.
+        _spdifInputCount = Math.Clamp(Math.Min(count, pins.Length), 1, SpdifRxNumInputs);
+        if (pins.Length > 0) _spdifRxPin = pins[0];
+        for (int i = 1; i < _spdifInputCount; i++)
+            _spdifRxPinsExt[i - 1] = pins[i];
+        // 0xEF byte1 mask is (ext<<1)|1: bit1=SPDIF2 .. bit3=SPDIF4.
+        _spdifEnabledExt = (byte)((mask >> 1) & 0x07);
         _dispatcher.TryEnqueue(() =>
         {
             MultiSpdifSupported = true;
+            OnPropertyChanged(nameof(SpdifInputCount));
             OnPropertyChanged(nameof(SpdifRxPin));
         });
     }
 
-    /// <summary>Set the GPIO pin for SPDIF input <paramref name="index"/> (0..2).</summary>
+    /// <summary>Set the GPIO pin for SPDIF input <paramref name="index"/>.</summary>
     public byte SetSpdifRxPin(byte pin, int index = 0)
     {
         byte before = SpdifRxPinAt(index);
@@ -1238,7 +1252,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         return status;
     }
 
-    /// <summary>Enable/disable optional SPDIF input <paramref name="index"/> (1..2).</summary>
+    /// <summary>Enable/disable optional SPDIF input <paramref name="index"/> (1..3).</summary>
     public byte SetSpdifInputEnable(int index, bool enable)
     {
         bool before = SpdifInputEnabled(index);
@@ -1254,18 +1268,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
         return status;
     }
 
-    /// <summary>Set the number of active SPDIF inputs (1..3): enable inputs
+    /// <summary>Set the number of active SPDIF inputs: enable inputs
     /// 1..target-1, disable inputs &gt;= target. Returns the first failing status
     /// (or Success), then re-syncs from the device.</summary>
     public byte SetSpdifInputCount(int target)
     {
         byte result = PinConfigResult.Success;
-        for (int i = 1; i < target && i < SpdifRxNumInputs; i++)
+        for (int i = 1; i < target && i < _spdifInputCount; i++)
         {
             var s = SetSpdifInputEnable(i, true);
             if (s != PinConfigResult.Success && result == PinConfigResult.Success) result = s;
         }
-        for (int i = SpdifRxNumInputs - 1; i >= target; i--)
+        for (int i = _spdifInputCount - 1; i >= target; i--)
         {
             var s = SetSpdifInputEnable(i, false);
             if (s != PinConfigResult.Success && result == PinConfigResult.Success) result = s;
@@ -1700,11 +1714,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             _spdifRxPin = bp.SpdifRxPin;
             // Multiple SPDIF inputs — bulk carries the ext pins + enable mask.
+            // The pin array is one entry shorter before wire V28 (no S/PDIF 4).
             if (bp.HasSpdifExtInputs)
             {
-                _spdifRxPinsExt[0] = bp.SpdifRxPinExt[0];
-                _spdifRxPinsExt[1] = bp.SpdifRxPinExt[1];
+                int n = Math.Min(bp.SpdifRxPinExt.Length, _spdifRxPinsExt.Length);
+                for (int i = 0; i < n; i++)
+                    _spdifRxPinsExt[i] = bp.SpdifRxPinExt[i];
                 _spdifEnabledExt = bp.SpdifRxEnabledExt;
+                _spdifInputCount = n + 1;
             }
         }
         // I2S input data pin + master rate (V12+ wire format)
@@ -1831,9 +1848,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
             VisibilityChanged?.Invoke(this, EventArgs.Empty);
             FiltersChanged?.Invoke(this, EventArgs.Empty);
 
+            // Every source the firmware can report, including the optional S/PDIF
+            // inputs — a device sitting on S/PDIF 2 must not read back as unknown.
             if (bulkInputSource is { } src &&
-                (src == InputSource.Usb || src == InputSource.Spdif || src == InputSource.I2s
-                 || src == InputSource.Adat))
+                src is InputSource.Usb or InputSource.Spdif or InputSource.I2s
+                    or InputSource.Adat or InputSource.Spdif2 or InputSource.Spdif3
+                    or InputSource.Spdif4)
             {
                 if (ActiveInputSource != src)
                     ActiveInputSource = src;

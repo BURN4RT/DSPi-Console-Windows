@@ -410,6 +410,8 @@
                                           Visibility="Collapsed" />
                             <ComboBoxItem x:Name="SourceSpdif3Item" Content="S/PDIF 3" Tag="5"
                                           Visibility="Collapsed" />
+                            <ComboBoxItem x:Name="SourceSpdif4Item" Content="S/PDIF 4" Tag="6"
+                                          Visibility="Collapsed" />
                             <ComboBoxItem x:Name="SourceI2sItem" Content="I2S" Tag="2" />
                             <ComboBoxItem x:Name="SourceAdatItem" Content="ADAT" Tag="3"
                                           Visibility="Collapsed" />

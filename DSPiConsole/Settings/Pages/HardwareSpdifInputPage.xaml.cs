@@ -11,21 +11,26 @@ using Windows.UI;
 namespace DSPiConsole.Settings.Pages;
 
 /// <summary>
-/// Hardware › S/PDIF Input. An "Instances" selector (1..3) on firmware that
-/// exposes multiple selectable inputs, one conflict-aware RX pin combo per
-/// active input, and the LG Sound Sync toggle. Only registered in the sidebar
-/// when the connected firmware supports input-source switching (V7+).
+/// Hardware › S/PDIF Input. An "Instances" selector on firmware that exposes
+/// multiple selectable inputs, one conflict-aware RX pin combo per active
+/// input, and the LG Sound Sync toggle. How many inputs the firmware has is
+/// device-reported (3 before wire V28, 4 from V28), so the fourth instance and
+/// card stay hidden on older firmware. Only registered in the sidebar when the
+/// connected firmware supports input-source switching (V7+).
 /// </summary>
 public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPage
 {
     private bool _suppress;
-    private ComboBox[] _pinCombos = System.Array.Empty<ComboBox>();
+    private readonly ComboBox[] _pinCombos;
+    private readonly Microsoft.UI.Xaml.FrameworkElement[] _pinCards;
 
     public HardwareSpdifInputPage()
     {
         InitializeComponent();
 
-        _pinCombos = new[] { RxPinCombo0, RxPinCombo1, RxPinCombo2 };
+        _pinCombos = new[] { RxPinCombo0, RxPinCombo1, RxPinCombo2, RxPinCombo3 };
+        _pinCards = new Microsoft.UI.Xaml.FrameworkElement[]
+            { RxPinCard0, RxPinCard1, RxPinCard2, RxPinCard3 };
 
         // Populate each RX pin combo once with every ValidPins entry and tag the
         // combo with its input index. RefreshConflicts only toggles IsEnabled /
@@ -77,6 +82,7 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MainViewModel.SpdifRxPin)
+            || e.PropertyName == nameof(MainViewModel.SpdifInputCount)
             || e.PropertyName == nameof(MainViewModel.MultiSpdifSupported)
             || e.PropertyName == nameof(MainViewModel.LgSoundSyncEnabled)
             || e.PropertyName == nameof(MainViewModel.LgSoundSyncSupported))
@@ -91,15 +97,19 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
 
         bool multi = Vm.MultiSpdifSupported;
         int count = multi ? Vm.SpdifEnabledCount : 1;
+        int available = multi ? Vm.SpdifInputCount : 1;
 
         InstancesCard.Visibility = multi ? Visibility.Visible : Visibility.Collapsed;
+        // The fourth instance only exists on firmware that reports four inputs.
+        Instances4Item.Visibility = available >= 4 ? Visibility.Visible : Visibility.Collapsed;
         _suppress = true;
-        try { InstancesCombo.SelectedIndex = System.Math.Clamp(count - 1, 0, 2); }
+        try { InstancesCombo.SelectedIndex = System.Math.Clamp(count - 1, 0, available - 1); }
         finally { _suppress = false; }
 
         RxPinCard0.Header = multi ? "S/PDIF 1 Input" : "S/PDIF Input";
-        RxPinCard1.Visibility = (multi && count >= 2) ? Visibility.Visible : Visibility.Collapsed;
-        RxPinCard2.Visibility = (multi && count >= 3) ? Visibility.Visible : Visibility.Collapsed;
+        for (int i = 1; i < _pinCards.Length; i++)
+            _pinCards[i].Visibility = (multi && count > i && available > i)
+                ? Visibility.Visible : Visibility.Collapsed;
 
         RefreshConflicts();
         RefreshLgSoundSync();

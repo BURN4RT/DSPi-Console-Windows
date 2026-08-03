@@ -504,7 +504,11 @@ public static class PresetDiff
             string Name(InputSource s) => s switch
             {
                 InputSource.Spdif => "S/PDIF",
+                InputSource.Spdif2 => "S/PDIF 2",
+                InputSource.Spdif3 => "S/PDIF 3",
+                InputSource.Spdif4 => "S/PDIF 4",
                 InputSource.I2s => "I2S",
+                InputSource.Adat => "ADAT",
                 _ => "USB"
             };
             changes.Add($"Input source: {Name(old.InputSource)} → {Name(cur.InputSource)}");

@@ -224,10 +224,13 @@ public sealed class PresetIoBlock
     public byte I2sClockPinMode { get; set; }   // 0=unified, 1=split
     public byte I2sBckPinSlave { get; set; }
 
-    /// <summary>S/PDIF RX GPIOs for inputs 1..3 (index 0 is the primary).</summary>
-    public byte[] SpdifRxPins { get; set; } = new byte[3];
+    /// <summary>S/PDIF RX GPIOs for inputs 1..4 (index 0 is the primary). Files
+    /// written before the fourth input carry three entries; readers must use the
+    /// array's own length rather than assuming.</summary>
+    public byte[] SpdifRxPins { get; set; } = new byte[4];
 
-    /// <summary>2-bit enable mask for the optional S/PDIF inputs 2 and 3.</summary>
+    /// <summary>Enable mask for the optional S/PDIF inputs: bit 0 = input 2,
+    /// bit 1 = input 3, bit 2 = input 4.</summary>
     public byte SpdifEnabledExt { get; set; }
 
     /// <summary>I2S RX data GPIOs for pairs 0..3.</summary>

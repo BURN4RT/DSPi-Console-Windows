@@ -235,7 +235,10 @@ public static class PresetFileService
 
         for (int i = 0; i < io.SpdifRxPins.Length; i++)
             io.SpdifRxPins[i] = vm.SpdifRxPinAt(i);
-        io.SpdifEnabledExt = (byte)((vm.SpdifInputEnabled(1) ? 1 : 0) | (vm.SpdifInputEnabled(2) ? 2 : 0));
+        byte spdifMask = 0;
+        for (int i = 1; i < io.SpdifRxPins.Length; i++)
+            if (vm.SpdifInputEnabled(i)) spdifMask |= (byte)(1 << (i - 1));
+        io.SpdifEnabledExt = spdifMask;
 
         for (int pair = 0; pair < io.I2sRxPins.Length; pair++)
             io.I2sRxPins[pair] = vm.I2sRxPinAt(pair);
@@ -726,22 +729,26 @@ public static class PresetFileService
             Try("I2S slave BCK pin", () => vm.SetI2sBckPinSlave(io.I2sBckPinSlave));
         }
 
-        // S/PDIF inputs: pins first, then the enable mask, so an input being
-        // switched on is already pointed at the right GPIO.
-        Try("S/PDIF RX pin", () => vm.SetSpdifRxPin(io.SpdifRxPins[0]));
+        // S/PDIF inputs: each input's pin lands before its enable, so an input
+        // being switched on is already pointed at the right GPIO.
+        if (io.SpdifRxPins.Length > 0)
+            Try("S/PDIF RX pin", () => vm.SetSpdifRxPin(io.SpdifRxPins[0]));
         if (vm.MultiSpdifSupported)
         {
-            for (int i = 1; i < io.SpdifRxPins.Length; i++)
+            // A file may carry fewer inputs than the device has (written before
+            // the fourth input) or more than it has (written on newer firmware);
+            // apply only the overlap and report the rest as rejected.
+            int applied = Math.Min(io.SpdifRxPins.Length, vm.SpdifInputCount);
+            for (int i = 1; i < applied; i++)
             {
                 int idx = i;
                 Try($"S/PDIF {idx + 1} RX pin", () => vm.SetSpdifRxPin(io.SpdifRxPins[idx], idx));
-            }
-            for (int i = 1; i <= 2; i++)
-            {
-                int idx = i;
                 Try($"S/PDIF input {idx + 1}",
                     () => vm.SetSpdifInputEnable(idx, (io.SpdifEnabledExt & (1 << (idx - 1))) != 0));
             }
+            int extraBits = io.SpdifEnabledExt >> Math.Max(applied - 1, 0);
+            if (extraBits != 0)
+                rejections.Add("S/PDIF inputs beyond this firmware's count");
         }
         else if (io.SpdifEnabledExt != 0)
         {

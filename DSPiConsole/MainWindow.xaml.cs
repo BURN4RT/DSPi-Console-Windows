@@ -3918,6 +3918,7 @@ public sealed partial class MainWindow : Window
             SourceSpdifItem.Content = spdifLabel;
             SourceSpdif2Item.Visibility = spdifCount >= 2 ? Visibility.Visible : Visibility.Collapsed;
             SourceSpdif3Item.Visibility = spdifCount >= 3 ? Visibility.Visible : Visibility.Collapsed;
+            SourceSpdif4Item.Visibility = spdifCount >= 4 ? Visibility.Visible : Visibility.Collapsed;
 
             // The closed combo caches its selection-box content, so renaming the
             // selected item doesn't repaint until the dropdown opens. Bounce the
@@ -3962,7 +3963,7 @@ public sealed partial class MainWindow : Window
         if (!ViewModel.IsDeviceConnected || !ViewModel.InputSourceSupported) return;
         if (SourceComboBox.SelectedItem is not ComboBoxItem item) return;
 
-        // Tag is the InputSource value ("0".."5") from XAML — parse to InputSource.
+        // Tag is the InputSource value ("0".."6") from XAML — parse to InputSource.
         if (!byte.TryParse(item.Tag?.ToString(), out var raw)) return;
         var target = (DSPiConsole.Usb.InputSource)raw;
         if (target == ViewModel.ActiveInputSource) return;

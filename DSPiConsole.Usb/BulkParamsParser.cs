@@ -123,8 +123,8 @@ public class BulkParams
     public bool HasI2sInputConfig;
 
     // Optional SPDIF inputs 2/3 (stored enable-mask PLUS ONE on the wire).
-    public byte[] SpdifRxPinExt = new byte[2];      // SPDIF RX 2/3 GPIOs (0 = absent)
-    public byte SpdifRxEnabledExt;                  // decoded enable mask (0 = both disabled)
+    public byte[] SpdifRxPinExt = new byte[2];      // SPDIF RX 2/3/4 GPIOs (0 = absent); 3 entries at V28+
+    public byte SpdifRxEnabledExt;                  // decoded enable mask (0 = all disabled)
     public bool HasSpdifExtInputs;
 
     // I2S clock master/slave mode (input-config byte, V21+). 0=master, 1=slave.
@@ -202,7 +202,7 @@ public static class BulkParamsParser
     public const int PacketSizeV24 = 5900;       // sizeof(WireBulkParams) at V24 (+psybass)
     public const int PacketSizeV26 = 5944;       // sizeof(WireBulkParams) at V25-V27 (+upmix)
     public const byte MinFormatVersion = 16;     // unified channel model floor
-    public const byte CurrentFormatVersion = 27; // V27: upmix centre mode gains OFF (enum only)
+    public const byte CurrentFormatVersion = 28; // V28: fourth selectable S/PDIF input
 
     // Raw wire value of FILTER_LINKWITZ_TRANSFORM (FilterType.LinkwitzTransform).
     // Referenced by value here so band decoding is independent of the Core enum.
@@ -374,7 +374,10 @@ public static class BulkParamsParser
         // ── Input source config (16 bytes) ──
         // WireInputConfig: input_source(1), spdif_rx_pin(1), i2s_rx_pin(1),
         // i2s_input_rate(1), i2s_input_channels(1), i2s_rx_pin_ext[3],
-        // spdif_rx_pin_ext[2], spdif_rx_enabled_ext_p1(1), reserved[5].
+        // spdif_rx_pin_ext[N], spdif_rx_enabled_ext_p1(1), i2s_clock_mode(1),
+        // adat_input_pin(1), adat_input_enabled_p1(1), adat_clock_mode_p1(1).
+        // V28 grew spdif_rx_pin_ext from 2 to 3 entries (S/PDIF 4), consuming the
+        // section's last reserved byte and pushing every field after it down one.
         p.HasInputConfig = true;
         p.InputSource = buffer[OffsetInputCfg + 0];
         p.SpdifRxPin = buffer[OffsetInputCfg + 1];
@@ -385,33 +388,36 @@ public static class BulkParamsParser
         p.I2sRxPinExt = new byte[3];
         for (int i = 0; i < 3; i++)
             p.I2sRxPinExt[i] = buffer[OffsetInputCfg + 5 + i];
-        p.SpdifRxPinExt = new byte[2];
-        p.SpdifRxPinExt[0] = buffer[OffsetInputCfg + 8];
-        p.SpdifRxPinExt[1] = buffer[OffsetInputCfg + 9];
+        int spdifExtCount = p.FormatVersion >= 28 ? 3 : 2;
+        p.SpdifRxPinExt = new byte[spdifExtCount];
+        for (int i = 0; i < spdifExtCount; i++)
+            p.SpdifRxPinExt[i] = buffer[OffsetInputCfg + 8 + i];
+        // Everything below the pin array shifts with its length.
+        int tail = OffsetInputCfg + 8 + spdifExtCount;
         // Enable mask is stored PLUS ONE (0 = absent/keep-live); decode by subtracting 1.
-        byte spdifEnP1 = buffer[OffsetInputCfg + 10];
+        byte spdifEnP1 = buffer[tail + 0];
         if (spdifEnP1 != 0)
         {
             p.HasSpdifExtInputs = true;
             p.SpdifRxEnabledExt = (byte)(spdifEnP1 - 1);
         }
 
-        // I2S clock master/slave mode (V21+, plain 0/1 at +11).
+        // I2S clock master/slave mode (V21+, plain 0/1).
         if (p.FormatVersion >= 21)
         {
             p.HasI2sClockMode = true;
-            p.I2sClockMode = buffer[OffsetInputCfg + 11];
+            p.I2sClockMode = buffer[tail + 1];
         }
 
-        // ADAT input (V24+, RP2350). pin @+12 (0xFF = unset), enable @+13 (+1),
-        // clock mode @+14 (+1). enable/clock are +1-encoded so 0 = absent.
+        // ADAT input (V24+, RP2350). pin (0xFF = unset), then enable and clock
+        // mode, both +1-encoded so 0 = absent.
         if (p.FormatVersion >= 24)
         {
             p.HasAdatInput = true;
-            p.AdatInputPin = buffer[OffsetInputCfg + 12];
-            byte adatEnP1 = buffer[OffsetInputCfg + 13];
+            p.AdatInputPin = buffer[tail + 2];
+            byte adatEnP1 = buffer[tail + 3];
             p.AdatInputEnabled = adatEnP1 == 2;   // 1=disabled, 2=enabled
-            byte adatClkP1 = buffer[OffsetInputCfg + 14];
+            byte adatClkP1 = buffer[tail + 4];
             p.AdatInputClockMode = (byte)(adatClkP1 == 2 ? 1 : 0); // 1=master, 2=slave
         }
 

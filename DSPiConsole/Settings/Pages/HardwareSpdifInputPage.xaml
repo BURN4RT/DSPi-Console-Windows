@@ -8,9 +8,11 @@
 
     <!--
         S/PDIF Input page.
-          - Instances: number of selectable S/PDIF inputs (1..3) sharing one
-            receiver (firmware v1.1.5+; hidden on older firmware). Driving the
-            count enables/disables the optional inputs.
+          - Instances: number of selectable S/PDIF inputs sharing one receiver
+            (firmware v1.1.5+; hidden on older firmware). Driving the count
+            enables/disables the optional inputs. How many the firmware offers
+            is device-reported (3 before wire V28, 4 from V28), so the fourth
+            entry and card only appear when the device has them.
           - One RX pin card per active input; hot-swappable while active.
           - LG Sound Sync — V8+ firmware.
         Page only registered when firmware V7+ exposes SPDIF input capability.
@@ -25,6 +27,7 @@
                 <ComboBoxItem Content="1" Tag="1"/>
                 <ComboBoxItem Content="2" Tag="2"/>
                 <ComboBoxItem Content="3" Tag="3"/>
+                <ComboBoxItem x:Name="Instances4Item" Content="4" Tag="4" Visibility="Collapsed"/>
             </ComboBox>
         </controls:SettingsCard>
 
@@ -43,6 +46,12 @@
                                Description="GPIO pin for the third S/PDIF input."
                                Visibility="Collapsed">
             <ComboBox x:Name="RxPinCombo2" MinWidth="140" SelectionChanged="OnSpdifRxPinChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="RxPinCard3" Header="S/PDIF 4 Input"
+                               Description="GPIO pin for the fourth S/PDIF input."
+                               Visibility="Collapsed">
+            <ComboBox x:Name="RxPinCombo3" MinWidth="140" SelectionChanged="OnSpdifRxPinChanged"/>
         </controls:SettingsCard>
 
         <controls:SettingsCard x:Name="LgSoundSyncCard"

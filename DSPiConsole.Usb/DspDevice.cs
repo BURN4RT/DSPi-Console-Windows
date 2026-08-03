@@ -240,9 +240,10 @@ public static class VendorCommands
     public const byte GetSpdifRxChStatus   = 0xE3;
     public const byte SetSpdifRxPin        = 0xE4; // IN, wValue=(index<<8)|gpio, status byte
     public const byte GetSpdifRxPin        = 0xE5; // IN, wValue=index, 1 byte (GPIO)
-    // Multiple selectable SPDIF inputs (always 3 inputs; index 0 always enabled).
+    // Multiple selectable SPDIF inputs; index 0 is always enabled. Firmware
+    // reports how many it has (3 before wire V28, 4 from V28) — never assume.
     public const byte SetSpdifInputEnable  = 0xE9; // IN, wValue=(index<<8)|enable, status byte
-    public const byte GetSpdifInputConfig  = 0xEF; // IN, 5 bytes: count, mask, pin0, pin1, pin2
+    public const byte GetSpdifInputConfig  = 0xEF; // IN, 2+count bytes: count, mask, one GPIO per input
 
     // I2S input (V12+). The device is the I2S clock master, so the host picks
     // the sample rate (44.1/48/96 kHz) the device drives. BCK/LRCK/MCK clock
@@ -296,7 +297,8 @@ public enum InputSource : byte
     I2s = 2,
     Adat = 3,     // 8-channel ADAT optical input (RP2350, V24+)
     Spdif2 = 4,
-    Spdif3 = 5
+    Spdif3 = 5,
+    Spdif4 = 6    // Fourth optional S/PDIF input (wire V28+)
 }
 
 /// <summary>
@@ -2592,20 +2594,30 @@ public partial class DspDevice : ObservableObject, IDisposable
         return response[0];
     }
 
+    /// <summary>Largest S/PDIF input count this client can represent. Firmware
+    /// carried three before wire V28 and four from V28; the device reports its
+    /// own count, so this only bounds the read and the returned array.</summary>
+    public const int MaxSpdifInputs = 4;
+
     /// <summary>
-    /// Get the 5-byte multi-SPDIF input config (0xEF): input count, an enable
-    /// mask (bit0=input1 always on, bit1=SPDIF2, bit2=SPDIF3), and the three
-    /// input GPIO pins. Null if the firmware STALLs (single-input firmware).
+    /// Get the multi-SPDIF input config (0xEF): input count, an enable mask
+    /// (bit0=input1 always on, bit1=SPDIF2 .. bit3=SPDIF4), and one GPIO per
+    /// input. The response is 2 + count bytes, so a three-input firmware answers
+    /// one byte short of a four-input one; the returned array is sized to what
+    /// actually arrived. Null if the firmware STALLs (single-input firmware).
     /// </summary>
     public (byte count, byte enableMask, byte[] pins)? GetSpdifInputConfig()
     {
-        var r = ControlTransferIn(VendorCommands.GetSpdifInputConfig, 0, 5);
-        if (r == null || r.Length < 5) return null;
-        return (r[0], r[1], new[] { r[2], r[3], r[4] });
+        var r = ControlTransferIn(VendorCommands.GetSpdifInputConfig, 0, 2 + MaxSpdifInputs);
+        if (r == null || r.Length < 3) return null;
+        int count = Math.Min(r[0], r.Length - 2);
+        var pins = new byte[count];
+        Array.Copy(r, 2, pins, 0, count);
+        return (r[0], r[1], pins);
     }
 
     /// <summary>
-    /// Enable or disable an optional S/PDIF input (index 1..2; input 0 is always
+    /// Enable or disable an optional S/PDIF input (index 1..3; input 0 is always
     /// enabled). Encodes (index&lt;&lt;8)|enable in wValue; returns a
     /// <see cref="PinConfigResult"/> status byte (0xFF on transfer failure).
     /// </summary>
