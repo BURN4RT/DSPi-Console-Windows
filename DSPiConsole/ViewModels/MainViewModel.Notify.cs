@@ -100,11 +100,15 @@ public partial class MainViewModel
         if (off >= BulkParamsParser.OffsetInputCfg && off < BulkParamsParser.OffsetLgSoundSync)
         {
             int sub = off - BulkParamsParser.OffsetInputCfg;
-            switch (sub)
+            // Fields below spdif_rx_pin_ext shift by one at wire V28 (the array
+            // grew for S/PDIF 4), so the tail offsets come from the wire version
+            // rather than being hard-coded.
+            int tail = BulkParamsParser.InputCfgTailOffset(_device.WireFormatVersion);
+            if (sub == tail + 1) Task.Run(FetchI2sClockConfig);             // i2s clock mode
+            else if (sub >= tail + 2 && sub <= tail + 4) Task.Run(FetchAdatInputConfig);
+            else if (sub == 1 || (sub >= 8 && sub <= tail)) Task.Run(FetchSpdifInputConfig);
+            else switch (sub)
             {
-                case 11: Task.Run(FetchI2sClockConfig); break;              // i2s clock mode
-                case 12: case 13: case 14: Task.Run(FetchAdatInputConfig); break; // ADAT input
-                case 1: case 8: case 9: case 10: Task.Run(FetchSpdifInputConfig); break; // SPDIF pins/enable
                 case 2: case 4: case 5: case 6: case 7: Task.Run(FetchI2sInputConfig); break; // I2S pins/channels
                 case 3: Task.Run(FetchI2sInputRate); break;                // I2S input rate
                 // sub 0 (input_source) never reaches here (typed handler catches it).

@@ -204,6 +204,17 @@ public static class BulkParamsParser
     public const byte MinFormatVersion = 16;     // unified channel model floor
     public const byte CurrentFormatVersion = 28; // V28: fourth selectable S/PDIF input
 
+    /// <summary>Number of spdif_rx_pin_ext entries in WireInputConfig for a given
+    /// wire version. V28 grew it from 2 to 3 (S/PDIF 4), which shifts every field
+    /// after it down one byte — the notify dispatch has to shift with it, so both
+    /// sides read the layout from here rather than hard-coding offsets.</summary>
+    public static int SpdifRxPinExtCount(int formatVersion) => formatVersion >= 28 ? 3 : 2;
+
+    /// <summary>Offset within WireInputConfig of the first field after
+    /// spdif_rx_pin_ext (the enable mask). Fields follow in order: enable mask,
+    /// i2s_clock_mode, adat pin, adat enable, adat clock mode.</summary>
+    public static int InputCfgTailOffset(int formatVersion) => 8 + SpdifRxPinExtCount(formatVersion);
+
     // Raw wire value of FILTER_LINKWITZ_TRANSFORM (FilterType.LinkwitzTransform).
     // Referenced by value here so band decoding is independent of the Core enum.
     private const byte WireFilterLinkwitzTransform = 11;
@@ -388,12 +399,12 @@ public static class BulkParamsParser
         p.I2sRxPinExt = new byte[3];
         for (int i = 0; i < 3; i++)
             p.I2sRxPinExt[i] = buffer[OffsetInputCfg + 5 + i];
-        int spdifExtCount = p.FormatVersion >= 28 ? 3 : 2;
+        int spdifExtCount = SpdifRxPinExtCount(p.FormatVersion);
         p.SpdifRxPinExt = new byte[spdifExtCount];
         for (int i = 0; i < spdifExtCount; i++)
             p.SpdifRxPinExt[i] = buffer[OffsetInputCfg + 8 + i];
         // Everything below the pin array shifts with its length.
-        int tail = OffsetInputCfg + 8 + spdifExtCount;
+        int tail = OffsetInputCfg + InputCfgTailOffset(p.FormatVersion);
         // Enable mask is stored PLUS ONE (0 = absent/keep-live); decode by subtracting 1.
         byte spdifEnP1 = buffer[tail + 0];
         if (spdifEnP1 != 0)

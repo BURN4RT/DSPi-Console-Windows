@@ -79,9 +79,9 @@ public class PresetSnapshot
     public uint I2sInputRateHz;
 
     // Multiple SPDIF inputs + multichannel I2S input (IO block). Ext SPDIF pins
-    // for inputs 1/2, the 2-bit SPDIF enable mask, I2S channel count, and the
+    // for inputs 1..3, the 3-bit SPDIF enable mask, I2S channel count, and the
     // per-pair I2S data pins for pairs 1..3.
-    public byte[] SpdifRxPinsExt = new byte[2];
+    public byte[] SpdifRxPinsExt = new byte[3];
     public byte SpdifEnabledExt;
     public int I2sInputChannels;
     public byte[] I2sRxPinsExt = new byte[3];
@@ -219,9 +219,11 @@ public class PresetSnapshot
         snap.I2sInputRateHz = vm.I2sInputRateHz;
 
         // Multiple SPDIF inputs + multichannel I2S input (IO block)
-        snap.SpdifRxPinsExt[0] = vm.SpdifRxPinAt(1);
-        snap.SpdifRxPinsExt[1] = vm.SpdifRxPinAt(2);
-        snap.SpdifEnabledExt = (byte)((vm.SpdifInputEnabled(1) ? 1 : 0) | (vm.SpdifInputEnabled(2) ? 2 : 0));
+        for (int i = 0; i < snap.SpdifRxPinsExt.Length; i++)
+        {
+            snap.SpdifRxPinsExt[i] = vm.SpdifRxPinAt(i + 1);
+            if (vm.SpdifInputEnabled(i + 1)) snap.SpdifEnabledExt |= (byte)(1 << i);
+        }
         snap.I2sInputChannels = vm.I2sInputChannels;
         snap.I2sRxPinsExt[0] = vm.I2sRxPinAt(1);
         snap.I2sRxPinsExt[1] = vm.I2sRxPinAt(2);
@@ -290,10 +292,11 @@ public static class PresetDiff
     private static string FormatVal(float v) =>
         v == (int)v && Math.Abs(v) < 100000 ? $"{(int)v}" : $"{v:F1}";
 
-    // Number of enabled S/PDIF inputs from the 2-bit ext enable mask (input 0
+    // Number of enabled S/PDIF inputs from the 3-bit ext enable mask (input 0
     // is always enabled).
     private static int SpdifInputCount(byte extMask) =>
-        1 + ((extMask & 1) != 0 ? 1 : 0) + ((extMask & 2) != 0 ? 1 : 0);
+        1 + ((extMask & 1) != 0 ? 1 : 0) + ((extMask & 2) != 0 ? 1 : 0)
+          + ((extMask & 4) != 0 ? 1 : 0);
 
     // Renders a channel/pair bitmask as a 1-based comma list, e.g. "1,2,5".
     private static string MaskList(int mask)
@@ -572,7 +575,7 @@ public static class PresetDiff
             changes.Add(new("io.spdif-rx.0", "S/PDIF RX pin", $"GPIO {old.SpdifRxPin}", $"GPIO {cur.SpdifRxPin}"));
         if (old.SpdifEnabledExt != cur.SpdifEnabledExt)
             changes.Add(new("io.spdif-inst", "S/PDIF inputs", $"{SpdifInputCount(old.SpdifEnabledExt)}", $"{SpdifInputCount(cur.SpdifEnabledExt)}"));
-        for (int i = 0; i < 2; i++)
+        for (int i = 0; i < Math.Min(old.SpdifRxPinsExt.Length, cur.SpdifRxPinsExt.Length); i++)
             if (old.SpdifRxPinsExt[i] != cur.SpdifRxPinsExt[i])
                 changes.Add(new($"io.spdif-rx.{i + 1}", $"S/PDIF {i + 2} RX pin", $"GPIO {old.SpdifRxPinsExt[i]}", $"GPIO {cur.SpdifRxPinsExt[i]}"));
 
