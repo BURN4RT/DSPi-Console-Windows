@@ -106,17 +106,25 @@
                                        FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                        TextWrapping="Wrap"/>
                         </StackPanel>
-                        <!-- Wire values 0/1 (PASSIVE/ADAPTIVE); displayed with the
-                             product mode names Sinner / Logician. -->
+                        <!-- Wire values 0/1/2 (PASSIVE/ADAPTIVE/OFF); displayed with
+                             the product mode names Sinner / Logician and, like the
+                             surround dropdown, Off first — the wire order differs, so
+                             the code-behind maps index to wire value. -->
                         <ComboBox x:Name="CenterModeCombo" Grid.Column="1" Width="120" VerticalAlignment="Center"
                                   SelectionChanged="OnCenterModeChanged">
+                            <ComboBoxItem Content="Off"/>
                             <ComboBoxItem Content="Sinner"/>
                             <ComboBoxItem Content="Logician"/>
                         </ComboBox>
                     </Grid>
 
+                    <TextBlock x:Name="CenterOffNote"
+                               Text="Centre extraction is off: L and R pass through bit-exact and the Upmix C row stays silent. The surround engine is unaffected."
+                               FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap" Visibility="Collapsed"/>
+
                     <!-- Strength -->
-                    <StackPanel Spacing="4">
+                    <StackPanel x:Name="StrengthPanel" Spacing="4">
                         <TextBlock Text="Strength" FontWeight="Medium"/>
                         <TextBlock Text="Centre extraction amount; also scales the removal from L/R."
                                    FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
@@ -137,7 +145,7 @@
                     </StackPanel>
 
                     <!-- Width -->
-                    <StackPanel Spacing="4">
+                    <StackPanel x:Name="WidthPanel" Spacing="4">
                         <TextBlock Text="Centre Width" FontWeight="Medium"/>
                         <TextBlock Text="How much extracted centre stays in L/R. 0 = discrete centre; 100 = L/R untouched (combing risk with a real centre speaker)."
                                    FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
@@ -158,7 +166,7 @@
                     </StackPanel>
 
                     <!-- Presence -->
-                    <StackPanel Spacing="4">
+                    <StackPanel x:Name="PresencePanel" Spacing="4">
                         <TextBlock Text="Presence" FontWeight="Medium"/>
                         <TextBlock Text="Centre presence bell at 3 kHz: negative moves voices back, positive brings them forward."
                                    FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"

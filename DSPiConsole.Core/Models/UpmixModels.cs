@@ -2,8 +2,10 @@ using System;
 
 namespace DSPiConsole.Core.Models;
 
-/// <summary>Centre-engine mode (upmixer_spec.md section 1).</summary>
-public enum UpmixCenterMode : byte { Passive = 0, Adaptive = 1 }
+/// <summary>Centre-engine mode (upmixer_spec.md section 1). Off (wire V27+) was
+/// appended as 2 rather than renumbered, so it sits last while the surround enum
+/// puts its Off first; with Off the centre is silent and L/R stay bit-exact.</summary>
+public enum UpmixCenterMode : byte { Passive = 0, Adaptive = 1, Off = 2 }
 
 /// <summary>Surround-engine mode. Off removes rows 3-4 from the mix entirely.</summary>
 public enum UpmixSurroundMode : byte { Off = 0, Passive = 1, Adaptive = 2 }
@@ -47,8 +49,9 @@ public static class UpmixLimits
 
 /// <summary>
 /// The 44-byte UpmixConfigPacket (REQ_UPMIX_SET/GET_CONFIG 0x4A/0x4B), byte-identical
-/// to the WireUpmixParams bulk section at offset 5900 (wire V26). presence_q1 at
+/// to the WireUpmixParams bulk section at offset 5900 (wire V25+). presence_q1 at
 /// offset 3 carries the presence bell gain in 0.5 dB steps; exposed here as plain dB.
+/// V27 widened center_mode to 0-2 without changing the layout.
 /// </summary>
 public sealed class UpmixConfig
 {

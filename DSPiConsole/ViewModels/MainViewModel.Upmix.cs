@@ -6,7 +6,7 @@ using DSPiConsole.Usb;
 namespace DSPiConsole.ViewModels;
 
 /// <summary>
-/// Stereo upmixer (firmware wire V26, RP2350 only) state and device orchestration
+/// Stereo upmixer (firmware wire V27, RP2350 only) state and device orchestration
 /// (opcodes 0x4A-0x4E). Derives Centre / Ls / Rs matrix source rows 2-4 from a
 /// stereo input. Values push live per-param (0x4C, no read-modify-write races);
 /// seeding from bulk or an explicit 0x4B fetch is guarded against write echo.
@@ -25,7 +25,8 @@ public partial class MainViewModel
     // names are shadowed by these property names inside the class, so literals
     // are used here. 1 = ADAPTIVE centre, 2 = ADAPTIVE surround (spec defaults).
 
-    /// <summary>0 = Passive, 1 = Adaptive (matches the wire byte).</summary>
+    /// <summary>0 = Passive, 1 = Adaptive, 2 = Off (matches the wire byte; Off is
+    /// last because the firmware appended it at V27 rather than renumbering).</summary>
     [ObservableProperty]
     private int _upmixCenterMode = 1;
 
@@ -62,10 +63,17 @@ public partial class MainViewModel
     public bool UpmixSurroundRowsActive =>
         UpmixRowsActive && UpmixSurroundMode != 0;   // 0 = surround OFF
 
+    /// <summary>Row 2 (C) stays exposed with the centre engine off — withdrawing it
+    /// would renumber Ls/Rs and silently repoint existing routing — but it carries
+    /// no signal, so the matrix labels it rather than hiding it (spec section 3).</summary>
+    public bool UpmixCenterRowSilent =>
+        UpmixRowsActive && UpmixCenterMode == 2;     // 2 = centre OFF
+
     private void RaiseUpmixRowsChanged()
     {
         OnPropertyChanged(nameof(UpmixRowsActive));
         OnPropertyChanged(nameof(UpmixSurroundRowsActive));
+        OnPropertyChanged(nameof(UpmixCenterRowSilent));
     }
 
     private void PushUpmixParam(ushort id, float value)
@@ -81,8 +89,11 @@ public partial class MainViewModel
         RaiseUpmixRowsChanged();
     }
 
-    partial void OnUpmixCenterModeChanged(int value) =>
+    partial void OnUpmixCenterModeChanged(int value)
+    {
         PushUpmixParam(UpmixParam.CenterMode, value);
+        OnPropertyChanged(nameof(UpmixCenterRowSilent));
+    }
 
     partial void OnUpmixSurroundModeChanged(int value)
     {

@@ -277,8 +277,9 @@ public static class CsNounInfo
 
     private static readonly string[] SampleRateNames = { "44.1 kHz", "48 kHz", "96 kHz" };
 
-    // Wire 0/1 and 0/1/2; the app shows the upmixer's product mode names.
-    private static readonly string[] UpmixCenterModeNames = { "Sinner", "Logician" };
+    // Both wire 0/1/2; the app shows the upmixer's product mode names. The centre
+    // enum puts Off last (appended at caps v5) while the surround enum puts it first.
+    private static readonly string[] UpmixCenterModeNames = { "Sinner", "Logician", "Off" };
     private static readonly string[] UpmixSurroundModeNames = { "Off", "Sinner", "Logician" };
 
     /// <summary>Label for one value of an enum-kind noun, e.g. "S/PDIF" for

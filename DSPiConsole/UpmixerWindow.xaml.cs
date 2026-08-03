@@ -13,7 +13,7 @@ using WinRT.Interop;
 namespace DSPiConsole;
 
 /// <summary>
-/// Stereo upmixer editor (firmware wire V26, RP2350). Enable + centre / surround
+/// Stereo upmixer editor (firmware wire V27, RP2350). Enable + centre / surround
 /// engine modes and parameters, each pushed live through the ViewModel
 /// (REQ_UPMIX_SET_PARAM), plus a 10 Hz telemetry strip (REQ_UPMIX_GET_STATUS)
 /// with a parked-reason banner. Mirrors the Psychoacoustic Bass window.
@@ -91,7 +91,7 @@ public sealed partial class UpmixerWindow : Window
 
         _isUpdating = true;
         EnableToggle.IsOn = _viewModel.UpmixEnabled;
-        CenterModeCombo.SelectedIndex = Math.Clamp(_viewModel.UpmixCenterMode, 0, 1);
+        CenterModeCombo.SelectedIndex = CenterWireToIndex(_viewModel.UpmixCenterMode);
         SurroundModeCombo.SelectedIndex = Math.Clamp(_viewModel.UpmixSurroundMode, 0, 2);
         SetPair(StrengthSlider, StrengthBox, _viewModel.UpmixStrengthPct, "F0");
         SetPair(WidthSlider, WidthBox, _viewModel.UpmixCenterWidthPct, "F0");
@@ -115,12 +115,24 @@ public sealed partial class UpmixerWindow : Window
         box.Text = value.ToString(fmt, CultureInfo.InvariantCulture);
     }
 
-    /// <summary>Per-mode visibility (spec section 4): the adaptive steering
-    /// controls only apply in adaptive centre mode — strength/width/presence
-    /// stay shown in both modes — and the surround conditioning only applies
-    /// while the surround engine is on. Inapplicable controls are hidden.</summary>
+    // The centre dropdown lists Off first to match the surround one, but the wire
+    // enum appends Off as 2 (0 = Passive, 1 = Adaptive), so the two orders differ.
+    private static int CenterWireToIndex(int wire) => wire == 2 ? 0 : Math.Clamp(wire, 0, 1) + 1;
+    private static int CenterIndexToWire(int index) => index == 0 ? 2 : index - 1;
+
+    /// <summary>Per-mode visibility (spec section 4): with the centre engine off
+    /// the whole centre group is inapplicable; in passive centre mode only the
+    /// adaptive steering controls are (strength/width/presence stay shown); and
+    /// the surround conditioning only applies while the surround engine is on.
+    /// Inapplicable controls are hidden.</summary>
     private void UpdateModeEnables()
     {
+        bool centerOff = _viewModel.UpmixCenterMode == 2;
+        var centerVis = centerOff ? Visibility.Collapsed : Visibility.Visible;
+        CenterOffNote.Visibility = centerOff ? Visibility.Visible : Visibility.Collapsed;
+        StrengthPanel.Visibility = centerVis;
+        WidthPanel.Visibility = centerVis;
+        PresencePanel.Visibility = centerVis;
         AdaptiveCenterPanel.Visibility = _viewModel.UpmixCenterMode == 1
             ? Visibility.Visible : Visibility.Collapsed;
         SurroundPanel.Visibility = _viewModel.UpmixSurroundMode != 0
@@ -177,7 +189,7 @@ public sealed partial class UpmixerWindow : Window
                     _isUpdating = true; EnableToggle.IsOn = _viewModel.UpmixEnabled; _isUpdating = false;
                     break;
                 case nameof(MainViewModel.UpmixCenterMode):
-                    _isUpdating = true; CenterModeCombo.SelectedIndex = Math.Clamp(_viewModel.UpmixCenterMode, 0, 1); _isUpdating = false;
+                    _isUpdating = true; CenterModeCombo.SelectedIndex = CenterWireToIndex(_viewModel.UpmixCenterMode); _isUpdating = false;
                     UpdateModeEnables();
                     break;
                 case nameof(MainViewModel.UpmixSurroundMode):
@@ -232,7 +244,7 @@ public sealed partial class UpmixerWindow : Window
     private void OnCenterModeChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_isUpdating || CenterModeCombo.SelectedIndex < 0) return;
-        _viewModel.UpmixCenterMode = CenterModeCombo.SelectedIndex;
+        _viewModel.UpmixCenterMode = CenterIndexToWire(CenterModeCombo.SelectedIndex);
         UpdateModeEnables();
     }
 

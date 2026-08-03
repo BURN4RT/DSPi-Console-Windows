@@ -48,6 +48,7 @@ public sealed partial class MatrixMixerWindow : Window
     private Border? _card;
     private int _nonClientH;
     private int _builtInputCount;
+    private List<MatrixRow> _builtRows = new();
     private bool _closed;
 
     // Shared cell border brush (reused across all cells)
@@ -95,12 +96,14 @@ public sealed partial class MatrixMixerWindow : Window
                 DispatcherQueue.TryEnqueue(() => { if (!_closed) UpdateDisconnectOverlay(); });
             else if (e.PropertyName is nameof(MainViewModel.ActiveInputs)
                                     or nameof(MainViewModel.UpmixRowsActive)
-                                    or nameof(MainViewModel.UpmixSurroundRowsActive))
+                                    or nameof(MainViewModel.UpmixSurroundRowsActive)
+                                    or nameof(MainViewModel.UpmixCenterRowSilent))
                 DispatcherQueue.TryEnqueue(() =>
                 {
                     // ActiveOutputs changes also raise ActiveInputs; only rebuild
-                    // here when the source row count actually changed.
-                    if (!_closed && BuildRowList().Count != _builtInputCount)
+                    // here when the source rows actually changed (count or label —
+                    // the upmix C row is relabelled in place when it goes silent).
+                    if (!_closed && !BuildRowList().SequenceEqual(_builtRows))
                         RebuildUI();
                 });
         };
@@ -203,6 +206,7 @@ public sealed partial class MatrixMixerWindow : Window
         var sourceRows = BuildRowList();
         int inputCount = sourceRows.Count;
         _builtInputCount = inputCount;
+        _builtRows = sourceRows;
         int outputBarRow = 2 * inputCount + 1;
         for (int r = 0; r < outputBarRow + 5; r++)
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -597,8 +601,11 @@ public sealed partial class MatrixMixerWindow : Window
         if (_viewModel.UpmixRowsActive)
         {
             // Only reachable with exactly 2 active inputs, so the grid position
-            // of each upmix row equals its wire input index.
-            rows.Add(new MatrixRow(2, Channel.Input3, "Upmix C"));
+            // of each upmix row equals its wire input index. Row 2 stays listed
+            // with the centre engine off (withdrawing it would renumber Ls/Rs
+            // onto rows 2-3 and repoint existing routing) but carries no signal.
+            rows.Add(new MatrixRow(2, Channel.Input3,
+                _viewModel.UpmixCenterRowSilent ? "Upmix C (off)" : "Upmix C"));
             if (_viewModel.UpmixSurroundRowsActive)
             {
                 rows.Add(new MatrixRow(3, Channel.Input4, "Upmix Ls"));

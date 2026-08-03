@@ -200,9 +200,9 @@ public static class BulkParamsParser
 
     public const int PacketSizeV20 = 5876;       // sizeof(WireBulkParams) at V20
     public const int PacketSizeV24 = 5900;       // sizeof(WireBulkParams) at V24 (+psybass)
-    public const int PacketSizeV26 = 5944;       // sizeof(WireBulkParams) at V25/V26 (+upmix)
+    public const int PacketSizeV26 = 5944;       // sizeof(WireBulkParams) at V25-V27 (+upmix)
     public const byte MinFormatVersion = 16;     // unified channel model floor
-    public const byte CurrentFormatVersion = 26;
+    public const byte CurrentFormatVersion = 27; // V27: upmix centre mode gains OFF (enum only)
 
     // Raw wire value of FILTER_LINKWITZ_TRANSFORM (FilterType.LinkwitzTransform).
     // Referenced by value here so band decoding is independent of the Core enum.
@@ -459,7 +459,8 @@ public static class BulkParamsParser
             p.PsybassOriginalDb = BitConverter.ToSingle(buffer, OffsetPsybass + 20);
         }
 
-        // ── Stereo upmixer (44 bytes, appended V25+; presence byte claimed V26) ──
+        // ── Stereo upmixer (44 bytes, appended V25+; presence byte claimed V26,
+        //    centre-mode enum widened to 0-2 at V27 with no layout change) ──
         if (buffer.Length >= PacketSizeV26)
         {
             p.Upmix = UpmixConfig.FromBytes(buffer, OffsetUpmix);
