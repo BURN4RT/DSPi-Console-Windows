@@ -23,6 +23,23 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
     private UartCtrlConfig _uartDraft = new();
     private I2cCtrlConfig _i2cDraft = new();
 
+    // True once the user has actually touched a control and left the draft
+    // differing from the device config. Tracked explicitly rather than inferred
+    // from "draft != device", because before the first seed (and while a fetch is
+    // in flight) the draft holds constructor defaults that differ from the device
+    // through no edit of the user's — inferring would strand the page on those
+    // defaults and never show the real state.
+    private bool _uartEdited;
+    private bool _i2cEdited;
+
+    // Live status (0xF9) has no notification channel, so the Active/Inactive pills
+    // would otherwise sit on whatever the last fetch or Apply saw. Poll slowly
+    // while the page is on screen; the VM only raises PropertyChanged when a field
+    // actually moved, so a steady state costs one 8-byte control transfer a tick.
+    private static readonly TimeSpan StatusPollInterval = TimeSpan.FromSeconds(2);
+    private DispatcherTimer? _statusTimer;
+    private bool _statusPollBusy;
+
     private static readonly SolidColorBrush Green = new(Color.FromArgb(255, 100, 200, 140));
     private static readonly SolidColorBrush Amber = new(Color.FromArgb(255, 240, 180, 90));
     private static readonly SolidColorBrush Red = new(Color.FromArgb(255, 240, 100, 100));
@@ -71,12 +88,39 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
             Vm.PropertyChanged += OnVmPropertyChanged;
             Refresh();
         }
+        StartStatusPoll();
     }
 
     private void OnPageUnloaded(object sender, RoutedEventArgs e)
     {
         HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
         if (Vm != null) Vm.PropertyChanged -= OnVmPropertyChanged;
+        _statusTimer?.Stop();
+    }
+
+    // ── Live status poll ─────────────────────────────────────────────────────
+
+    private void StartStatusPoll()
+    {
+        if (_statusTimer == null)
+        {
+            _statusTimer = new DispatcherTimer { Interval = StatusPollInterval };
+            _statusTimer.Tick += (_, _) => PollStatus();
+        }
+        PollStatus();          // don't make the first reading wait a full interval
+        _statusTimer.Start();
+    }
+
+    /// <summary>One 0xF9 read off the UI thread. Skipped while a previous read is
+    /// still outstanding, so a slow or stalled device can't queue transfers up.</summary>
+    private void PollStatus()
+    {
+        var vm = Vm;
+        if (vm == null || _statusPollBusy) return;
+        if (!vm.IsDeviceConnected || !vm.ControlInterfacesSupported) return;
+        _statusPollBusy = true;
+        _ = Task.Run(vm.RefreshCtrlIfaceStatus)
+            .ContinueWith(_ => DispatcherQueue.TryEnqueue(() => _statusPollBusy = false));
     }
 
     private void OnExternalPinChange() => DispatcherQueue.TryEnqueue(RefreshConflicts);
@@ -97,8 +141,8 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
         if (Vm == null) return;
         // Re-seed drafts from live config only when the user has no pending edits,
         // so an external change doesn't strand an in-progress edit.
-        if (_uartDraft.ValueEquals(Vm.UartCtrlConfig) || !UartDirty()) _uartDraft = Vm.UartCtrlConfig.Clone();
-        if (_i2cDraft.ValueEquals(Vm.I2cCtrlConfig) || !I2cDirty()) _i2cDraft = Vm.I2cCtrlConfig.Clone();
+        if (!_uartEdited) _uartDraft = Vm.UartCtrlConfig.Clone();
+        if (!_i2cEdited) _i2cDraft = Vm.I2cCtrlConfig.Clone();
         WriteUartControls();
         WriteI2cControls();
         RefreshConflicts();
@@ -157,6 +201,7 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
     {
         if (_suppress || Vm == null) return;
         ReadUartDraft();
+        _uartEdited = UartDirty();   // editing back to the device value clears it
         RefreshPillsAndButtons();
     }
 
@@ -164,6 +209,7 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
     {
         if (_suppress || Vm == null) return;
         ReadI2cDraft();
+        _i2cEdited = I2cDirty();
         RefreshPillsAndButtons();
     }
 
@@ -174,6 +220,7 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
         int addr = Math.Clamp((int)args.NewValue, CtrlIfaceLimits.I2cAddressMin, CtrlIfaceLimits.I2cAddressMax);
         _i2cDraft.Address = (byte)addr;
         I2cAddrHex.Text = $"0x{addr:X2}";
+        _i2cEdited = I2cDirty();
         RefreshPillsAndButtons();
     }
 
@@ -214,8 +261,10 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
         if (Vm == null) return;
         var status = Vm.CtrlIfaceStatus;
 
-        SetPill(UartPill, status.UartLive, _uartDraft.Enabled, Vm.UartCtrlConfig.Enabled);
-        SetPill(I2cPill, status.I2cLive, _i2cDraft.Enabled, Vm.I2cCtrlConfig.Enabled);
+        // Pills report the device, not the draft — an unapplied toggle must not
+        // claim the link is up.
+        SetPill(UartPill, status.UartLive, Vm.UartCtrlConfig.Enabled);
+        SetPill(I2cPill, status.I2cLive, Vm.I2cCtrlConfig.Enabled);
 
         bool uartDirty = UartDirty();
         UartApplyButton.IsEnabled = uartDirty;
@@ -226,7 +275,7 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
         I2cRevertButton.IsEnabled = i2cDirty;
     }
 
-    private static void SetPill(TextBlock pill, bool live, bool draftEnabled, bool configEnabled)
+    private static void SetPill(TextBlock pill, bool live, bool configEnabled)
     {
         if (live) { pill.Text = "Active"; pill.Foreground = Green; }
         else if (configEnabled) { pill.Text = "Inactive"; pill.Foreground = Amber; }
@@ -247,6 +296,7 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
         byte status = await Task.Run(() => Vm.SetUartCtrlConfig(cfg));
 
         _uartDraft = Vm.UartCtrlConfig.Clone();
+        _uartEdited = false;
         WriteUartControls();
         HardwarePins.RaisePinAssignmentsChanged();
         RefreshConflicts();
@@ -263,6 +313,7 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
         byte status = await Task.Run(() => Vm.SetI2cCtrlConfig(cfg));
 
         _i2cDraft = Vm.I2cCtrlConfig.Clone();
+        _i2cEdited = false;
         WriteI2cControls();
         HardwarePins.RaisePinAssignmentsChanged();
         RefreshConflicts();
@@ -274,6 +325,7 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
     {
         if (Vm == null) return;
         _uartDraft = Vm.UartCtrlConfig.Clone();
+        _uartEdited = false;
         WriteUartControls();
         RefreshConflicts();
         RefreshPillsAndButtons();
@@ -284,6 +336,7 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
     {
         if (Vm == null) return;
         _i2cDraft = Vm.I2cCtrlConfig.Clone();
+        _i2cEdited = false;
         WriteI2cControls();
         RefreshConflicts();
         RefreshPillsAndButtons();

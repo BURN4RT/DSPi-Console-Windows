@@ -312,9 +312,13 @@ public sealed partial class SettingsShell : UserControl
         }
     }
 
+    /// <summary>Probe support and re-read the UART / I2C config + live status.
+    /// Runs on every (re)connect, not just while support is still unknown — the
+    /// flag being true says the last device answered 0xF9, not that the cached
+    /// configs still describe the device now on the bus.</summary>
     private void ProbeControlInterfaces()
     {
-        if (_vm.IsDeviceConnected && !_vm.ControlInterfacesSupported)
+        if (_vm.IsDeviceConnected)
             _ = System.Threading.Tasks.Task.Run(_vm.FetchControlInterfaces);
     }
 

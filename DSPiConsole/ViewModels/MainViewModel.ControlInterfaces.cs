@@ -56,13 +56,16 @@ public partial class MainViewModel
         });
     }
 
-    /// <summary>Re-read only the live status packet (0xF9).</summary>
+    /// <summary>Re-read only the live status packet (0xF9). Notifies only when a
+    /// field actually moved, so a page can poll this without forcing a UI rebuild
+    /// every tick. Blocking — call off the UI thread.</summary>
     public void RefreshCtrlIfaceStatus()
     {
         var status = _device.GetCtrlIfaceStatus();
         if (status == null) return;
+        bool changed = !status.ValueEquals(_ctrlIfaceStatus);
         _ctrlIfaceStatus = status;
-        _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(CtrlIfaceStatus)));
+        if (changed) _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(CtrlIfaceStatus)));
     }
 
     /// <summary>Apply a UART config (deferred + persisted). Re-reads config + status

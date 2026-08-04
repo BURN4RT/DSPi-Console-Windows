@@ -149,4 +149,9 @@ public sealed class CtrlIfaceStatus
             ProtoVersion = d[4],
         };
     }
+
+    public bool ValueEquals(CtrlIfaceStatus o) =>
+        o != null && UartLastStatus == o.UartLastStatus && UartLive == o.UartLive
+        && I2cLastStatus == o.I2cLastStatus && I2cLive == o.I2cLive
+        && ProtoVersion == o.ProtoVersion;
 }
