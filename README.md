@@ -160,8 +160,8 @@ Reset** returns the device to its defaults.
 ### Parametric equalisation
 
 - Ten parametric bands per channel, on every input and every output.
-- Filter types: peaking, low shelf and high shelf at both 6 dB and 12 dB per octave, low pass, high pass, notch,
-  all pass at 6 dB and 12 dB per octave, and Linkwitz Transform.
+- Filter types: peaking, low shelf and high shelf at both 6 dB and 12 dB per octave, low cut and high cut at both
+  6 dB and 12 dB per octave, notch, all pass at 6 dB and 12 dB per octave, and Linkwitz Transform.
 - Per-band bypass, so a band can be taken out of circuit without losing its settings.
 - Linkwitz Transform is offered on output channels only, as it exists to reshape a sealed-box driver's roll-off.
   Its four parameters (driver f0 and Q0, target fp and Qp) are edited in a popover with Cancel and Apply buttons,

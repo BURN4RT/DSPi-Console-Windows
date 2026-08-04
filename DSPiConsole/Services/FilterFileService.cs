@@ -82,6 +82,8 @@ public static class FilterFileService
             FilterType.AllPass1 => "AP1",
             FilterType.LowShelf1 => "LS1",
             FilterType.HighShelf1 => "HS1",
+            FilterType.LowPass1 => "LP1",
+            FilterType.HighPass1 => "HP1",
             FilterType.LinkwitzTransform => "LT",
             _ => "PK"
         };
@@ -331,6 +333,10 @@ public static class FilterFileService
             filterType = FilterType.LowShelf1;
         else if (upper.Contains(" HS1 "))
             filterType = FilterType.HighShelf1;
+        else if (upper.Contains(" LP1 "))
+            filterType = FilterType.LowPass1;
+        else if (upper.Contains(" HP1 "))
+            filterType = FilterType.HighPass1;
         else if (upper.Contains(" LT "))
             filterType = FilterType.LinkwitzTransform;
         else if (upper.Contains(" PK ") || upper.Contains(" PEQ "))

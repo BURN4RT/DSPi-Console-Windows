@@ -2,12 +2,13 @@ namespace DSPiConsole.Core.Models;
 
 /// <summary>
 /// Filter types matching the firmware definitions (config.h FilterType).
-/// Value space is partitioned: 0-10 PEQ biquad types, 11-31 reserved,
+/// Value space is partitioned: 0-13 PEQ biquad types, 14-31 reserved,
 /// 32-63 crossover filter types (Linkwitz-Riley / Butterworth / Bessel ×
 /// order × HP/LP, used only in crossover bands), 64+ reserved.
 /// firmware's filter_is_peq_type(t) == (t &lt; 32). The crossover block moved
 /// from 8-39 to 32-63 at wire V13; PEQ types 8/9/10 (first-order all-pass and
-/// shelves) were added at V13/V14. See crossover_filters_spec.md.
+/// shelves) were added at V13/V14, 12/13 (first-order low/high pass) later.
+/// See peq_filters.md and crossover_filters_spec.md.
 /// </summary>
 public enum FilterType
 {
@@ -28,7 +29,13 @@ public enum FilterType
     // fields — Frequency = f0, Q = Q0, Gain = fp (Hz, NOT dB) — plus the Qp sidecar.
     LinkwitzTransform = 11,
 
-    // 12-31 reserved
+    // First-order (6 dB/oct) low/high pass: single-pole rolloff, -3 dB at the
+    // corner, no resonance. Frequency only — Q and gain are unused. New enum
+    // values in an existing wire field, so no wire-format bump (see peq_filters.md).
+    LowPass1 = 12,
+    HighPass1 = 13,
+
+    // 14-31 reserved
 
     // ── Crossover types (FILTER_XOVER_FIRST = 32 .. FILTER_XOVER_LAST = 63) ──
     // Linkwitz-Riley (orders 2/4/6/8)
@@ -58,7 +65,7 @@ public enum FilterType
 public static class FilterTypeExtensions
 {
     /// <summary>
-    /// The PEQ-only filter types (enum values 0-10). The crossover types
+    /// The PEQ-only filter types (enum values 0-13). The crossover types
     /// (32-63) share the same enum but are never offered in a PEQ band's type
     /// picker — enumerate this instead of <c>Enum.GetValues</c> there.
     /// </summary>
@@ -67,7 +74,7 @@ public static class FilterTypeExtensions
         FilterType.Flat, FilterType.Peaking, FilterType.LowShelf, FilterType.HighShelf,
         FilterType.LowPass, FilterType.HighPass, FilterType.Notch, FilterType.AllPass,
         FilterType.AllPass1, FilterType.LowShelf1, FilterType.HighShelf1,
-        FilterType.LinkwitzTransform
+        FilterType.LinkwitzTransform, FilterType.LowPass1, FilterType.HighPass1
     };
 
     /// <summary>True for the crossover filter types (32-63).</summary>
@@ -86,8 +93,10 @@ public static class FilterTypeExtensions
         FilterType.Peaking => "Peaking",
         FilterType.LowShelf => "Low Shelf",
         FilterType.HighShelf => "High Shelf",
-        FilterType.LowPass => "Low Pass",
-        FilterType.HighPass => "High Pass",
+        FilterType.LowPass => "High Cut 12dB",
+        FilterType.HighPass => "Low Cut 12dB",
+        FilterType.LowPass1 => "High Cut 6dB",
+        FilterType.HighPass1 => "Low Cut 6dB",
         FilterType.Notch => "Notch",
         FilterType.AllPass => "All Pass",
         FilterType.AllPass1 => "All Pass (6dB)",
@@ -103,8 +112,10 @@ public static class FilterTypeExtensions
         FilterType.Peaking => "PK",
         FilterType.LowShelf => "LS",
         FilterType.HighShelf => "HS",
-        FilterType.LowPass => "LP",
-        FilterType.HighPass => "HP",
+        FilterType.LowPass => "HC12",
+        FilterType.HighPass => "LC12",
+        FilterType.LowPass1 => "HC6",
+        FilterType.HighPass1 => "LC6",
         FilterType.Notch => "NO",
         FilterType.AllPass => "AP",
         FilterType.AllPass1 => "AP1",
@@ -118,7 +129,8 @@ public static class FilterTypeExtensions
         type is FilterType.Peaking or FilterType.LowShelf or FilterType.HighShelf
               or FilterType.LowShelf1 or FilterType.HighShelf1;
 
-    // First-order all-pass/shelves are defined by frequency alone (no Q).
+    // First-order types (all-pass, shelves, low/high pass) are defined by
+    // frequency alone (no Q).
     public static bool HasQ(this FilterType type) =>
         type is FilterType.Peaking or FilterType.LowShelf or FilterType.HighShelf
               or FilterType.LowPass or FilterType.HighPass

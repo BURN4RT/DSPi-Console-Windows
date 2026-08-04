@@ -274,10 +274,13 @@ public static class CsNounInfo
 
     private static readonly string[] LevellerSpeedNames = { "Slow", "Medium", "Fast" };
 
+    // Indexed by the wire FilterType value. Firmware only cycles 0-10 from the
+    // front panel, but a band can hold any PEQ type the host wrote, so the table
+    // covers the whole PEQ block.
     private static readonly string[] FilterTypeNames =
-        { "Flat", "Peaking", "Low Shelf", "High Shelf", "Low Pass", "High Pass",
+        { "Flat", "Peaking", "Low Shelf", "High Shelf", "High Cut 12dB", "Low Cut 12dB",
           "Notch", "All Pass", "All Pass (1st)", "Low Shelf (1st)",
-          "High Shelf (1st)", "Linkwitz Transform" };
+          "High Shelf (1st)", "Linkwitz Transform", "High Cut 6dB", "Low Cut 6dB" };
 
     private static readonly string[] SampleRateNames = { "44.1 kHz", "48 kHz", "96 kHz" };
 

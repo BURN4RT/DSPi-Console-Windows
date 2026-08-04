@@ -160,6 +160,17 @@ public static class DspMath
                 b0 = sn + A + A * cs;     b1 = sn - A - A * cs;     b2 = 0;
                 a0 = sn + 1 / A + cs / A; a1 = sn - 1 / A - cs / A; a2 = 0;
                 break;
+
+            case FilterType.LowPass1:
+                // Unity at DC, −3 dB at the corner, 6 dB/oct rolloff. No resonance.
+                b0 = sn;          b1 = sn;          b2 = 0;
+                a0 = sn + 1 + cs; a1 = sn - 1 - cs; a2 = 0;
+                break;
+
+            case FilterType.HighPass1:
+                b0 = 1 + cs;      b1 = -1 - cs;     b2 = 0;
+                a0 = sn + 1 + cs; a1 = sn - 1 - cs; a2 = 0;
+                break;
         }
 
         // Normalize by a0
@@ -169,7 +180,7 @@ public static class DspMath
     /// <summary>
     /// Calculate the frequency response magnitude in dB for a set of filters at a given frequency.
     /// Evaluates H(e^jω) for each filter and multiplies the magnitudes. PEQ bands
-    /// (types 0-10) are single biquads; crossover bands (types 32-63) are multi-section
+    /// (types 0-13) are single biquads; crossover bands (types 32-63) are multi-section
     /// cascades designed to match the firmware (see <see cref="CrossoverSections"/>).
     /// </summary>
     public static float ResponseAt(float freq, IEnumerable<FilterParams> filters, float sampleRate = SampleRate)

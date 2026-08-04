@@ -2011,8 +2011,9 @@ public sealed partial class MainWindow : Window
         col++;
 
         // Filter type selector — native ComboBox, flat list. PEQ types only; the
-        // shelf/all-pass first- and second-order variants are listed as separate
-        // entries labelled by slope (6 vs 12 dB). The crossover types (32-63)
+        // shelf/cut/all-pass first- and second-order variants are listed as separate
+        // entries labelled by slope (6 vs 12 dB). Low/high pass are labelled by what
+        // they remove ("Low Cut" = high-pass, "High Cut" = low-pass). The crossover types (32-63)
         // share the FilterType enum but are edited on the XO page; a stray
         // crossover type round-tripped into a PEQ slot falls back to "Off".
         var typeItems = new List<(string label, FilterType type)>
@@ -2023,8 +2024,10 @@ public sealed partial class MainWindow : Window
             ("Low Shelf 12dB", FilterType.LowShelf),
             ("High Shelf 6dB", FilterType.HighShelf1),
             ("High Shelf 12dB", FilterType.HighShelf),
-            ("Low Pass", FilterType.LowPass),
-            ("High Pass", FilterType.HighPass),
+            ("Low Cut 6dB", FilterType.HighPass1),
+            ("Low Cut 12dB", FilterType.HighPass),
+            ("High Cut 6dB", FilterType.LowPass1),
+            ("High Cut 12dB", FilterType.LowPass),
             ("Notch", FilterType.Notch),
             ("All Pass 6dB", FilterType.AllPass1),
             ("All Pass 12dB", FilterType.AllPass),

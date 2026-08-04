@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
+using DSPiConsole.Core.Models;
 using DSPiConsole.Usb;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
@@ -645,10 +646,10 @@ internal static class NotifyPacketDecoder
         if (size == 16)
         {
             // WireBandParams: type(1), bypass(1), reserved(2), freq(4), Q(4), gain(4)
-            // Heuristic: if first byte looks like a FilterType (0..7) and the rest
-            // are plausible floats, decode it. Otherwise stay quiet.
+            // Heuristic: if first byte looks like a PEQ FilterType (0..13) and the
+            // rest are plausible floats, decode it. Otherwise stay quiet.
             byte type = data[payloadOff];
-            if (type <= 7)
+            if (type <= (byte)FilterType.HighPass1)
             {
                 byte bypass = data[payloadOff + 1];
                 float freq = BitConverter.ToSingle(data, payloadOff + 4);
