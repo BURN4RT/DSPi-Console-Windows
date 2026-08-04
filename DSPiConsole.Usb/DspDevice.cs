@@ -137,10 +137,10 @@ public static class VendorCommands
     public const byte SetCsBinding         = 0x84; // OUT 24-byte CsBinding, wValue=slot (0-15)
     public const byte GetCsBinding         = 0x85; // IN 24-byte CsBinding, wValue=slot
     public const byte GetCsCaps            = 0x86; // IN wValue=0xFFFF→header; wValue=noun→12-byte desc
-    public const byte GetCsStatus          = 0x87; // IN 32-byte CsStatusPacket
+    public const byte GetCsStatus          = 0x87; // IN 41-byte CsStatusPacket (32 pre-caps-v6)
     public const byte SetCsName            = 0x8B; // OUT 1-32 byte name, wValue=slot (single NUL clears)
     public const byte GetCsName            = 0x8C; // IN 32-byte NUL-terminated name, wValue=slot
-    public const byte SetCsIrCmd           = 0x8D; // OUT 16-byte IrCommand, wValue=sub-slot (0-7)
+    public const byte SetCsIrCmd           = 0x8D; // OUT 16-byte IrCommand, wValue=sub-slot (0-15)
     public const byte GetCsIrCmd           = 0x8E; // IN 16-byte IrCommand, wValue=sub-slot
     public const byte CsIrLearn            = 0x8F; // IN wValue 1=arm/0=cancel→1 ack; 2=read→8-byte result
     public const byte CsSave               = 0x9D; // IN 1 ack byte; persist whole live config (deferred)
@@ -2713,10 +2713,11 @@ public partial class DspDevice : ObservableObject, IDisposable
         return r == null ? null : CsBinding.FromBytes(r);
     }
 
-    /// <summary>Read the live 32-byte status packet (0x87). Null on transfer failure.</summary>
+    /// <summary>Read the live 41-byte status packet (0x87). Null on transfer failure.
+    /// A pre-caps-v6 firmware answers 32 bytes; the parse handles both.</summary>
     public CsStatusPacket? GetCsStatus()
     {
-        var r = ControlTransferIn(VendorCommands.GetCsStatus, 0, 32);
+        var r = ControlTransferIn(VendorCommands.GetCsStatus, 0, 41);
         return r == null ? null : CsStatusPacket.FromBytes(r);
     }
 

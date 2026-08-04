@@ -3,8 +3,8 @@ using System;
 namespace DSPiConsole.Core.Models;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Control Surfaces + IR remote (firmware control_surfaces.h; caps v4, config v2,
-// IR config v1). Physical GPIO controls (buttons, switches, pots, encoders, LEDs,
+// Control Surfaces + IR remote (firmware control_surfaces.h; caps v7, config v2,
+// IR config v2). Physical GPIO controls (buttons, switches, pots, encoders, LEDs,
 // PWM LEDs) and an IR receiver with learned remote commands, each bound to a DSP
 // "noun" (parameter) + "action" (verb). All wire structs are packed, little-endian.
 //
@@ -23,7 +23,7 @@ public enum CsType : byte
     Led = 5, LedPwm = 6, Ir = 7
 }
 
-/// <summary>DSP parameter a control drives or reflects (firmware CsNoun, 0..48).
+/// <summary>DSP parameter a control drives or reflects (firmware CsNoun, 0..50).
 /// The picker reads which nouns are available (and their ranges/units/targets)
 /// live from caps — this enum is for the few places that special-case a noun.</summary>
 public enum CsNoun : byte
@@ -41,7 +41,9 @@ public enum CsNoun : byte
     Upmix = 35, UpmixCenterMode = 36, UpmixSurroundMode = 37, UpmixStrength = 38,
     UpmixWidth = 39, UpmixPresence = 40, Psybass = 41, PsybassCutoff = 42,
     PsybassHarmonics = 43, PsybassDrive = 44, PsybassCharacter = 45,
-    PsybassOriginal = 46, OutputDelay = 47, PresetReload = 48
+    PsybassOriginal = 46, OutputDelay = 47, PresetReload = 48,
+    // caps v7 additions: the two remaining loudness parameters.
+    LoudnessSpl = 49, LoudnessIntensity = 50
 }
 
 /// <summary>Verb a control performs (firmware CsAction). Value = bit position;
@@ -162,7 +164,7 @@ public static class CsStatus
 public static class CsLimits
 {
     public const int MaxBindings = 16;
-    public const int MaxIrCommands = 8;
+    public const int MaxIrCommands = 16;   // caps v6 doubled the table from 8
     public const int NameLen = 32;          // per-slot name buffer, NUL-terminated
     public const byte GpioUnused = 0xFF;
     public const ushort CapsAll = 0xFFFF;   // 0x86 wValue selecting the caps header
@@ -232,7 +234,7 @@ public static class CsWire
     };
 }
 
-/// <summary>Client-side display metadata for the 49 nouns (the wire format
+/// <summary>Client-side display metadata for the 51 nouns (the wire format
 /// carries no strings). Kept minimal — the picker still reads availability,
 /// ranges, units and targets from caps.</summary>
 public static class CsNounInfo
@@ -252,7 +254,9 @@ public static class CsNounInfo
         "Upmix Strength", "Upmix Centre Width", "Upmix Centre Presence",
         "Psychoacoustic Bass", "Bass Cutoff Frequency", "Bass Harmonics",
         "Bass Drive", "Bass Character", "Original Bass Level",
-        "Output Delay", "Reload Preset"
+        "Output Delay", "Reload Preset",
+        // caps v7
+        "Loudness Reference SPL", "Loudness Intensity"
     };
 
     // Value labels for the enum-kind nouns. The picker only uses as many entries
@@ -315,7 +319,8 @@ public static class CsNounInfo
             or CsNoun.Level => "Volume",
         CsNoun.Loudness or CsNoun.Crossfeed or CsNoun.Leveller or CsNoun.EqBypass
             or CsNoun.CrossfeedPreset or CsNoun.CrossfeedItd or CsNoun.LevellerAmount
-            or CsNoun.LevellerSpeed or CsNoun.LevellerLookahead => "DSP",
+            or CsNoun.LevellerSpeed or CsNoun.LevellerLookahead
+            or CsNoun.LoudnessSpl or CsNoun.LoudnessIntensity => "DSP",
         CsNoun.Upmix or CsNoun.UpmixCenterMode or CsNoun.UpmixSurroundMode
             or CsNoun.UpmixStrength or CsNoun.UpmixWidth or CsNoun.UpmixPresence => "Upmixer",
         CsNoun.Psybass or CsNoun.PsybassCutoff or CsNoun.PsybassHarmonics
@@ -600,8 +605,11 @@ public sealed class CsNounDesc
     }
 }
 
-/// <summary>The 32-byte CsStatusPacket (REQ_GET_CS_STATUS). The base v2 layout is
-/// 22 bytes; the IR tail (bytes 22..31) is only read when present.</summary>
+/// <summary>The 41-byte CsStatusPacket (REQ_GET_CS_STATUS). The base v2 layout is
+/// 22 bytes; the IR tail is only read when present, and moved at caps v6 (the
+/// active mask widened to a uint16 for 16 sub-slots, pushing the learn state to
+/// 24 and the per-sub-slot status array to 25). A v3..v5 firmware still answers
+/// with the 32-byte layout, so the tail is parsed by length.</summary>
 public sealed class CsStatusPacket
 {
     public byte LastStatus;      // most recent deferred CS SET result
@@ -610,9 +618,9 @@ public sealed class CsStatusPacket
     public bool Dirty;           // v3; live differs from flash
     public ushort ActiveMask;    // bit N = binding N live
     public byte[] SlotStatus = new byte[16];
-    public byte IrActiveMask;    // v3; bit N = IR command N live
+    public ushort IrActiveMask;  // v3 (uint16 since v6); bit N = IR command N live
     public CsIrLearnState IrLearnState; // v3
-    public byte[] IrCmdStatus = new byte[8]; // v3
+    public byte[] IrCmdStatus = new byte[CsLimits.MaxIrCommands]; // v3 (16 since v6)
 
     public bool IsSlotActive(int slot) =>
         slot >= 0 && slot < 16 && (ActiveMask & (1 << slot)) != 0;
@@ -621,7 +629,7 @@ public sealed class CsStatusPacket
         slot >= 0 && slot < SlotStatus.Length ? SlotStatus[slot] : (byte)0;
 
     public bool IsIrCmdActive(int sub) =>
-        sub >= 0 && sub < 8 && (IrActiveMask & (1 << sub)) != 0;
+        sub >= 0 && sub < CsLimits.MaxIrCommands && (IrActiveMask & (1 << sub)) != 0;
 
     public byte IrCmdHealth(int sub) =>
         sub >= 0 && sub < IrCmdStatus.Length ? IrCmdStatus[sub] : (byte)0;
@@ -638,13 +646,20 @@ public sealed class CsStatusPacket
             ActiveMask = BitConverter.ToUInt16(d, 4),
         };
         Array.Copy(d, 6, s.SlotStatus, 0, 16);
-        if (d.Length >= 24)
+        if (d.Length >= 41)
         {
+            // v6 tail: 16 sub-slots.
+            s.IrActiveMask = BitConverter.ToUInt16(d, 22);
+            s.IrLearnState = (CsIrLearnState)d[24];
+            Array.Copy(d, 25, s.IrCmdStatus, 0, 16);
+        }
+        else if (d.Length >= 24)
+        {
+            // v3..v5 tail: 8 sub-slots, byte-wide mask.
             s.IrActiveMask = d[22];
             s.IrLearnState = (CsIrLearnState)d[23];
+            if (d.Length >= 32) Array.Copy(d, 24, s.IrCmdStatus, 0, 8);
         }
-        if (d.Length >= 32)
-            Array.Copy(d, 24, s.IrCmdStatus, 0, 8);
         return s;
     }
 }

@@ -10,7 +10,7 @@ namespace DSPiConsole.ViewModels;
 /// Control Surfaces + IR remote state and device orchestration (firmware
 /// 0x84–0x8F, 0x9D/0x9E). The whole editor is caps-driven: we probe the caps
 /// header + per-noun descriptors once, then read the 16 binding slots, 16 slot
-/// names, and 8 IR command sub-slots.
+/// names, and up to 16 IR command sub-slots (the count comes from caps).
 ///
 /// <para>Three-tier persistence: every SET is a live-only <b>preview</b> that
 /// applies immediately (device <c>Dirty</c>=true) but is RAM-only; <see cref="CsSave"/>
@@ -144,7 +144,7 @@ public partial class MainViewModel
         });
     }
 
-    /// <summary>Re-read the 32-byte status packet (active/dirty masks, per-slot
+    /// <summary>Re-read the status packet (active/dirty masks, per-slot
     /// health) into <see cref="CsStatus"/>.</summary>
     public void RefreshCsStatus()
     {
