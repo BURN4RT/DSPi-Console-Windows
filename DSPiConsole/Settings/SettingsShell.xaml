@@ -29,6 +29,17 @@
         versions; the theme-resource override is the documented way.
     -->
     <UserControl.Resources>
+        <!-- Pending-changes overlay background. CardBackgroundFillColorDefault is
+             5% white in the dark theme, so the card was letting page content
+             scroll visibly through it. This is that card composited onto the
+             content area's SolidBackgroundFillColorBase, so it looks identical
+             but is opaque:
+                 0x20 * (1 - 13/255) + 0xFF * (13/255) = 43.4 -> 0x2B
+             A single value is safe because App.xaml pins RequestedTheme to Dark;
+             adding a light theme would mean a ThemeDictionaries entry here
+             (light works out to #FBFBFB by the same arithmetic). -->
+        <SolidColorBrush x:Key="PendingOverlayBackgroundBrush" Color="#2B2B2B"/>
+
         <!-- Pane backgrounds: transparent so the window's acrylic
              backdrop shows through the sidebar. -->
         <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="Transparent"/>
@@ -120,7 +131,7 @@
                     HorizontalAlignment="Stretch"
                     Margin="16,0,16,16"
                     MaxWidth="980"
-                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    Background="{StaticResource PendingOverlayBackgroundBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                     BorderThickness="1"
                     CornerRadius="12"
