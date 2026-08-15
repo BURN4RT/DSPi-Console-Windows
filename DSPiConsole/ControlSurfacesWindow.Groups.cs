@@ -160,6 +160,9 @@ public sealed partial class ControlSurfacesWindow
         int shown = _groupCards.Count;
         GroupsHeading.Text = shown > 0 ? $"Channel Groups ({shown}/{_vm.CsGroupMax})" : "Channel Groups";
         AddGroupButton.IsEnabled = FirstFreeGroup() >= 0;
+        // A card built here starts with a default-enabled Apply; the refresh is
+        // what puts it (and its tooltip) into the right state.
+        RefreshGroupMacroIndicators();
     }
 
     /// <summary>Build one group's card and insert it at its slot-ordered position,
@@ -362,14 +365,10 @@ public sealed partial class ControlSurfacesWindow
             _groupDrafts[idx] = _vm.CsGroups[idx].Clone();
             SyncGroupCard(idx);
         };
-        var apply = new Button { Content = "Apply", Style = AccentStyle };
         // The firmware rejects an empty group outright, so an unpopulated draft
-        // can't be applied; delete the card to clear the slot instead.
-        apply.IsEnabled = GroupDirty(idx) && _groupDrafts[idx].IsConfigured
-                          && _applyingGroup == null && !_savingConfig;
-        ToolTipService.SetToolTip(apply, _groupDrafts[idx].IsConfigured
-            ? "Preview this group on the device"
-            : "Select at least one channel");
+        // can't be applied; delete the card to clear the slot instead. Enabled
+        // state and tooltip both come from RefreshGroupMacroIndicators.
+        var apply = new Button { Content = "Apply", Style = AccentStyle };
         apply.Click += (_, _) => _ = ApplyGroupAsync(idx);
         _groupApply[idx] = apply;
         panel.Children.Add(revert);
@@ -771,8 +770,10 @@ public sealed partial class ControlSurfacesWindow
                         Content = "Wrap around at the ends",
                         IsChecked = (draft.Flags & CsFlags.Wrap) != 0,
                     };
-                    wrap.Checked += (_, _) => _macroDrafts[macro].Steps[step].Flags |= CsFlags.Wrap;
-                    wrap.Unchecked += (_, _) => _macroDrafts[macro].Steps[step].Flags &= ~CsFlags.Wrap;
+                    wrap.Checked += (_, _) =>
+                    { _macroDrafts[macro].Steps[step].Flags |= CsFlags.Wrap; RefreshGroupMacroIndicators(); };
+                    wrap.Unchecked += (_, _) =>
+                    { _macroDrafts[macro].Steps[step].Flags &= ~CsFlags.Wrap; RefreshGroupMacroIndicators(); };
                     panel.Children.Add(wrap);
                 }
             }
@@ -897,7 +898,10 @@ public sealed partial class ControlSurfacesWindow
             {
                 if (_building) return;
                 if (bandCombo.SelectedItem is ComboBoxItem it && it.Tag is int band)
+                {
                     _macroDrafts[macro].Steps[step].Index = (byte)band;
+                    RefreshGroupMacroIndicators();
+                }
             };
             panel.Children.Add(Row("Band", bandCombo));
         }
@@ -909,12 +913,17 @@ public sealed partial class ControlSurfacesWindow
         var draft = _macroDrafts[macro].Steps[step];
         var action = (CsAction)draft.Action;
 
+        // Every one of these writes the draft, so each has to re-run the dirty
+        // check: the card's Apply button is enabled from it.
         if (action is CsAction.Inc or CsAction.Dec)
         {
             string label = nd.Unit is CsUnit.Hz or CsUnit.Q ? "Step (octaves)"
                 : nd.Unit == CsUnit.None ? "Step (positions)" : StepLabel(nd.Unit);
             var box = NumberField(CsWire.DecodeStep(draft.Step, nd.Unit), CsUnit.None, v =>
-                _macroDrafts[macro].Steps[step].Step = CsWire.EncodeStep(v, nd.Unit));
+            {
+                _macroDrafts[macro].Steps[step].Step = CsWire.EncodeStep(v, nd.Unit);
+                RefreshGroupMacroIndicators();
+            });
             return Row(label, box);
         }
         if (action != CsAction.Set) return null;   // Toggle / Trigger take no operand
@@ -929,7 +938,10 @@ public sealed partial class ControlSurfacesWindow
             {
                 if (_building) return;
                 if (combo.SelectedItem is ComboBoxItem it && it.Tag is short v)
+                {
                     _macroDrafts[macro].Steps[step].Value = v;
+                    RefreshGroupMacroIndicators();
+                }
             };
             return Row("Value", combo);
         }
@@ -943,12 +955,18 @@ public sealed partial class ControlSurfacesWindow
             {
                 if (_building) return;
                 if (combo.SelectedItem is ComboBoxItem it && it.Tag is short v)
+                {
                     _macroDrafts[macro].Steps[step].Value = v;
+                    RefreshGroupMacroIndicators();
+                }
             };
-            return Row("Value", combo);
+            return Row("Value", combo);   // a step's noun is never the macro noun
         }
         var num = NumberField(CsWire.DecodeValue(draft.Value, nd.Unit), nd.Unit, v =>
-            _macroDrafts[macro].Steps[step].Value = CsWire.EncodeValue(v, nd.Unit));
+        {
+            _macroDrafts[macro].Steps[step].Value = CsWire.EncodeValue(v, nd.Unit);
+            RefreshGroupMacroIndicators();
+        });
         return Row(ValueLabel(nd.Unit), num);
     }
 
@@ -1291,8 +1309,15 @@ public sealed partial class ControlSurfacesWindow
             labels.Summary.Text = GroupSummary(idx);
         }
         foreach (var (idx, apply) in _groupApply)
-            apply.IsEnabled = GroupDirty(idx) && _groupDrafts[idx].IsConfigured
-                              && _applyingGroup == null && !_savingConfig;
+        {
+            bool populated = _groupDrafts[idx].IsConfigured;
+            apply.IsEnabled = GroupDirty(idx) && populated && _applyingGroup == null && !_savingConfig;
+            // The reason it's disabled changes as members are ticked, so the
+            // tooltip has to follow rather than stay at its build-time text.
+            ToolTipService.SetToolTip(apply, populated
+                ? "Preview this group on the device"
+                : "Select at least one channel");
+        }
 
         foreach (var (idx, pill) in _macroPills)
             SetPill(pill, MacroStatusText(idx), MacroStatusColor(idx));
