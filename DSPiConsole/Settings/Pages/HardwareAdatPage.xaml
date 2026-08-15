@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.HardwareAdatPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <!--
+        ADAT (RP2350-only). Both directions of the optical link on one page: they
+        are one feature to the user, and split across two pages each half repeated
+        the other's "Enable" / "Serial Data" cards word for word.
+
+          • Output (V17+): streams all 8 output channels down one lightpipe,
+            24-bit, concurrent with the SPDIF/I2S slots and PDM. The channel
+            mapping is fixed (slot N = output N) and S/MUX isn't exposed, so
+            enable + transmit pin are the whole of it.
+          • Input (V24+): a selectable 8-channel input source feeding input
+            channels 1-8. Its master/slave clock source and lock indicator are on
+            Hardware › Clocking with the rest of the clock domain; what's left
+            here is the enable and the receive pin.
+
+        Either half can be absent — the input needs newer firmware than the output
+        — so each section hides on its own and the section headings only earn
+        their place when both are showing. Registered when the firmware reports
+        either half.
+    -->
+    <StackPanel Spacing="4">
+
+        <!-- ── Output ───────────────────────────────────────────────────── -->
+        <TextBlock x:Name="OutputHeading" Text="Output" FontWeight="SemiBold"
+                   Margin="0,4,0,2"/>
+
+        <controls:SettingsCard x:Name="OutEnableCard" Header="Send audio over ADAT"
+                               Description="Stream all 8 output channels down one optical lightpipe (24-bit, 44.1/48 kHz). Lightpipe slot N carries output N.">
+            <ToggleSwitch x:Name="OutEnableToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnOutEnableToggled"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="OutPinCard" Header="Transmit pin (TX)"
+                               Description="GPIO driving the optical transmitter.">
+            <ComboBox x:Name="OutPinCombo" MinWidth="160" SelectionChanged="OnOutPinChanged"/>
+        </controls:SettingsCard>
+
+        <Border x:Name="SectionDivider" Height="1" Margin="0,10,0,6"
+                Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+        <!-- ── Input ────────────────────────────────────────────────────── -->
+        <TextBlock x:Name="InputHeading" Text="Input" FontWeight="SemiBold"
+                   Margin="0,4,0,2"/>
+
+        <controls:SettingsCard x:Name="InEnableCard" Header="Receive audio over ADAT"
+                               Description="Take 8 channels off an incoming optical lightpipe and offer them as the ADAT input source. Set the receive pin first.">
+            <ToggleSwitch x:Name="InEnableToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnInEnableToggled"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="InPinCard" Header="Receive pin (RX)"
+                               Description="GPIO fed by the optical receiver. Whether the DSPi is the clock master or slaves to this lightpipe, and its lock state, are on the Clocking page.">
+            <ComboBox x:Name="InPinCombo" MinWidth="160" SelectionChanged="OnInPinChanged"/>
+        </controls:SettingsCard>
+
+        <TextBlock x:Name="StatusText"
+                   FontSize="11"
+                   TextWrapping="Wrap"
+                   Visibility="Collapsed"/>
+    </StackPanel>
+</settings:SettingsModule>

@@ -12,8 +12,10 @@ namespace DSPiConsole.Settings.Pages;
 
 /// <summary>
 /// Hardware › I²S Configuration — MCK enable + pin + multiplier, BCK
-/// pin. Mirrors the legacy dialog's I²S section, with the same firmware
-/// constraints encoded in real-time control enablement.
+/// pin, and the slave-role clock pair. Mirrors the legacy dialog's I²S
+/// section, with the same firmware constraints encoded in real-time
+/// control enablement. The master/slave choice these controls answer to
+/// is on Hardware › Clocking; this page is the wiring.
 ///
 /// <para>
 /// Subscribes to <see cref="HardwarePins.PinAssignmentsChanged"/> for
@@ -149,13 +151,11 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
             || e.PropertyName == nameof(MainViewModel.MckMultiplier)
             || e.PropertyName == nameof(MainViewModel.MckPin)
             || e.PropertyName == nameof(MainViewModel.I2SBckPin)
-            || e.PropertyName == nameof(MainViewModel.I2sClockModeSupported)
-            || e.PropertyName == nameof(MainViewModel.I2sClockMode)
             || e.PropertyName == nameof(MainViewModel.I2sClockPinModeSupported)
             || e.PropertyName == nameof(MainViewModel.I2sClockPinMode)
             || e.PropertyName == nameof(MainViewModel.I2sBckPinSlave)
-            || e.PropertyName == nameof(MainViewModel.I2sSlaveActive)
-            || e.PropertyName == nameof(MainViewModel.I2sSlaveStatus))
+            // Set on Clocking, but it greys out this page's BCK/MCK/multiplier.
+            || e.PropertyName == nameof(MainViewModel.I2sSlaveActive))
         {
             DispatcherQueue.TryEnqueue(Refresh);
         }
@@ -197,28 +197,13 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         RefreshConflicts();
     }
 
-    /// <summary>Show/populate the clock-mode, clock-pin and slave-BCK cards when the
-    /// firmware supports them, plus the live lock indicator in slave mode. Runs under
-    /// the <c>_suppress</c> guard (called from Refresh).</summary>
+    /// <summary>Show/populate the clock-pin and slave-BCK cards when the firmware
+    /// supports them. The master/slave mode that decides whether the slave pair is
+    /// ever used lives on Hardware › Clocking. Runs under the <c>_suppress</c>
+    /// guard (called from Refresh).</summary>
     private void RefreshClockCards()
     {
         if (Vm == null) return;
-
-        // Clock master/slave mode (V21+).
-        ClockModeCard.Visibility = Vm.I2sClockModeSupported ? Visibility.Visible : Visibility.Collapsed;
-        SelectByStringTag(ClockModeCombo, Vm.I2sClockMode);
-
-        bool slave = Vm.I2sSlaveActive;
-        var st = Vm.I2sSlaveStatus;
-        ClockLockCard.Visibility = slave && st != null ? Visibility.Visible : Visibility.Collapsed;
-        if (slave && st != null)
-        {
-            string rate = st.IsLocked ? $" · {st.DetectedRateText}" : "";
-            ClockLockText.Text = st.StateText + rate;
-            ClockLockText.Foreground = new SolidColorBrush(st.IsLocked
-                ? Color.FromArgb(255, 100, 200, 140)
-                : Color.FromArgb(255, 240, 180, 90));
-        }
 
         // Clock-pin unified/split + slave BCK pin. The slave pair only exists in
         // Split mode, so hide the card entirely in Unified (it can't be changed).
@@ -499,43 +484,7 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         ShowStatus("Failed to set MCK multiplier", true);
     }
 
-    // ── I2S clock master/slave + clock-pin handlers ─────────────────────────
-
-    private async void OnClockModeChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppress || Vm == null) return;
-        if (ClockModeCombo.SelectedItem is not ComboBoxItem item || item.Tag is not string tag) return;
-        if (!byte.TryParse(tag, out var mode) || mode == Vm.I2sClockMode) return;
-        ClearStatus();
-
-        // Switching mode while an I2S output is live can emit sustained loud noise
-        // from the DAC if wiring hasn't been adjusted — confirm first.
-        if (Vm.AnySlotIsI2S)
-        {
-            var dialog = new ContentDialog
-            {
-                Title = "Change I2S clock mode?",
-                Content = "One or more I2S outputs are active. Switching between Master and Slave "
-                        + "modes may cause sustained loud noise from the connected DAC if the wiring "
-                        + "has not been adjusted.",
-                PrimaryButtonText = "Change Clock Mode",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Close,
-                XamlRoot = XamlRoot
-            };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-            {
-                _suppress = true;
-                SelectByStringTag(ClockModeCombo, Vm.I2sClockMode);
-                _suppress = false;
-                return;
-            }
-        }
-
-        await Task.Run(() => Vm.SetI2sClockMode(mode));
-        HardwarePins.RaisePinAssignmentsChanged();
-        ShowStatus($"I2S clock mode set to {(mode == 1 ? "Slave" : "Master")}", false);
-    }
+    // ── Clock-pin handlers ──────────────────────────────────────────────────
 
     private async void OnClockPinsChanged(object sender, SelectionChangedEventArgs e)
     {

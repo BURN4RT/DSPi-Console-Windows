@@ -183,8 +183,10 @@ internal static class HardwarePins
         // ADAT bulk output pin (V17+, RP2350): only claims a GPIO while the
         // optical output is actually enabled (a disabled ADAT's pin is just a
         // stored preference). excludeAdatSelf keeps it pickable on its own combo.
+        // "ADAT Out" rather than "ADAT" so the conflict label pairs with "ADAT In"
+        // — both directions live on one page now and either can own a GPIO.
         if (vm.AdatSupported && vm.AdatEnabled && !excludeAdatSelf)
-            owners[vm.AdatPin] = "ADAT";
+            owners[vm.AdatPin] = "ADAT Out";
 
         // ADAT optical input pin (V24+, RP2350): claims a GPIO only while enabled.
         // May legitimately share the ADAT-output pin (one-directional loopback), so

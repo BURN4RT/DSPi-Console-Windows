@@ -12,10 +12,10 @@ using Windows.UI;
 namespace DSPiConsole.Settings.Pages;
 
 /// <summary>
-/// Hardware › I2S Input — channel count (RP2350), one conflict-aware RX data pin
-/// per active stereo pair, and the master sample rate. Registered when the
-/// firmware exposes I2S input (V12+). The shared BCK/LRCK/MCK clock pins live on
-/// the Hardware › I2S page.
+/// Hardware › I2S Input — channel count (RP2350) and one conflict-aware RX data
+/// pin per active stereo pair. Registered when the firmware exposes I2S input
+/// (V12+). The shared BCK/LRCK/MCK clock pins live on the Hardware › I2S page,
+/// and the sample rate on Hardware › Clocking.
 /// </summary>
 public sealed partial class HardwareI2SInputPage : SettingsModule, ISettingsPage
 {
@@ -47,11 +47,8 @@ public sealed partial class HardwareI2SInputPage : SettingsModule, ISettingsPage
         base.Attach(vm, tracker);
 
         var fetchVm = vm;
-        _ = Task.Run(() =>
-        {
-            fetchVm.FetchI2sInputConfig();
-            fetchVm.FetchI2sInputRate();
-        }).ContinueWith(_ => DispatcherQueue.TryEnqueue(Refresh));
+        _ = Task.Run(fetchVm.FetchI2sInputConfig)
+            .ContinueWith(_ => DispatcherQueue.TryEnqueue(Refresh));
     }
 
     private void OnPageLoaded(object sender, RoutedEventArgs e)
@@ -78,8 +75,7 @@ public sealed partial class HardwareI2SInputPage : SettingsModule, ISettingsPage
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MainViewModel.I2sRxPin)
-            || e.PropertyName == nameof(MainViewModel.I2sInputChannels)
-            || e.PropertyName == nameof(MainViewModel.I2sInputRateHz))
+            || e.PropertyName == nameof(MainViewModel.I2sInputChannels))
         {
             DispatcherQueue.TryEnqueue(Refresh);
         }
@@ -107,7 +103,6 @@ public sealed partial class HardwareI2SInputPage : SettingsModule, ISettingsPage
         RxPinCard3.Visibility = pairs >= 4 ? Visibility.Visible : Visibility.Collapsed;
 
         RefreshConflicts();
-        RefreshRate();
     }
 
     /// <summary>Refresh per-item state on every active pin combo so pins claimed
@@ -142,28 +137,6 @@ public sealed partial class HardwareI2SInputPage : SettingsModule, ISettingsPage
                     item.IsEnabled = ownerLabel == null;
                 }
                 SelectPinInCombo(combo, currentPin);
-            }
-        }
-        finally { _suppress = false; }
-    }
-
-    private void RefreshRate()
-    {
-        if (Vm == null) return;
-        _suppress = true;
-        try
-        {
-            uint current = Vm.I2sInputRateHz;
-            for (int i = 0; i < I2sRateCombo.Items.Count; i++)
-            {
-                if (I2sRateCombo.Items[i] is ComboBoxItem item
-                    && uint.TryParse(item.Tag?.ToString(), NumberStyles.Integer,
-                        CultureInfo.InvariantCulture, out var hz)
-                    && hz == current)
-                {
-                    I2sRateCombo.SelectedIndex = i;
-                    return;
-                }
             }
         }
         finally { _suppress = false; }
@@ -252,27 +225,6 @@ public sealed partial class HardwareI2SInputPage : SettingsModule, ISettingsPage
 
     private string PairLabel(int pair) =>
         Vm != null && Vm.I2sActivePairs > 1 ? $"Serial Data {pair + 1}" : "I2S RX data";
-
-    private async void OnI2sRateChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppress || Vm == null) return;
-        if (I2sRateCombo.SelectedItem is not ComboBoxItem item) return;
-        if (!uint.TryParse(item.Tag?.ToString(), NumberStyles.Integer,
-                CultureInfo.InvariantCulture, out var hz)) return;
-        if (hz == Vm.I2sInputRateHz) return;
-
-        ClearStatus();
-        var ok = await Task.Run(() => Vm.SetI2sInputRate(hz));
-        if (ok)
-            ShowStatus($"I2S sample rate set to {hz / 1000.0:0.#} kHz", false);
-        else
-        {
-            _suppress = true;
-            RefreshRate();
-            _suppress = false;
-            ShowStatus("Failed to set sample rate", true);
-        }
-    }
 
     private void ShowStatus(string msg, bool isError)
     {

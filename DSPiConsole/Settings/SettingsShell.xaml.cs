@@ -388,12 +388,14 @@ public sealed partial class SettingsShell : UserControl
     /// the sidebar pending-dot lands on the right page instead of always the
     /// Output Assignment page.</summary>
     private static string PageForIoKey(string key) =>
-        key.StartsWith("io.spdif") ? "hardware.spdif-input"
-        : key.StartsWith("io.i2s-clock") ? "hardware.i2s"    // clock mode / clock pins live on I2S Configuration
-        : key.StartsWith("io.i2s-") ? "hardware.i2s-input"   // io.i2s-rx / io.i2s-ch / io.i2s-rate
+        // Clock domain first — these three are exact keys, and two of them would
+        // otherwise be swallowed by the io.i2s- / io.adat prefixes below.
+        key is "io.i2s-clock" or "io.i2s-rate" or "io.adat-in-clock" ? "hardware.clocking"
+        : key.StartsWith("io.spdif") ? "hardware.spdif-input"
+        : key.StartsWith("io.i2s-clock") ? "hardware.i2s"    // io.i2s-clock-pins
+        : key.StartsWith("io.i2s-") ? "hardware.i2s-input"   // io.i2s-rx / io.i2s-ch
         : key.StartsWith("io.bck") || key.StartsWith("io.mck") ? "hardware.i2s"
-        : key.StartsWith("io.adat-in") ? "hardware.adat-input"
-        : key.StartsWith("io.adat") ? "hardware.bulk-output"
+        : key.StartsWith("io.adat") ? "hardware.adat"   // both directions share one page
         : "hardware.output-assignment";                      // io.pin.* / io.slot.*
 
     private async void OnDiscardClick(object sender, RoutedEventArgs e)

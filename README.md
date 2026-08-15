@@ -251,11 +251,15 @@ The device is not limited to USB. Depending on your hardware and Firmware, the i
 S/PDIF, I2S and ADAT, and the settings window provides a page for each:
 
 - **Mains Outputs** assigns a GPIO pin to each output, with duplicate detection and conflict warnings.
-- **I²S Configuration** covers clock mode, the shared bit and word clocks, and the optional master clock.
+- **Clocking** holds the default sample rate and the master or slave choice for the I2S and ADAT clocks, each with
+  its lock indicator.
+- **I²S Configuration** covers the shared bit and word clocks, the optional master clock, and the pins the
+  slave-mode clocks arrive on.
 - **S/PDIF Input** configures the receiver, including multiple selectable instances on Firmware that supports them,
   and LG Sound Sync, which decodes volume and mute messages sent by LG televisions over TOSLINK.
-- **I2S Input** and **ADAT Input** configure the corresponding digital inputs.
-- **ADAT Output** configures the optical multichannel output on RP2350 devices.
+- **I2S Input** configures the multichannel I2S input.
+- **ADAT** configures both directions of the optical link on RP2350 devices: the eight-channel output and the
+  eight-channel input, each with its enable and data pin.
 - **External Mute Control** drives a DAC's hardware mute pin, so that muting produces true silence rather than a
   low signal level.
 - **Control Interfaces** configures the device's UART and I2C interfaces.
@@ -327,8 +331,8 @@ The settings window is organised into sections:
   presets or is saved independently.
 - **Graphing > Style, Scale and Grid & Labels.** Control the appearance of the frequency response plot, including
   its frequency and amplitude ranges, gridlines, labels, and whether inactive channels are drawn as dotted traces.
-- **Hardware.** Covers output pin assignment, ADAT output, I²S configuration, S/PDIF input, I2S input, ADAT input,
-  external mute control and control interfaces, as described above.
+- **Hardware.** Covers output pin assignment, clocking, ADAT, I²S configuration, S/PDIF input, I2S input, external
+  mute control and control interfaces, as described above.
 - **Presets > UI.** Determines how presets are presented in the main window.
 - **Advanced > Debug.** Provides diagnostic options intended for development and for investigating unexpected
   behaviour.

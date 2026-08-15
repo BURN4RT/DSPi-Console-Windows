@@ -7,7 +7,11 @@
     xmlns:controls="using:CommunityToolkit.WinUI.Controls">
 
     <!--
-        Four I²S clock-config cards. Their interrelation:
+        I²S clock-signal wiring: MCK, BCK, and the slave-role clock pair. The
+        master/slave choice itself lives on Hardware › Clocking, with the rest of
+        the clock domain; what's left here is which GPIOs the clocks land on.
+
+        Their interrelation:
           • BCK pin: only changeable when NO output slot is I²S (firmware
             refuses to re-route the clock while it's actively driving).
           • MCK pin: only changeable when MCK is OFF (same reason).
@@ -46,19 +50,6 @@
                                 Header="BCK pin">
                         <ComboBox x:Name="BckPinCombo" MinWidth="140"
                       SelectionChanged="OnBckPinChanged"/>
-        </controls:SettingsCard>
-
-        <controls:SettingsCard x:Name="ClockModeCard" Header="Clock Mode"
-                               Description="Master: Generate BCK/LRCK.&#x0A;Slave: Sync to an external master."
-                               Visibility="Collapsed">
-            <ComboBox x:Name="ClockModeCombo" MinWidth="120" SelectionChanged="OnClockModeChanged">
-                <ComboBoxItem Content="Master" Tag="0"/>
-                <ComboBoxItem Content="Slave" Tag="1"/>
-            </ComboBox>
-        </controls:SettingsCard>
-
-        <controls:SettingsCard x:Name="ClockLockCard" Header="Clock Lock" Visibility="Collapsed">
-            <TextBlock x:Name="ClockLockText" FontSize="12" VerticalAlignment="Center"/>
         </controls:SettingsCard>
 
         <controls:SettingsCard x:Name="ClockPinsCard" Header="Clock Pins"

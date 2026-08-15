@@ -11,10 +11,9 @@
           - Channels: input channel count (2/4/6/8) on RP2350; hidden on RP2040
             (stereo only). N channels use N/2 stereo pairs.
           - One "Serial Data" GPIO pin card per active stereo pair.
-          - Sample rate — DSPi is the I2S clock master; the host picks the rate
-            it drives (44.1 / 48 / 96 kHz).
         The BCK/LRCK/MCK clock pins are shared with the I2S *output* path and are
-        configured on the Hardware › I2S page. Registered on V12+ firmware only.
+        configured on the Hardware › I2S page; the sample rate and the master/slave
+        choice are on Hardware › Clocking. Registered on V12+ firmware only.
     -->
     <StackPanel Spacing="4">
 
@@ -50,16 +49,6 @@
                                Description="GPIO data pin for input channels 7-8."
                                Visibility="Collapsed">
             <ComboBox x:Name="RxPinCombo3" MinWidth="140" SelectionChanged="OnI2sRxPinChanged"/>
-        </controls:SettingsCard>
-
-        <controls:SettingsCard Header="Sample rate"
-                               Description="DSPi is the I2S clock master, so it drives the sample rate. The external source must slave to this clock.">
-            <ComboBox x:Name="I2sRateCombo" MinWidth="140"
-                      SelectionChanged="OnI2sRateChanged">
-                <ComboBoxItem Content="44.1 kHz" Tag="44100"/>
-                <ComboBoxItem Content="48 kHz" Tag="48000"/>
-                <ComboBoxItem Content="96 kHz" Tag="96000"/>
-            </ComboBox>
         </controls:SettingsCard>
 
         <TextBlock x:Name="StatusText"
