@@ -1092,7 +1092,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         if (output < 0 || output >= _outputMuted.Length) return;
         _outputMuted[output] = muted;
+        // Output mute is cached twice — by output index for the matrix window and
+        // by channel id for the main window's card, meters and dirty tracking.
+        // Both are written here so either window reflects the other's edit.
+        var outputs = ActiveOutputs;
+        if (output < outputs.Count) _channelMutes[(int)outputs[output].Id] = muted;
         Task.Run(() => _device.SetOutputMute(output, muted));
+        OnPropertyChanged(nameof(ChannelMutes));
         MatrixOutputMuteChanged?.Invoke(output);
         CheckDirty();
     }
@@ -2315,8 +2321,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _channelMutes[channelId] = muted;
         int outputIndex = GetOutputIndex(channelId);
         if (outputIndex < 0) return;
+        if (outputIndex < _outputMuted.Length) _outputMuted[outputIndex] = muted;
         Task.Run(() => _device.SetOutputMute(outputIndex, muted));
         OnPropertyChanged(nameof(ChannelMutes));
+        MatrixOutputMuteChanged?.Invoke(outputIndex);
         CheckDirty();
     }
 

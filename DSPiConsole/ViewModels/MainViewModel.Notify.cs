@@ -220,7 +220,13 @@ public partial class MainViewModel
                 OutputEnabledChanged?.Invoke(outIdx, en);
                 break;
             case 1 when p.Length >= 1:   // mute
-                _channelMutes[appId] = p[0] != 0;
+                bool muted = p[0] != 0;
+                _channelMutes[appId] = muted;
+                // Output mute is cached twice: by channel id (main window) and by
+                // output index (matrix window). A push has to land in both, or the
+                // matrix window keeps showing the pre-push state.
+                if (outIdx < _outputMuted.Length) _outputMuted[outIdx] = muted;
+                OnPropertyChanged(nameof(ChannelMutes));
                 MatrixOutputMuteChanged?.Invoke(outIdx);
                 break;
             case 4 when p.Length >= 4:   // gain

@@ -64,6 +64,7 @@ public sealed partial class MainWindow : Window
     private TextBox? _currentGainTextBox;
     private TextBox? _currentDelayTextBox;
     private Slider? _currentGainSlider;
+    private ToggleButton? _currentMuteButton;
     private Slider? _currentDelaySlider;
     private TextBlock? _currentDelayUnitText;
 
@@ -249,6 +250,11 @@ public sealed partial class MainWindow : Window
 
         ViewModel.MatrixOutputDelayChanged += outputIndex =>
             DispatcherQueue.TryEnqueue(() => { SyncDelayFromViewModel(outputIndex); BodePlot.Invalidate(); });
+
+        // A mute can arrive from anywhere: this window's own button, the matrix
+        // window, or a device push (control surface, remote, macro, UART/I2C).
+        ViewModel.MatrixOutputMuteChanged += outputIndex =>
+            DispatcherQueue.TryEnqueue(() => SyncMuteFromViewModel(outputIndex));
 
         ViewModel.MatrixRouteChanged += (input, output) =>
             DispatcherQueue.TryEnqueue(() => SyncRouteIndicator(input, output));
@@ -1409,6 +1415,7 @@ public sealed partial class MainWindow : Window
         }
 
         // Output channel controls: Gain, Delay, Mute
+        _currentMuteButton = null;   // only outputs have one; drop the last page's
         if (channel.IsOutput)
         {
             // Determine output index for matrix routing
@@ -1725,21 +1732,16 @@ public sealed partial class MainWindow : Window
             // ── Mute icon (col 4) ──
             var muteBtn = new ToggleButton
             {
-                Tag = channel, IsChecked = isMuted,
+                Tag = channel,
                 Padding = new Thickness(8),
                 VerticalAlignment = VerticalAlignment.Center,
                 Background = new SolidColorBrush(Colors.Transparent),
-                BorderThickness = new Thickness(0)
+                BorderThickness = new Thickness(0),
+                Content = new FontIcon { FontSize = 16 }
             };
-            muteBtn.Content = new FontIcon
-            {
-                Glyph = isMuted ? "\uE74F" : "\uE767",
-                FontSize = 16,
-                Foreground = isMuted
-                    ? new SolidColorBrush(Color.FromArgb(255, 80, 80, 80))
-                    : new SolidColorBrush(Color.FromArgb(200, 200, 200, 200))
-            };
+            ApplyMuteButtonState(muteBtn, isMuted);
             muteBtn.Click += OnMuteToggleClick;
+            _currentMuteButton = muteBtn;
             Grid.SetColumn(muteBtn, 4);
             cardGrid.Children.Add(muteBtn);
 
@@ -3628,19 +3630,41 @@ public sealed partial class MainWindow : Window
         if (sender is ToggleButton btn && btn.Tag is Channel channel)
         {
             bool muted = btn.IsChecked == true;
+            ApplyMuteButtonState(btn, muted);
+            // Raises MatrixOutputMuteChanged, which comes back through
+            // SyncMuteFromViewModel and refreshes the dashboard header line.
             ViewModel.SetChannelMute((int)channel.Id, muted);
-
-            // Update icon appearance
-            if (btn.Content is FontIcon icon)
-            {
-                icon.Glyph = muted ? "\uE74F" : "\uE767";
-                icon.Foreground = muted
-                    ? new SolidColorBrush(Color.FromArgb(255, 80, 80, 80))
-                    : new SolidColorBrush(Color.FromArgb(200, 200, 200, 200));
-            }
-
-            RefreshDashboardHeaderStats(channel);
         }
+    }
+
+    /// <summary>Put a mute toggle into a given state: checked, plus the speaker or
+    /// muted-speaker glyph and its dimmed colour. Setting IsChecked here cannot
+    /// re-enter <see cref="OnMuteToggleClick"/>, which is a Click handler.</summary>
+    private static void ApplyMuteButtonState(ToggleButton btn, bool muted)
+    {
+        btn.IsChecked = muted;
+        if (btn.Content is FontIcon icon)
+        {
+            icon.Glyph = muted ? "\uE74F" : "\uE767";
+            icon.Foreground = muted
+                ? new SolidColorBrush(Color.FromArgb(255, 80, 80, 80))
+                : new SolidColorBrush(Color.FromArgb(200, 200, 200, 200));
+        }
+    }
+
+    /// <summary>Reflect an output's mute state into this window: the output card's
+    /// toggle (when that channel is the one on screen) and the dashboard header
+    /// line. The inline meters read it on their own poll tick.</summary>
+    private void SyncMuteFromViewModel(int outputIndex)
+    {
+        var outputs = ViewModel.ActiveOutputs;
+        if (outputIndex < 0 || outputIndex >= outputs.Count) return;
+        var channel = outputs[outputIndex];
+
+        RefreshDashboardHeaderStats(channel);
+
+        if (_selectedChannel != null && _selectedChannel.Id == channel.Id && _currentMuteButton != null)
+            ApplyMuteButtonState(_currentMuteButton, ViewModel.GetChannelMute(channel));
     }
 
     private void OnFilterTypeChanged(object sender, SelectionChangedEventArgs e)
