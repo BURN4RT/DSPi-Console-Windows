@@ -15,13 +15,19 @@
     -->
     <StackPanel Spacing="12">
 
+        <!-- Both bars start Collapsed, not merely closed. A closed InfoBar still
+             counts as a child, so this StackPanel's Spacing reserved a gap for
+             each one and pushed the section text well clear of the page title.
+             SetBar() keeps Visibility in step with IsOpen. -->
         <InfoBar x:Name="UnsupportedBar" IsOpen="False" IsClosable="False"
+                 Visibility="Collapsed"
                  Severity="Informational" Title="Not available"
                  Message="This firmware does not include control-surface support."/>
 
         <!-- Per-edit feedback (a rejected Apply, a stranded control). Flash-save
              reporting belongs to the settings window's pending-changes prompt. -->
         <InfoBar x:Name="MessageBar" IsOpen="False" IsClosable="True"
+                 Visibility="Collapsed" Closed="OnMessageBarClosed"
                  Severity="Informational"/>
 
         <StackPanel x:Name="BodyPanel" Spacing="12">
@@ -64,12 +70,31 @@
             <!-- Channel groups (caps v9): one control drives a set of channels -->
             <StackPanel x:Name="GroupsSection" Spacing="10" Visibility="Collapsed">
                 <StackPanel Spacing="2">
-                    <TextBlock Text="Name a set of channels so one knob, button or LED can drive them all at once. Apply a group before a control can target it."
+                    <TextBlock Text="Name a set of channels so one knob, button or LED can drive them all at once."
                                FontSize="11" TextWrapping="Wrap"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                     <TextBlock x:Name="GroupsHeading" FontSize="11"
                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
                 </StackPanel>
+
+                <!-- Empty state. Same card as the Control Surfaces section, with
+                     that section's chain glyph so the two read as one family. -->
+                <Border x:Name="GroupsEmptyHint" Visibility="Collapsed"
+                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                        CornerRadius="8" Padding="24,32">
+                    <StackPanel Spacing="6" HorizontalAlignment="Center">
+                        <FontIcon Glyph="&#xE71B;" FontSize="28" HorizontalAlignment="Center"
+                                  Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                        <TextBlock Text="No groups yet" FontWeight="SemiBold" FontSize="14"
+                                   HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                        <TextBlock Text="Add a group to get started."
+                                   FontSize="12" TextWrapping="Wrap" TextAlignment="Center"
+                                   HorizontalAlignment="Center" MaxWidth="320"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                </Border>
+
                 <StackPanel x:Name="GroupsPanel" Spacing="10"/>
                 <Button x:Name="AddGroupButton" HorizontalAlignment="Left" Click="OnAddGroupClick">
                     <StackPanel Orientation="Horizontal" Spacing="8">
@@ -88,6 +113,23 @@
                     <TextBlock x:Name="MacrosHeading" FontSize="11"
                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
                 </StackPanel>
+
+                <Border x:Name="MacrosEmptyHint" Visibility="Collapsed"
+                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                        CornerRadius="8" Padding="24,32">
+                    <StackPanel Spacing="6" HorizontalAlignment="Center">
+                        <FontIcon Glyph="&#xE768;" FontSize="28" HorizontalAlignment="Center"
+                                  Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                        <TextBlock Text="No macros yet" FontWeight="SemiBold" FontSize="14"
+                                   HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                        <TextBlock Text="Add a macro to get started."
+                                   FontSize="12" TextWrapping="Wrap" TextAlignment="Center"
+                                   HorizontalAlignment="Center" MaxWidth="320"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                </Border>
+
                 <StackPanel x:Name="MacrosPanel" Spacing="10"/>
                 <Button x:Name="AddMacroButton" HorizontalAlignment="Left" Click="OnAddMacroClick">
                     <StackPanel Orientation="Horizontal" Spacing="8">
@@ -98,9 +140,9 @@
             </StackPanel>
 
             <TextBlock
-                Text="Changes preview live on the device. Saving them to flash is handled by the settings window's pending-changes prompt, the same as every other page."
+                Text="Changes preview live on the device once applied."
                 FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
         </StackPanel>
     </StackPanel>
 </UserControl>

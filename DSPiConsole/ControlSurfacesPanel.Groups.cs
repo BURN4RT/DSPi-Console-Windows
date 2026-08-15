@@ -168,6 +168,7 @@ public sealed partial class ControlSurfacesPanel
         int shown = _groupCards.Count;
         // The page title already names the section; this line only carries the count.
         GroupsHeading.Text = shown > 0 ? $"{shown} of {_vm.CsGroupMax} groups in use" : "";
+        GroupsEmptyHint.Visibility = Vis(shown == 0);
         AddGroupButton.IsEnabled = FirstFreeGroup() >= 0;
         // A card built here starts with a default-enabled Apply; the refresh is
         // what puts it (and its tooltip) into the right state.
@@ -552,6 +553,7 @@ public sealed partial class ControlSurfacesPanel
     {
         int shown = _macroCards.Count;
         MacrosHeading.Text = shown > 0 ? $"{shown} of {_vm.CsMacroMax} macros in use" : "";
+        MacrosEmptyHint.Visibility = Vis(shown == 0);
         AddMacroButton.IsEnabled = FirstFreeMacro() >= 0;
     }
 

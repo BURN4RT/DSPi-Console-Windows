@@ -221,12 +221,12 @@ public sealed partial class ControlSurfacesPanel : UserControl
     {
         if (!_vm.ControlSurfacesSupported || _vm.CsCaps is not { IsValid: true })
         {
-            UnsupportedBar.IsOpen = true;
+            SetBar(UnsupportedBar, true);
             BodyPanel.Visibility = Visibility.Collapsed;
             return;
         }
 
-        UnsupportedBar.IsOpen = false;
+        SetBar(UnsupportedBar, false);
         BodyPanel.Visibility = Visibility.Visible;
 
         // Only this panel's section is built. The others stay collapsed and their
@@ -243,6 +243,21 @@ public sealed partial class ControlSurfacesPanel : UserControl
     }
 
     private static Visibility Vis(bool show) => show ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>Open or close an InfoBar and take it out of the layout when closed.
+    /// A closed InfoBar draws nothing but still counts as a child, so the enclosing
+    /// StackPanel's Spacing reserves a gap for it — which is what pushed the
+    /// section text down from the page title.</summary>
+    private static void SetBar(InfoBar bar, bool open)
+    {
+        bar.IsOpen = open;
+        bar.Visibility = Vis(open);
+    }
+
+    /// <summary>The message bar is user-dismissable, and closing it that way sets
+    /// IsOpen without going through <see cref="SetBar"/>.</summary>
+    private void OnMessageBarClosed(InfoBar sender, InfoBarClosedEventArgs args) =>
+        sender.Visibility = Visibility.Collapsed;
 
     private void BuildAddMenu()
     {
@@ -1675,7 +1690,7 @@ public sealed partial class ControlSurfacesPanel : UserControl
         MessageBar.Title = "";
         MessageBar.Message = msg;
         MessageBar.Severity = InfoBarSeverity.Informational;
-        MessageBar.IsOpen = !string.IsNullOrEmpty(msg);
+        SetBar(MessageBar, !string.IsNullOrEmpty(msg));
     }
 
     // ── Helpers: seeding, pins, caps queries ─────────────────────────────────
