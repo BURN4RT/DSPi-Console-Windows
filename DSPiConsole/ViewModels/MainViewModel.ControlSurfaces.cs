@@ -48,6 +48,12 @@ public partial class MainViewModel
     private CsGroup[]? _csCleanGroups;
     private CsMacro[]? _csCleanMacros;
 
+    /// <summary>The device already had unsaved control-surface changes when we
+    /// first read it — from a previous app session, since the live config lives in
+    /// device RAM and outlives us. Tracked apart from the baseline diff because we
+    /// can say it happened but never say what changed.</summary>
+    private bool _csUnsavedOnArrival;
+
     /// <summary>Serializes the deferred CS writes. Individual control transfers are
     /// already locked, but a deferred SET is a <i>sequence</i> — the OUT, then a
     /// poll of the shared <c>LastStatus</c>/<c>LastSlot</c> pair until it names the
@@ -99,9 +105,11 @@ public partial class MainViewModel
     public CsNounDesc? CsNounDescFor(int noun) =>
         noun >= 0 && noun < _csNounDescs.Length ? _csNounDescs[noun] : null;
 
-    /// <summary>Unsaved-changes flag: the firmware's sticky dirty bit AND an actual
-    /// difference from the local clean baseline (so add-then-remove nets to clean).</summary>
-    public bool CsDirty => _csStatus?.Dirty == true && !MatchesCleanBaseline();
+    /// <summary>Unsaved-changes flag: either the device already had unsaved changes
+    /// when we found it, or the firmware's sticky dirty bit AND an actual difference
+    /// from the local clean baseline (so add-then-remove nets back to clean).</summary>
+    public bool CsDirty =>
+        _csUnsavedOnArrival || (_csStatus?.Dirty == true && !MatchesCleanBaseline());
 
     /// <summary>Raised (on the dispatcher) after the whole config is (re)loaded from
     /// the device — the window rebuilds its cards in response.</summary>
@@ -216,7 +224,14 @@ public partial class MainViewModel
         _csMacros = macros;
         _csExtStatus = ext;
         _csStatus = status;
-        if (status != null && !status.Dirty) CaptureCsCleanBaseline();
+        // Always take a baseline, even when the device arrives dirty. Without one
+        // nothing the user does from here on can be itemised, which is what left
+        // the prompt showing a change it couldn't name. Whether the device was
+        // already dirty is remembered separately: that state is real but
+        // unknowable in detail, since there's no command to read the flash copy
+        // to diff against (CsRevert would overwrite the live config to get it).
+        _csUnsavedOnArrival = status?.Dirty == true;
+        CaptureCsCleanBaseline();
 
         _dispatcher.TryEnqueue(() =>
         {
@@ -378,7 +393,11 @@ public partial class MainViewModel
         {
             byte result = _device.CsSave();
             RefreshCsStatus();
-            if (result == DSPiConsole.Core.Models.CsStatus.Success) CaptureCsCleanBaseline();
+            if (result == DSPiConsole.Core.Models.CsStatus.Success)
+            {
+                CaptureCsCleanBaseline();
+                _csUnsavedOnArrival = false;   // flash now matches live
+            }
             _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(CsDirty)));
             return result;
         }
@@ -410,7 +429,9 @@ public partial class MainViewModel
 
             var status = _device.GetCsStatus();
             _csStatus = status;
-            if (status != null && !status.Dirty) CaptureCsCleanBaseline();
+            // Live is the flash copy again, so whatever arrived unsaved is gone.
+            _csUnsavedOnArrival = false;
+            CaptureCsCleanBaseline();
         }
 
         _dispatcher.TryEnqueue(() =>
@@ -533,23 +554,23 @@ public partial class MainViewModel
     /// the user, renaming a control and re-targeting it are one edit to one thing.
     /// Empty while the firmware reports clean.</para>
     ///
-    /// <para>The baseline only gets captured when the device is seen clean, so
-    /// opening the app onto an already-dirty device leaves us with nothing to diff
-    /// against. That must still raise the prompt — the edits are real and unsaved,
-    /// we just can't itemise them — so it falls back to one aggregate entry rather
-    /// than reporting no changes.</para>
+    /// <para>Changes the device arrived with get one entry of their own. They are
+    /// genuinely unsaved and Save/Discard both act on them, but they can't be
+    /// itemised: the baseline is captured from the live config, and the flash copy
+    /// can't be read to diff against without CsRevert overwriting live to get it.
+    /// Saying so is better than either hiding it or pretending to name it.</para>
     /// </summary>
     public IReadOnlyList<PresetDiff.IoChange> GetControlSurfaceChanges()
     {
         var changes = new List<PresetDiff.IoChange>();
         if (!CsDirty) return changes;
 
+        if (_csUnsavedOnArrival)
+            changes.Add(new("cs.unsaved", "Control surfaces", "in flash", "live changes not saved"));
+
         if (_csCleanBindings == null || _csCleanNames == null || _csCleanIrCommands == null
             || _csCleanGroups == null || _csCleanMacros == null)
-        {
-            changes.Add(new("cs.all", "Control surfaces", "saved", "edited"));
             return changes;
-        }
 
         for (int i = 0; i < _csBindings.Length; i++)
         {

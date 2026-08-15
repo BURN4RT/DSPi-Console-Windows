@@ -140,35 +140,50 @@
                 <Border.RenderTransform>
                     <TranslateTransform x:Name="PendingTransform" Y="200"/>
                 </Border.RenderTransform>
-                <Grid ColumnSpacing="12">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
+                <StackPanel Spacing="8">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="2">
-                        <TextBlock x:Name="PendingTitle"
-                                   Text="1 pending device change"
-                                   FontWeight="SemiBold"/>
-                        <TextBlock Text="Written to device flash — independent of the loaded preset."
-                                   FontSize="12"
-                                   TextWrapping="Wrap"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                    </StackPanel>
+                        <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="2">
+                            <TextBlock x:Name="PendingTitle"
+                                       Text="1 pending device change"
+                                       FontWeight="SemiBold"/>
+                            <TextBlock Text="Written to device flash — independent of the loaded preset."
+                                       FontSize="12"
+                                       TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
 
-                    <Button x:Name="DiscardButton"
-                            Grid.Column="1"
-                            Content="Discard"
-                            VerticalAlignment="Center"
-                            Click="OnDiscardClick"/>
-                    <Button x:Name="ApplyButton"
-                            Grid.Column="2"
-                            Content="Save to flash"
-                            Style="{ThemeResource AccentButtonStyle}"
-                            VerticalAlignment="Center"
-                            Click="OnApplyClick"/>
-                </Grid>
+                        <Button x:Name="DiscardButton"
+                                Grid.Column="1"
+                                Content="Discard"
+                                VerticalAlignment="Center"
+                                Click="OnDiscardClick"/>
+                        <Button x:Name="ApplyButton"
+                                Grid.Column="2"
+                                Content="Save to flash"
+                                Style="{ThemeResource AccentButtonStyle}"
+                                VerticalAlignment="Center"
+                                Click="OnApplyClick"/>
+                    </Grid>
+
+                    <!-- What is actually pending. The tracker has carried a label and
+                         an old/new pair per entry since it was written, but nothing
+                         ever rendered them: the prompt showed a count and a dot on a
+                         page, which left the user to guess what had changed. Capped
+                         and scrollable so a large batch can't grow the card off the
+                         bottom of the window. -->
+                    <ScrollViewer x:Name="PendingListScroller"
+                                  MaxHeight="132"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="PendingList" Spacing="2"/>
+                    </ScrollViewer>
+                </StackPanel>
             </Border>
         </Grid>
     </NavigationView>
