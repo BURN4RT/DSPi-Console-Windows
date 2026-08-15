@@ -8,9 +8,10 @@ namespace DSPiConsole.ViewModels;
 
 /// <summary>
 /// Control Surfaces + IR remote state and device orchestration (firmware
-/// 0x84–0x8F, 0x9D/0x9E). The whole editor is caps-driven: we probe the caps
-/// header + per-noun descriptors once, then read the 16 binding slots, 16 slot
-/// names, and up to 16 IR command sub-slots (the count comes from caps).
+/// 0x84–0x8F, 0x9D/0x9E, plus 0x20–0x26 for caps-v9 groups and macros). The whole
+/// editor is caps-driven: we probe the caps header + per-noun descriptors once,
+/// then read the 16 binding slots, 16 slot names, up to 16 IR command sub-slots,
+/// and (on caps v9) the 8 target groups and 8 macros — every count from caps.
 ///
 /// <para>Three-tier persistence: every SET is a live-only <b>preview</b> that
 /// applies immediately (device <c>Dirty</c>=true) but is RAM-only; <see cref="CsSave"/>
@@ -34,26 +35,51 @@ public partial class MainViewModel
     private CsBinding[] _csBindings = NewClearedBindings();
     private string[] _csNames = NewEmptyNames();
     private IrCommand[] _csIrCommands = NewEmptyIrCommands();
+    private CsGroup[] _csGroups = NewEmptyGroups();
+    private CsMacro[] _csMacros = NewEmptyMacros();
     private CsStatusPacket? _csStatus;
+    private CsExtStatusPacket? _csExtStatus;
 
     // Local clean baseline (wire bytes) captured whenever the device reports a
     // non-dirty state — used for net-zero dirty suppression.
     private CsBinding[]? _csCleanBindings;
     private string[]? _csCleanNames;
     private IrCommand[]? _csCleanIrCommands;
+    private CsGroup[]? _csCleanGroups;
+    private CsMacro[]? _csCleanMacros;
 
     public CsCapsHeader? CsCaps => _csCaps;
     public IReadOnlyList<CsNounDesc?> CsNounDescs => _csNounDescs;
     public IReadOnlyList<CsBinding> CsBindings => _csBindings;
     public IReadOnlyList<string> CsNames => _csNames;
     public IReadOnlyList<IrCommand> CsIrCommands => _csIrCommands;
+    public IReadOnlyList<CsGroup> CsGroups => _csGroups;
+    public IReadOnlyList<CsMacro> CsMacros => _csMacros;
     public CsStatusPacket? CsStatus => _csStatus;
+    public CsExtStatusPacket? CsExtStatus => _csExtStatus;
 
     /// <summary>Number of usable binding slots (min of caps + local cap of 16).</summary>
     public int CsSlotCount => Math.Min((int)(_csCaps?.MaxBindings ?? CsLimits.MaxBindings), CsLimits.MaxBindings);
 
     /// <summary>Number of usable IR command sub-slots.</summary>
     public int CsIrMax => Math.Min((int)(_csCaps?.MaxIrCommands ?? 0), CsLimits.MaxIrCommands);
+
+    /// <summary>Whether this firmware serves target groups and macros (caps v9).
+    /// A pre-v9 header reports 0 in those bytes, which hides both sections.</summary>
+    public bool CsGroupsSupported => _csCaps?.HasGroupsAndMacros == true;
+
+    /// <summary>Number of usable group slots.</summary>
+    public int CsGroupMax => Math.Min((int)(_csCaps?.MaxGroups ?? 0), CsLimits.MaxGroups);
+
+    /// <summary>Number of usable macro slots.</summary>
+    public int CsMacroMax => Math.Min((int)(_csCaps?.MaxMacros ?? 0), CsLimits.MaxMacros);
+
+    /// <summary>Steps a macro may hold.</summary>
+    public int CsMacroStepMax => Math.Min((int)(_csCaps?.MaxMacroSteps ?? 0), CsLimits.MaxMacroSteps);
+
+    /// <summary>Macro currently running on the device, or null when idle.</summary>
+    public int? CsRunningMacro =>
+        _csExtStatus is { IsMacroRunning: true } e ? e.MacroRunning : null;
 
     /// <summary>Whether IR remote commands are available (a receiver type exists
     /// and the firmware advertises IR command slots).</summary>
@@ -94,6 +120,36 @@ public partial class MainViewModel
         return a;
     }
 
+    private static CsGroup[] NewEmptyGroups()
+    {
+        var a = new CsGroup[CsLimits.MaxGroups];
+        for (int i = 0; i < a.Length; i++) a[i] = CsGroup.Cleared();
+        return a;
+    }
+
+    private static CsMacro[] NewEmptyMacros()
+    {
+        var a = new CsMacro[CsLimits.MaxMacros];
+        for (int i = 0; i < a.Length; i++) a[i] = new CsMacro();
+        return a;
+    }
+
+    /// <summary>Channels addressable by a group of this kind — the widest
+    /// <c>target_count</c> any noun advertises for that space, which is exactly
+    /// what the firmware bounds a group's member mask against.</summary>
+    public int CsChannelCount(CsTarget kind)
+    {
+        int max = 0;
+        foreach (var nd in _csNounDescs)
+        {
+            if (nd == null || !nd.IsAvailable) continue;
+            // DSP_BAND nouns address the same channel space as DSP_CH.
+            var k = nd.TargetKind == CsTarget.DspBand ? CsTarget.DspCh : nd.TargetKind;
+            if (k == kind && nd.TargetCount > max) max = nd.TargetCount;
+        }
+        return max;
+    }
+
     /// <summary>Probe the feature and read the whole live config: caps header,
     /// per-noun descriptors, all binding slots + names, and IR command sub-slots.
     /// Sets <see cref="ControlSurfacesSupported"/> (false if the firmware STALLs).
@@ -125,6 +181,22 @@ public partial class MainViewModel
         for (int i = 0; i < irMax; i++)
             irCmds[i] = _device.GetCsIrCommand(i) ?? new IrCommand();
 
+        // Groups and macros (caps v9). A pre-v9 firmware advertises none and
+        // STALLs 0x20-0x26, so the tables stay empty and the UI hides them.
+        var groups = NewEmptyGroups();
+        var macros = NewEmptyMacros();
+        CsExtStatusPacket? ext = null;
+        if (caps.HasGroupsAndMacros)
+        {
+            int groupMax = Math.Min((int)caps.MaxGroups, CsLimits.MaxGroups);
+            for (int g = 0; g < groupMax; g++)
+                groups[g] = _device.GetCsGroup(g) ?? CsGroup.Cleared();
+            int macroMax = Math.Min((int)caps.MaxMacros, CsLimits.MaxMacros);
+            for (int m = 0; m < macroMax; m++)
+                macros[m] = _device.GetCsMacro(m) ?? new CsMacro();
+            ext = _device.GetCsExtStatus();
+        }
+
         var status = _device.GetCsStatus();
 
         _csCaps = caps;
@@ -132,6 +204,9 @@ public partial class MainViewModel
         _csBindings = bindings;
         _csNames = names;
         _csIrCommands = irCmds;
+        _csGroups = groups;
+        _csMacros = macros;
+        _csExtStatus = ext;
         _csStatus = status;
         if (status != null && !status.Dirty) CaptureCsCleanBaseline();
 
@@ -139,6 +214,7 @@ public partial class MainViewModel
         {
             ControlSurfacesSupported = true;
             OnPropertyChanged(nameof(CsStatus));
+            OnPropertyChanged(nameof(CsExtStatus));
             OnPropertyChanged(nameof(CsDirty));
             ControlSurfacesReloaded?.Invoke();
         });
@@ -186,6 +262,77 @@ public partial class MainViewModel
         return result;
     }
 
+    /// <summary>Re-read the group/macro status packet (table limits, per-slot
+    /// validity, the running macro).</summary>
+    public void RefreshCsExtStatus()
+    {
+        if (!CsGroupsSupported) return;
+        var ext = _device.GetCsExtStatus();
+        if (ext == null) return;
+        _csExtStatus = ext;
+        _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(CsExtStatus)));
+    }
+
+    /// <summary>Stage a target group (live preview) and re-read it. Applying a
+    /// group re-validates every binding that references one, so the status packet
+    /// (and any slot health it changed) is re-read too.</summary>
+    public byte SetCsGroup(int idx, CsGroup group)
+    {
+        byte result = _device.SetCsGroup(idx, group);
+        _csGroups[idx] = _device.GetCsGroup(idx) ?? CsGroup.Cleared();
+        RefreshCsStatus();
+        RefreshCsExtStatus();
+        return result;
+    }
+
+    /// <summary>Stage a whole macro: the changed steps first, then the header
+    /// carrying the final step count, so a concurrently-fired macro never sees a
+    /// count that exceeds its written steps (spec s3). Only records that differ
+    /// from the live macro go over the wire, and the first failure stops the write
+    /// and is returned.</summary>
+    public byte SetCsMacro(int idx, CsMacro macro)
+    {
+        byte result = DSPiConsole.Core.Models.CsStatus.Success;
+        var live = _csMacros[idx];
+        var empty = new CsMacroStep();
+
+        for (int s = 0; s < CsMacroStepMax; s++)
+        {
+            // Steps past the new count are cleared, so shortening a macro leaves
+            // no stale tail behind.
+            var step = s < macro.StepCount ? macro.Steps[s] : empty;
+            if (s < live.Steps.Length && step.WireEquals(live.Steps[s])) continue;
+            result = _device.SetCsMacroStep(idx, s, step);
+            if (result != DSPiConsole.Core.Models.CsStatus.Success) break;
+        }
+        if (result == DSPiConsole.Core.Models.CsStatus.Success
+            && (live.StepCount != macro.StepCount
+                || !string.Equals(live.Name, macro.Name, StringComparison.Ordinal)))
+            result = _device.SetCsMacroHeader(idx, macro);
+
+        _csMacros[idx] = _device.GetCsMacro(idx) ?? new CsMacro();
+        RefreshCsStatus();
+        RefreshCsExtStatus();
+        return result;
+    }
+
+    /// <summary>Fire a macro on the device. False if the firmware rejected it
+    /// (bad index or step count) — the reason lands in the status packet.</summary>
+    public bool CsMacroFire(int idx)
+    {
+        bool ok = _device.CsMacroFire(idx);
+        RefreshCsStatus();
+        RefreshCsExtStatus();
+        return ok;
+    }
+
+    /// <summary>Cancel the running macro. Steps already dispatched stand.</summary>
+    public void CsMacroCancel()
+    {
+        _device.CsMacroCancel();
+        RefreshCsExtStatus();
+    }
+
     /// <summary>Persist the whole live config to flash. On success re-captures the
     /// clean baseline so the Save bar clears.</summary>
     public byte CsSave()
@@ -212,6 +359,11 @@ public partial class MainViewModel
         int irMax = CsIrMax;
         for (int i = 0; i < irMax; i++)
             _csIrCommands[i] = _device.GetCsIrCommand(i) ?? new IrCommand();
+        for (int g = 0; g < CsGroupMax; g++)
+            _csGroups[g] = _device.GetCsGroup(g) ?? CsGroup.Cleared();
+        for (int m = 0; m < CsMacroMax; m++)
+            _csMacros[m] = _device.GetCsMacro(m) ?? new CsMacro();
+        if (CsGroupsSupported) _csExtStatus = _device.GetCsExtStatus() ?? _csExtStatus;
 
         var status = _device.GetCsStatus();
         _csStatus = status;
@@ -220,6 +372,7 @@ public partial class MainViewModel
         _dispatcher.TryEnqueue(() =>
         {
             OnPropertyChanged(nameof(CsStatus));
+            OnPropertyChanged(nameof(CsExtStatus));
             OnPropertyChanged(nameof(CsDirty));
             ControlSurfacesReloaded?.Invoke();
         });
@@ -240,6 +393,34 @@ public partial class MainViewModel
             CsTarget.OutputCh => $"Output {index + 1}",
             _ => $"Channel {index + 1}",
         };
+    }
+
+    /// <summary>Display name for a group slot — its user-set name, or a positional
+    /// fallback while it is unnamed.</summary>
+    public string CsGroupLabel(int idx)
+    {
+        if (idx < 0 || idx >= _csGroups.Length) return $"Group {idx + 1}";
+        var name = _csGroups[idx].Name;
+        return string.IsNullOrWhiteSpace(name) ? $"Group {idx + 1}" : name;
+    }
+
+    /// <summary>Display name for a macro slot — its user-set name, or a positional
+    /// fallback while it is unnamed.</summary>
+    public string CsMacroLabel(int idx)
+    {
+        if (idx < 0 || idx >= _csMacros.Length) return $"Macro {idx + 1}";
+        var name = _csMacros[idx].Name;
+        return string.IsNullOrWhiteSpace(name) ? $"Macro {idx + 1}" : name;
+    }
+
+    /// <summary>Comma-separated member names for a group, e.g. "Front L, Front R".</summary>
+    public string CsGroupMembersLabel(CsGroup group)
+    {
+        if (group == null || !group.IsConfigured) return "No channels";
+        var parts = new List<string>();
+        for (int ch = 0; ch < 32; ch++)
+            if ((group.MemberMask & (1u << ch)) != 0) parts.Add(CsTargetLabel(group.Kind, ch));
+        return parts.Count > 0 ? string.Join(", ", parts) : "No channels";
     }
 
     /// <summary>The app channel a CS target addresses, or null if out of range.
@@ -290,11 +471,16 @@ public partial class MainViewModel
         _csCleanNames = (string[])_csNames.Clone();
         _csCleanIrCommands = new IrCommand[_csIrCommands.Length];
         for (int i = 0; i < _csIrCommands.Length; i++) _csCleanIrCommands[i] = _csIrCommands[i].Clone();
+        _csCleanGroups = new CsGroup[_csGroups.Length];
+        for (int i = 0; i < _csGroups.Length; i++) _csCleanGroups[i] = _csGroups[i].Clone();
+        _csCleanMacros = new CsMacro[_csMacros.Length];
+        for (int i = 0; i < _csMacros.Length; i++) _csCleanMacros[i] = _csMacros[i].Clone();
     }
 
     private bool MatchesCleanBaseline()
     {
-        if (_csCleanBindings == null || _csCleanNames == null || _csCleanIrCommands == null)
+        if (_csCleanBindings == null || _csCleanNames == null || _csCleanIrCommands == null
+            || _csCleanGroups == null || _csCleanMacros == null)
             return false; // no baseline yet → treat firmware dirty as authoritative
         for (int i = 0; i < _csBindings.Length; i++)
             if (!_csBindings[i].WireEquals(_csCleanBindings[i])) return false;
@@ -302,6 +488,10 @@ public partial class MainViewModel
             if (!string.Equals(_csNames[i], _csCleanNames[i], StringComparison.Ordinal)) return false;
         for (int i = 0; i < _csIrCommands.Length; i++)
             if (!_csIrCommands[i].WireEquals(_csCleanIrCommands[i])) return false;
+        for (int i = 0; i < _csGroups.Length; i++)
+            if (!_csGroups[i].WireEquals(_csCleanGroups[i])) return false;
+        for (int i = 0; i < _csMacros.Length; i++)
+            if (!_csMacros[i].WireEquals(_csCleanMacros[i])) return false;
         return true;
     }
 }

@@ -70,6 +70,44 @@
                         </DropDownButton.Flyout>
                     </DropDownButton>
 
+                    <!-- Channel groups (caps v9): one control drives a set of channels -->
+                    <StackPanel x:Name="GroupsSection" Spacing="10" Visibility="Collapsed">
+                        <Border Height="1" Margin="0,6,0,0"
+                                Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+                        <StackPanel Spacing="1">
+                            <TextBlock x:Name="GroupsHeading" Text="Channel Groups" FontWeight="SemiBold" FontSize="14"/>
+                            <TextBlock Text="Name a set of channels so one knob, button or LED can drive them all at once."
+                                       FontSize="11" TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <StackPanel x:Name="GroupsPanel" Spacing="10"/>
+                        <Button x:Name="AddGroupButton" HorizontalAlignment="Left" Click="OnAddGroupClick">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE710;" FontSize="13" VerticalAlignment="Center"/>
+                                <TextBlock Text="Add Group" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Macros (caps v9): a button or remote key fires a sequence of steps -->
+                    <StackPanel x:Name="MacrosSection" Spacing="10" Visibility="Collapsed">
+                        <Border Height="1" Margin="0,6,0,0"
+                                Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+                        <StackPanel Spacing="1">
+                            <TextBlock x:Name="MacrosHeading" Text="Macros" FontWeight="SemiBold" FontSize="14"/>
+                            <TextBlock Text="A sequence of parameter changes, each with its own delay, fired by a button, a remote key or from here."
+                                       FontSize="11" TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <StackPanel x:Name="MacrosPanel" Spacing="10"/>
+                        <Button x:Name="AddMacroButton" HorizontalAlignment="Left" Click="OnAddMacroClick">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE710;" FontSize="13" VerticalAlignment="Center"/>
+                                <TextBlock Text="Add Macro" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
                     <TextBlock
                         Text="Changes preview live on the device. Use Save to persist them to flash, or Revert to discard."
                         FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"

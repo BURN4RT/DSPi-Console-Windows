@@ -3,10 +3,12 @@ using System;
 namespace DSPiConsole.Core.Models;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Control Surfaces + IR remote (firmware control_surfaces.h; caps v7, config v2,
-// IR config v2). Physical GPIO controls (buttons, switches, pots, encoders, LEDs,
-// PWM LEDs) and an IR receiver with learned remote commands, each bound to a DSP
-// "noun" (parameter) + "action" (verb). All wire structs are packed, little-endian.
+// Control Surfaces + IR remote (firmware control_surfaces.h; caps v9, config v2,
+// IR config v2, group/macro config v1). Physical GPIO controls (buttons, switches,
+// pots, encoders, LEDs, PWM LEDs) and an IR receiver with learned remote commands,
+// each bound to a DSP "noun" (parameter) + "action" (verb). Caps v9 adds target
+// groups (one control drives a named set of channels) and macros (a button fires a
+// short sequence of delayed steps). All wire structs are packed, little-endian.
 //
 // The whole editor is CAPS-DRIVEN: the firmware serves a capabilities header, a
 // per-type action/pin table, and a per-noun descriptor table over 0x86; the host
@@ -23,7 +25,7 @@ public enum CsType : byte
     Led = 5, LedPwm = 6, Ir = 7
 }
 
-/// <summary>DSP parameter a control drives or reflects (firmware CsNoun, 0..50).
+/// <summary>DSP parameter a control drives or reflects (firmware CsNoun, 0..52).
 /// The picker reads which nouns are available (and their ranges/units/targets)
 /// live from caps — this enum is for the few places that special-case a noun.</summary>
 public enum CsNoun : byte
@@ -43,7 +45,13 @@ public enum CsNoun : byte
     PsybassHarmonics = 43, PsybassDrive = 44, PsybassCharacter = 45,
     PsybassOriginal = 46, OutputDelay = 47, PresetReload = 48,
     // caps v7 additions: the two remaining loudness parameters.
-    LoudnessSpl = 49, LoudnessIntensity = 50
+    LoudnessSpl = 49, LoudnessIntensity = 50,
+    // caps v8: loudest channel of the active input (read-only, untargeted) —
+    // signal-presence sensing for amplifier trigger outputs.
+    InputLevelMax = 51,
+    // caps v9: an enum of macro slots. SET fires macro `value`; IND_EQUALS lights
+    // while it runs. The live read is the running index, or 255 when idle.
+    Macro = 52
 }
 
 /// <summary>Verb a control performs (firmware CsAction). Value = bit position;
@@ -67,7 +75,7 @@ public enum CsAction : byte
 /// <summary>Button gesture (firmware CsEvent); 0 for non-button types.</summary>
 public enum CsEvent : byte { Press = 0, Long = 1, Double = 2 }
 
-/// <summary>CsBinding.flags / IrCommand.flags bitfield.</summary>
+/// <summary>CsBinding.flags / IrCommand.flags / CsMacroStep.flags bitfield.</summary>
 [Flags]
 public enum CsFlags : byte
 {
@@ -76,7 +84,12 @@ public enum CsFlags : byte
     Reverse = 0x02,  // pot / encoder: invert direction
     Wrap = 0x04,     // enum STEP/INC/DEC wraps around
     Accel = 0x08,    // encoder only: fast rotation multiplies step
-    Repeat = 0x10    // button INC/DEC on press: auto-repeat while held
+    Repeat = 0x10,   // button INC/DEC on press: auto-repeat while held
+    // caps v9. Group re-reads `target` as a group index; the two modifiers
+    // require it and the firmware rejects them without it.
+    Group = 0x20,
+    LinkAbs = 0x40,  // grouped pot ADJUST: drive members identical, not offset-preserving
+    GroupAll = 0x80  // grouped IND_EQUALS/IND_ABOVE: lit when every member matches, not any
 }
 
 /// <summary>Noun value shape (firmware CS_KIND_*).</summary>
@@ -134,6 +147,9 @@ public static class CsStatus
     public const byte FlashError = 0x1C;
     public const byte IrInUse = 0x1D;
     public const byte NoIr = 0x1E;
+    public const byte InvalidGroup = 0x1F;  // v9: group empty, out of range, or kind-mismatched
+    public const byte InvalidMacro = 0x20;  // v9: bad macro index or step count
+    public const byte InvalidStep = 0x21;   // v9: macro step record invalid
 
     /// <summary>Human-readable message for a CS status code.</summary>
     public static string Message(byte code) => code switch
@@ -156,6 +172,9 @@ public static class CsStatus
         FlashError => "Flash write failed",
         IrInUse => "An IR receiver is already configured",
         NoIr => "No IR receiver is active",
+        InvalidGroup => "Group is empty or doesn't match this parameter's channels",
+        InvalidMacro => "Invalid macro",
+        InvalidStep => "Invalid macro step",
         _ => $"Error 0x{code:X2}"
     };
 }
@@ -165,12 +184,24 @@ public static class CsLimits
 {
     public const int MaxBindings = 16;
     public const int MaxIrCommands = 16;   // caps v6 doubled the table from 8
+    public const int MaxGroups = 8;        // caps v9
+    public const int MaxMacros = 8;        // caps v9
+    public const int MaxMacroSteps = 8;    // caps v9
     public const int NameLen = 32;          // per-slot name buffer, NUL-terminated
     public const byte GpioUnused = 0xFF;
     public const ushort CapsAll = 0xFFFF;   // 0x86 wValue selecting the caps header
     public const byte LastSlotSave = 0xFF;  // CsStatusPacket.LastSlot for save/revert
     public const byte LastSlotIrFlag = 0x80;// high bit of LastSlot marks an IR sub-slot
+    public const byte LastSlotGroupFlag = 0x40; // v9: LastSlot tag for a group SET
+    public const byte LastSlotMacroFlag = 0x60; // v9: LastSlot tag for a macro header/step SET
+    public const byte MacroIdle = 0xFF;     // CsExtStatusPacket.MacroRunning when nothing runs
+    public const ushort MacroFireCancel = 0xFFFF; // 0x25 wValue cancelling the running macro
     public const byte NdfDeferred = 0x01;   // CsNounDesc.dflags
+
+    /// <summary>Macro step <c>pre_delay</c> is in 10 ms units; the indicator
+    /// <c>on_delay</c>/<c>off_delay</c> pair is in 0.1 s units.</summary>
+    public const double MacroDelayUnitSeconds = 0.01;
+    public const double IndicatorDelayUnitSeconds = 0.1;
 
     /// <summary>The only GPIOs a pot may occupy (ADC0..2). GPIO 29 (VSYS) excluded.</summary>
     public static readonly byte[] AdcPins = { 26, 27, 28 };
@@ -224,6 +255,25 @@ public static class CsWire
         _ => 1                                // 1 dB / 1 %
     };
 
+    /// <summary>Write a NUL-terminated 32-byte name field (group / macro records).
+    /// Truncated to 31 UTF-8 bytes so the terminator always fits.</summary>
+    public static void WriteName(string name, byte[] dest, int offset)
+    {
+        if (string.IsNullOrEmpty(name)) return;
+        var raw = System.Text.Encoding.UTF8.GetBytes(name);
+        int len = Math.Min(raw.Length, CsLimits.NameLen - 1);
+        Array.Copy(raw, 0, dest, offset, len);
+    }
+
+    /// <summary>Read a NUL-terminated 32-byte name field.</summary>
+    public static string ReadName(byte[] src, int offset)
+    {
+        int end = offset;
+        int limit = Math.Min(src.Length, offset + CsLimits.NameLen);
+        while (end < limit && src[end] != 0) end++;
+        return System.Text.Encoding.UTF8.GetString(src, offset, end - offset);
+    }
+
     public static string IrProtocolName(CsIrProto p) => p switch
     {
         CsIrProto.Nec => "NEC",
@@ -234,7 +284,7 @@ public static class CsWire
     };
 }
 
-/// <summary>Client-side display metadata for the 51 nouns (the wire format
+/// <summary>Client-side display metadata for the 53 nouns (the wire format
 /// carries no strings). Kept minimal — the picker still reads availability,
 /// ranges, units and targets from caps.</summary>
 public static class CsNounInfo
@@ -256,7 +306,9 @@ public static class CsNounInfo
         "Bass Drive", "Bass Character", "Original Bass Level",
         "Output Delay", "Reload Preset",
         // caps v7
-        "Loudness Reference SPL", "Loudness Intensity"
+        "Loudness Reference SPL", "Loudness Intensity",
+        // caps v8 / v9
+        "Input Level (Loudest)", "Macro"
     };
 
     // Value labels for the enum-kind nouns. The picker only uses as many entries
@@ -267,7 +319,7 @@ public static class CsNounInfo
           "Preset 6", "Preset 7", "Preset 8", "Preset 9", "Preset 10" };
 
     private static readonly string[] InputSourceNames =
-        { "USB", "S/PDIF", "I2S", "ADAT", "S/PDIF 2", "S/PDIF 3" };
+        { "USB", "S/PDIF", "I2S", "ADAT", "S/PDIF 2", "S/PDIF 3", "S/PDIF 4" };
 
     private static readonly string[] CrossfeedPresetNames =
         { "Default", "Chu Moy", "Jan Meier", "Custom" };
@@ -319,7 +371,7 @@ public static class CsNounInfo
     public static string Group(int noun) => (CsNoun)noun switch
     {
         CsNoun.UserVolume or CsNoun.MasterVolume or CsNoun.UserMute or CsNoun.Preamp
-            or CsNoun.Level => "Volume",
+            or CsNoun.Level or CsNoun.InputLevelMax => "Volume",
         CsNoun.Loudness or CsNoun.Crossfeed or CsNoun.Leveller or CsNoun.EqBypass
             or CsNoun.CrossfeedPreset or CsNoun.CrossfeedItd or CsNoun.LevellerAmount
             or CsNoun.LevellerSpeed or CsNoun.LevellerLookahead
@@ -335,7 +387,7 @@ public static class CsNounInfo
             or CsNoun.FilterBypass => "Filter",
         CsNoun.Preset or CsNoun.InputSource or CsNoun.Siggen or CsNoun.DacMuteTest
             or CsNoun.SampleRate or CsNoun.UsbStreaming or CsNoun.AdatActive
-            or CsNoun.PresetReload => "System",
+            or CsNoun.PresetReload or CsNoun.Macro => "System",
         CsNoun.LgSync or CsNoun.LgPresent or CsNoun.LgMuted or CsNoun.SpdifLock => "LG / S/PDIF",
         CsNoun.Clip or CsNoun.ClipCh => "Status",
         _ => "Other"
@@ -367,9 +419,15 @@ public sealed class CsBinding
     public short Step;          // @12 STEP/INC/DEC size; 0 = unit default
     public short RangeMin;      // @14 pot/IND_LEVEL span low; both 0 = full range
     public short RangeMax;      // @16 pot/IND_LEVEL span high
-    // @18..23 reserved2[6]
+    public ushort OnDelay;      // @18 caps v8: TON filter, 0.1 s units (LED IND_EQUALS/IND_ABOVE only)
+    public ushort OffDelay;     // @20 caps v8: TOF filter, same units and rules
+    // @22..23 reserved2[2]
 
     public bool IsConfigured => Type != CsType.None;
+
+    /// <summary>True when <see cref="Target"/> is a group index rather than a
+    /// channel (caps v9).</summary>
+    public bool IsGrouped => (Flags & CsFlags.Group) != 0;
 
     /// <summary>A fresh cleared-slot binding (gpio1 = 0 so the blob is all-zero).</summary>
     public static CsBinding Cleared() => new() { Gpio1 = 0 };
@@ -391,6 +449,8 @@ public sealed class CsBinding
         BitConverter.GetBytes(Step).CopyTo(b, 12);
         BitConverter.GetBytes(RangeMin).CopyTo(b, 14);
         BitConverter.GetBytes(RangeMax).CopyTo(b, 16);
+        BitConverter.GetBytes(OnDelay).CopyTo(b, 18);
+        BitConverter.GetBytes(OffDelay).CopyTo(b, 20);
         return b;
     }
 
@@ -412,6 +472,8 @@ public sealed class CsBinding
             Step = BitConverter.ToInt16(d, 12),
             RangeMin = BitConverter.ToInt16(d, 14),
             RangeMax = BitConverter.ToInt16(d, 16),
+            OnDelay = BitConverter.ToUInt16(d, 18),
+            OffDelay = BitConverter.ToUInt16(d, 20),
         };
     }
 
@@ -502,6 +564,247 @@ public sealed class IrCommand
         : "Not learned";
 }
 
+/// <summary>The 40-byte CsGroup wire struct (REQ_SET/GET_CS_GROUP; caps v9). A
+/// named set of channels one control addresses as a unit. <see cref="Kind"/> 0
+/// marks the slot empty, and the firmware then requires the whole record to be
+/// zero, so <see cref="Cleared"/> is the only legal clear payload.</summary>
+public sealed class CsGroup
+{
+    public const int WireSize = 40;
+
+    public CsTarget Kind;       // @0  InputCh / OutputCh / DspCh; None = empty slot
+    // @1..3 reserved
+    public uint MemberMask;     // @4  bit N = channel N of the kind's space
+    public string Name = "";    // @8  32 bytes, NUL-terminated
+
+    public bool IsConfigured => Kind != CsTarget.None && MemberMask != 0;
+
+    /// <summary>Number of channels in the group.</summary>
+    public int MemberCount
+    {
+        get
+        {
+            int n = 0;
+            for (uint m = MemberMask; m != 0; m &= m - 1) n++;
+            return n;
+        }
+    }
+
+    public static CsGroup Cleared() => new();
+
+    public byte[] ToBytes()
+    {
+        var b = new byte[WireSize];
+        b[0] = (byte)Kind;
+        BitConverter.GetBytes(MemberMask).CopyTo(b, 4);
+        CsWire.WriteName(Name, b, 8);
+        return b;
+    }
+
+    public static CsGroup? FromBytes(byte[] d)
+    {
+        if (d == null || d.Length < WireSize) return null;
+        return new CsGroup
+        {
+            Kind = (CsTarget)d[0],
+            MemberMask = BitConverter.ToUInt32(d, 4),
+            Name = CsWire.ReadName(d, 8),
+        };
+    }
+
+    public CsGroup Clone() => (CsGroup)MemberwiseClone();
+
+    public bool WireEquals(CsGroup other)
+    {
+        if (other == null) return false;
+        var a = ToBytes();
+        var b = other.ToBytes();
+        for (int i = 0; i < WireSize; i++)
+            if (a[i] != b[i]) return false;
+        return true;
+    }
+}
+
+/// <summary>The 12-byte CsMacroStep wire struct (REQ_SET_CS_MACRO_STEP; caps v9).
+/// A stripped, button-shaped binding fired by the sequencer after
+/// <see cref="PreDelay"/>. An all-zero record is an empty step (skipped).</summary>
+public sealed class CsMacroStep
+{
+    public const int WireSize = 12;
+
+    public byte Noun;           // @0  CsNoun (never Macro — no nesting)
+    public byte Action;         // @1  CsAction: Set / Toggle / Inc / Dec / Trigger
+    public CsFlags Flags;       // @2  Wrap | Group only
+    public byte Target;         // @3  channel, or group index when Group is set
+    public byte Index;          // @4  filter band for DSP_BAND nouns
+    // @5 reserved
+    public short Value;         // @6  as CsBinding.Value
+    public short Step;          // @8  INC/DEC size; 0 = unit default
+    public ushort PreDelay;     // @10 delay before this step runs, 10 ms units
+
+    /// <summary>An empty step is the all-zero record. Noun 0 with action 0
+    /// (ADJUST, which no step may use) never occurs in a written step.</summary>
+    public bool IsConfigured =>
+        Noun != 0 || Action != 0 || Flags != CsFlags.None || Target != 0
+        || Index != 0 || Value != 0 || Step != 0 || PreDelay != 0;
+
+    public bool IsGrouped => (Flags & CsFlags.Group) != 0;
+
+    /// <summary>Delay before this step runs, in seconds.</summary>
+    public double PreDelaySeconds
+    {
+        get => PreDelay * CsLimits.MacroDelayUnitSeconds;
+        set => PreDelay = (ushort)Math.Clamp(Math.Round(value / CsLimits.MacroDelayUnitSeconds), 0, ushort.MaxValue);
+    }
+
+    public byte[] ToBytes()
+    {
+        var b = new byte[WireSize];
+        b[0] = Noun;
+        b[1] = Action;
+        b[2] = (byte)Flags;
+        b[3] = Target;
+        b[4] = Index;
+        // b[5] reserved
+        BitConverter.GetBytes(Value).CopyTo(b, 6);
+        BitConverter.GetBytes(Step).CopyTo(b, 8);
+        BitConverter.GetBytes(PreDelay).CopyTo(b, 10);
+        return b;
+    }
+
+    public static CsMacroStep? FromBytes(byte[] d, int off = 0)
+    {
+        if (d == null || d.Length < off + WireSize) return null;
+        return new CsMacroStep
+        {
+            Noun = d[off],
+            Action = d[off + 1],
+            Flags = (CsFlags)d[off + 2],
+            Target = d[off + 3],
+            Index = d[off + 4],
+            Value = BitConverter.ToInt16(d, off + 6),
+            Step = BitConverter.ToInt16(d, off + 8),
+            PreDelay = BitConverter.ToUInt16(d, off + 10),
+        };
+    }
+
+    public CsMacroStep Clone() => (CsMacroStep)MemberwiseClone();
+
+    public bool WireEquals(CsMacroStep other)
+    {
+        if (other == null) return false;
+        var a = ToBytes();
+        var b = other.ToBytes();
+        for (int i = 0; i < WireSize; i++)
+            if (a[i] != b[i]) return false;
+        return true;
+    }
+}
+
+/// <summary>One macro slot: the 132-byte CsMacro read back by REQ_GET_CS_MACRO
+/// (caps v9). Writing is split — the 36-byte header (name + step count) goes over
+/// REQ_SET_CS_MACRO and each step over REQ_SET_CS_MACRO_STEP, because a whole
+/// macro exceeds the 64-byte vendor SET buffer. Write the steps first and the
+/// header last so a concurrent fire never sees a count past the written steps.</summary>
+public sealed class CsMacro
+{
+    public const int WireSize = 132;
+    public const int HeaderWireSize = 36;   // CsMacroHeaderWire
+
+    public string Name = "";    // @0  32 bytes, NUL-terminated
+    public byte StepCount;      // @32 steps executed = Steps[0..StepCount-1]
+    // @33..35 reserved
+    public CsMacroStep[] Steps = NewSteps();   // @36, 8 × 12 bytes
+
+    public bool IsConfigured => StepCount > 0 || Name.Length > 0;
+
+    private static CsMacroStep[] NewSteps()
+    {
+        var a = new CsMacroStep[CsLimits.MaxMacroSteps];
+        for (int i = 0; i < a.Length; i++) a[i] = new CsMacroStep();
+        return a;
+    }
+
+    /// <summary>The 36-byte REQ_SET_CS_MACRO payload (name + step count).</summary>
+    public byte[] HeaderToBytes()
+    {
+        var b = new byte[HeaderWireSize];
+        CsWire.WriteName(Name, b, 0);
+        b[32] = StepCount;
+        return b;
+    }
+
+    public static CsMacro? FromBytes(byte[] d)
+    {
+        if (d == null || d.Length < WireSize) return null;
+        var m = new CsMacro
+        {
+            Name = CsWire.ReadName(d, 0),
+            StepCount = d[32],
+        };
+        for (int i = 0; i < CsLimits.MaxMacroSteps; i++)
+            m.Steps[i] = CsMacroStep.FromBytes(d, 36 + i * CsMacroStep.WireSize) ?? new CsMacroStep();
+        return m;
+    }
+
+    public CsMacro Clone()
+    {
+        var m = (CsMacro)MemberwiseClone();
+        m.Steps = new CsMacroStep[Steps.Length];
+        for (int i = 0; i < Steps.Length; i++) m.Steps[i] = Steps[i].Clone();
+        return m;
+    }
+
+    public bool WireEquals(CsMacro other)
+    {
+        if (other == null) return false;
+        if (!string.Equals(Name, other.Name, StringComparison.Ordinal)) return false;
+        if (StepCount != other.StepCount) return false;
+        for (int i = 0; i < Steps.Length; i++)
+            if (!Steps[i].WireEquals(other.Steps[i])) return false;
+        return true;
+    }
+}
+
+/// <summary>The 24-byte CsExtStatusPacket (REQ_GET_CS_EXT_STATUS; caps v9): the
+/// group/macro companion to <see cref="CsStatusPacket"/>.</summary>
+public sealed class CsExtStatusPacket
+{
+    public const int WireSize = 24;
+
+    public byte MaxGroups;
+    public byte MaxMacros;
+    public byte MaxMacroSteps;
+    public byte MacroRunning;   // running macro index; 0xFF = idle
+    public byte MacroStep;      // current step index while running
+    public byte[] GroupStatus = new byte[CsLimits.MaxGroups];
+    public byte[] MacroStatus = new byte[CsLimits.MaxMacros];
+
+    public bool IsMacroRunning => MacroRunning != CsLimits.MacroIdle;
+
+    public byte GroupHealth(int idx) =>
+        idx >= 0 && idx < GroupStatus.Length ? GroupStatus[idx] : (byte)0;
+
+    public byte MacroHealth(int idx) =>
+        idx >= 0 && idx < MacroStatus.Length ? MacroStatus[idx] : (byte)0;
+
+    public static CsExtStatusPacket? FromBytes(byte[] d)
+    {
+        if (d == null || d.Length < WireSize) return null;
+        var s = new CsExtStatusPacket
+        {
+            MaxGroups = d[0],
+            MaxMacros = d[1],
+            MaxMacroSteps = d[2],
+            MacroRunning = d[3],
+            MacroStep = d[4],
+        };
+        Array.Copy(d, 8, s.GroupStatus, 0, CsLimits.MaxGroups);
+        Array.Copy(d, 16, s.MacroStatus, 0, CsLimits.MaxMacros);
+        return s;
+    }
+}
+
 /// <summary>One entry in the caps type table (4 bytes; CsTypeDesc).</summary>
 public readonly struct CsTypeDesc
 {
@@ -519,8 +822,9 @@ public readonly struct CsTypeDesc
 
 /// <summary>The caps header + type table (REQ_GET_CS_CAPS, wValue 0xFFFF). Length
 /// is variable — the v3 tail (<see cref="MaxIrCommands"/>) sits at
-/// <c>4 + 4*TypeCount</c> so a future type-table growth won't move it. Parse
-/// defensively rather than assuming 40 bytes.</summary>
+/// <c>4 + 4*TypeCount</c> so a future type-table growth won't move it, and the v9
+/// group/macro limits follow it in the three bytes a pre-v9 firmware reserved
+/// (they read 0 there). Parse defensively rather than assuming 40 bytes.</summary>
 public sealed class CsCapsHeader
 {
     public byte CapsVersion;
@@ -529,8 +833,15 @@ public sealed class CsCapsHeader
     public byte NounCount;
     public CsTypeDesc[] Types = Array.Empty<CsTypeDesc>();
     public byte MaxIrCommands;   // v3; 0 on a v2 header = IR unavailable
+    public byte MaxGroups;       // v9; 0 on a pre-v9 header = groups unavailable
+    public byte MaxMacros;       // v9
+    public byte MaxMacroSteps;   // v9
 
     public bool IsValid => TypeCount > 0 && NounCount > 0;
+
+    /// <summary>Whether this firmware serves the caps-v9 group and macro
+    /// commands (0x20–0x26).</summary>
+    public bool HasGroupsAndMacros => MaxGroups > 0 && MaxMacros > 0;
 
     public static CsCapsHeader? FromBytes(byte[] d)
     {
@@ -557,6 +868,9 @@ public sealed class CsCapsHeader
         }
         int irOff = 4 + h.TypeCount * 4;
         h.MaxIrCommands = irOff < d.Length ? d[irOff] : (byte)0;
+        h.MaxGroups = irOff + 1 < d.Length ? d[irOff + 1] : (byte)0;
+        h.MaxMacros = irOff + 2 < d.Length ? d[irOff + 2] : (byte)0;
+        h.MaxMacroSteps = irOff + 3 < d.Length ? d[irOff + 3] : (byte)0;
         return h;
     }
 

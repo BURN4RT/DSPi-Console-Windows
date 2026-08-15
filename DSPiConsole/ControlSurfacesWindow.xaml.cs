@@ -80,6 +80,8 @@ public sealed partial class ControlSurfacesWindow : Window
     private TextBlock? _irCountLabel;
     private int _irLeadingCount; // non-card children (count label + optional hint)
     private readonly Dictionary<int, FrameworkElement> _irCommandCards = new();
+    private readonly Dictionary<int, StackPanel> _irBodies = new();
+    private readonly Dictionary<int, (Border Chip, TextBlock Label)> _irChips = new();
     private readonly Dictionary<int, Button> _irLearnButtons = new();
     private readonly Dictionary<int, TextBlock> _irTitles = new();
 
@@ -128,6 +130,7 @@ public sealed partial class ControlSurfacesWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs e)
     {
+        StopMacroPoll();
         _vm.PropertyChanged -= OnVmPropertyChanged;
         _vm.ControlSurfacesReloaded -= OnReloaded;
         _vm.ChannelNameChanged -= OnChannelNameChanged;
@@ -155,6 +158,7 @@ public sealed partial class ControlSurfacesWindow : Window
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MainViewModel.CsStatus)
+            || e.PropertyName == nameof(MainViewModel.CsExtStatus)
             || e.PropertyName == nameof(MainViewModel.CsDirty))
         {
             DispatcherQueue.TryEnqueue(RefreshStatusIndicators);
@@ -170,6 +174,7 @@ public sealed partial class ControlSurfacesWindow : Window
         }
         for (int i = 0; i < CsLimits.MaxIrCommands; i++)
             _irDrafts[i] = i < _vm.CsIrCommands.Count ? _vm.CsIrCommands[i].Clone() : new IrCommand();
+        SeedGroupMacroDrafts();
     }
 
     // ── Top-level build ──────────────────────────────────────────────────────
@@ -188,6 +193,7 @@ public sealed partial class ControlSurfacesWindow : Window
         BodyPanel.Visibility = Visibility.Visible;
         BuildAddMenu();
         RebuildCards();
+        BuildGroupsAndMacros();
         RefreshStatusIndicators();
     }
 
@@ -424,6 +430,8 @@ public sealed partial class ControlSurfacesWindow : Window
                     panel.Children.Add(BuildPinRows(slot));
                     var operand = BuildOperandRows(slot, nd);
                     if (operand != null) panel.Children.Add(operand);
+                    if (SupportsIndicatorDelay(draft))
+                        panel.Children.Add(BuildIndicatorDelayRows(slot));
                     panel.Children.Add(BuildFlagRows(slot, nd));
                 }
                 panel.Children.Add(BuildApplyRow(slot));
@@ -507,18 +515,42 @@ public sealed partial class ControlSurfacesWindow : Window
         var draft = _drafts[slot];
         var panel = new StackPanel { Spacing = 8 };
 
+        // Channels first, then any compatible group. Picking a group flips the
+        // GROUP flag and re-reads `target` as a group index (caps v9); picking a
+        // channel clears it along with the two group-only modifiers.
+        var groups = CompatibleGroups(nd).ToList();
         var chCombo = new ComboBox { MinWidth = 180 };
         for (int i = 0; i < nd.TargetCount; i++)
             chCombo.Items.Add(new ComboBoxItem { Content = ChannelLabel(nd.TargetKind, i), Tag = i });
+        foreach (int g in groups)
+            chCombo.Items.Add(new ComboBoxItem { Content = $"Group: {_vm.CsGroupLabel(g)}", Tag = new GroupTag(g) });
         _channelRelabel[slot] = () => Relabel(chCombo, nd.TargetKind);
-        chCombo.SelectedIndex = draft.Target < nd.TargetCount ? draft.Target : 0;
+        chCombo.SelectedIndex = draft.IsGrouped
+            ? (groups.IndexOf(draft.Target) is var gi && gi >= 0 ? nd.TargetCount + gi : -1)
+            : (draft.Target < nd.TargetCount ? draft.Target : 0);
         chCombo.SelectionChanged += (_, _) =>
         {
             if (_building) return;
-            if (chCombo.SelectedItem is ComboBoxItem it && it.Tag is int ch)
-            { _drafts[slot].Target = (byte)ch; RefreshStatusIndicators(); }
+            if (chCombo.SelectedItem is not ComboBoxItem it) return;
+            bool wasGrouped = _drafts[slot].IsGrouped;
+            if (it.Tag is int ch)
+            {
+                _drafts[slot].Flags &= ~(CsFlags.Group | CsFlags.LinkAbs | CsFlags.GroupAll);
+                _drafts[slot].Target = (byte)ch;
+            }
+            else if (it.Tag is GroupTag g)
+            {
+                _drafts[slot].Flags |= CsFlags.Group;
+                _drafts[slot].Target = (byte)g.Index;
+            }
+            SanitizeDraft(slot);
+            // Only crossing between a channel and a group changes which rows the
+            // body needs (the group-only modifier toggles); a plain channel switch
+            // just restates the summary.
+            if (wasGrouped != _drafts[slot].IsGrouped) PopulateSlotBody(slot);
+            else RefreshStatusIndicators();
         };
-        panel.Children.Add(Row("Channel", chCombo));
+        panel.Children.Add(Row(groups.Count > 0 ? "Target" : "Channel", chCombo));
 
         if (nd.HasBand)
         {
@@ -711,7 +743,7 @@ public sealed partial class ControlSurfacesWindow : Window
         {
             var combo = new ComboBox { MinWidth = 120 };
             for (int i = 0; i < Math.Max(1, (int)nd.EnumCount); i++)
-                combo.Items.Add(new ComboBoxItem { Content = CsNounInfo.EnumLabel(draft.Noun, i), Tag = (short)i });
+                combo.Items.Add(new ComboBoxItem { Content = EnumLabel(draft.Noun, i), Tag = (short)i });
             combo.SelectedIndex = Math.Clamp((int)draft.Value, 0, Math.Max(0, nd.EnumCount - 1));
             combo.SelectionChanged += (_, _) =>
             {
@@ -719,7 +751,7 @@ public sealed partial class ControlSurfacesWindow : Window
                 if (combo.SelectedItem is ComboBoxItem it && it.Tag is short v)
                 { _drafts[slot].Value = v; RefreshStatusIndicators(); }
             };
-            return Row("Value", combo);
+            return Row(draft.Noun == (byte)CsNoun.Macro ? "Macro" : "Value", combo);
         }
         var box = NumberField(CsWire.DecodeValue(draft.Value, nd.Unit), nd.Unit, v =>
         { _drafts[slot].Value = CsWire.EncodeValue(v, nd.Unit); RefreshStatusIndicators(); });
@@ -744,8 +776,44 @@ public sealed partial class ControlSurfacesWindow : Window
         if (draft.Type == CsType.Button && action is CsAction.Inc or CsAction.Dec && draft.Event == (byte)CsEvent.Press)
             panel.Children.Add(FlagToggle(slot, CsFlags.Repeat, "Auto-repeat while held"));
 
+        // Group-only modifiers (caps v9). Without a group the firmware rejects
+        // either bit, so they are only offered on a grouped binding.
+        if (draft.IsGrouped)
+        {
+            if (action == CsAction.Adjust && nd.Kind == CsKind.Continuous)
+                panel.Children.Add(FlagToggle(slot, CsFlags.LinkAbs,
+                    "Move every channel to the same value (instead of keeping their offsets)"));
+            if (action is CsAction.IndEquals or CsAction.IndAbove)
+                panel.Children.Add(FlagToggle(slot, CsFlags.GroupAll,
+                    "Light only when every channel matches (instead of any)"));
+        }
+
         return panel;
     }
+
+    /// <summary>Indicator condition timing (caps v8): the condition must hold for
+    /// the on-delay before the LED lights and for the off-delay before it goes out.
+    /// LED types with IND_EQUALS / IND_ABOVE only — the firmware rejects a non-zero
+    /// delay anywhere else. Wire units are 0.1 s; the fields are in seconds.</summary>
+    private FrameworkElement BuildIndicatorDelayRows(int slot)
+    {
+        var draft = _drafts[slot];
+        var panel = new StackPanel { Spacing = 8 };
+
+        var onBox = NumberField(draft.OnDelay * CsLimits.IndicatorDelayUnitSeconds, CsUnit.None, v =>
+        { _drafts[slot].OnDelay = EncodeIndicatorDelay(v); RefreshStatusIndicators(); });
+        var offBox = NumberField(draft.OffDelay * CsLimits.IndicatorDelayUnitSeconds, CsUnit.None, v =>
+        { _drafts[slot].OffDelay = EncodeIndicatorDelay(v); RefreshStatusIndicators(); });
+        ToolTipService.SetToolTip(onBox, "Hold the condition this long before lighting (0 = immediate)");
+        ToolTipService.SetToolTip(offBox, "Hold the condition false this long before going out (0 = immediate)");
+
+        panel.Children.Add(Row("On delay (s)", onBox));
+        panel.Children.Add(Row("Off delay (s)", offBox));
+        return panel;
+    }
+
+    private static ushort EncodeIndicatorDelay(double seconds) =>
+        (ushort)Math.Clamp(Math.Round(seconds / CsLimits.IndicatorDelayUnitSeconds), 0, ushort.MaxValue);
 
     private CheckBox FlagToggle(int slot, CsFlags flag, string label)
     {
@@ -805,6 +873,8 @@ public sealed partial class ControlSurfacesWindow : Window
         {
             panel.Children.Clear();
             _irCommandCards.Clear();
+            _irBodies.Clear();
+            _irChips.Clear();
             _irLearnButtons.Clear();
             _irTitles.Clear();
             _irChannelRelabel.Clear();
@@ -878,28 +948,35 @@ public sealed partial class ControlSurfacesWindow : Window
         if (_irCommandCards.TryGetValue(sub, out var card))
             _irSectionPanel?.Children.Remove(card);
         _irCommandCards.Remove(sub);
+        _irBodies.Remove(sub);
+        _irChips.Remove(sub);
         _irLearnButtons.Remove(sub);
         _irTitles.Remove(sub);
         _irChannelRelabel.Remove(sub);
     }
 
-    /// <summary>Rebuild a single remote-button card in place (chip, learn state,
-    /// operand rows) without touching its siblings.</summary>
-    private void RebuildIrCommandCard(int sub)
+    /// <summary>Refresh one remote-button card in place: its body (learn state,
+    /// noun / action / operand rows) plus the header chip and title. The card
+    /// element itself is never recreated, so the expander doesn't re-animate and
+    /// the list doesn't shift under the pointer.</summary>
+    private void RefreshIrCommandCard(int sub)
     {
-        if (_irSectionPanel is not { } panel) return;
-        if (!_irCommandCards.TryGetValue(sub, out var old)) return;
-        int index = panel.Children.IndexOf(old);
-        if (index < 0) return;
-        bool receiverLive = _vm.CsStatus?.IsSlotActive(_irSectionSlot) == true;
-        _building = true;
-        try
-        {
-            var fresh = BuildIrCommandCard(sub, receiverLive);
-            panel.Children.RemoveAt(index);
-            panel.Children.Insert(index, fresh);
-        }
-        finally { _building = false; }
+        PopulateIrCommandBody(sub);
+        RefreshIrCommandChip(sub);
+        UpdateIrTitle(sub);
+    }
+
+    /// <summary>Restate the learned-code chip in the card header.</summary>
+    private void RefreshIrCommandChip(int sub)
+    {
+        if (!_irChips.TryGetValue(sub, out var chip)) return;
+        var draft = _irDrafts[sub];
+        var color = draft.IsConfigured
+            ? Color.FromArgb(255, 100, 200, 140)
+            : Color.FromArgb(255, 0x90, 0x90, 0x90);
+        chip.Label.Text = draft.CodeLabel;
+        chip.Label.Foreground = new SolidColorBrush(color);
+        chip.Chip.Background = new SolidColorBrush(Color.FromArgb(0x20, color.R, color.G, color.B));
     }
 
     private FrameworkElement BuildIrCommandCard(int sub, bool receiverLive)
@@ -931,23 +1008,20 @@ public sealed partial class ControlSurfacesWindow : Window
         Grid.SetColumn(title, 0);
         hgrid.Children.Add(title);
 
-        var chipColor = draft.IsConfigured
-            ? Color.FromArgb(255, 100, 200, 140)
-            : Color.FromArgb(255, 0x90, 0x90, 0x90);
+        var chipLabel = new TextBlock
+        {
+            FontSize = 11,
+            FontFamily = new FontFamily("Cascadia Code, Consolas, monospace"),
+        };
         var chip = new Border
         {
             CornerRadius = new CornerRadius(9),
             Padding = new Thickness(8, 2, 8, 3),
             VerticalAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.FromArgb(0x20, chipColor.R, chipColor.G, chipColor.B)),
-            Child = new TextBlock
-            {
-                Text = draft.CodeLabel,
-                FontSize = 11,
-                FontFamily = new FontFamily("Cascadia Code, Consolas, monospace"),
-                Foreground = new SolidColorBrush(chipColor),
-            },
+            Child = chipLabel,
         };
+        _irChips[sub] = (chip, chipLabel);
+        RefreshIrCommandChip(sub);
         Grid.SetColumn(chip, 1);
         hgrid.Children.Add(chip);
         var delc = new Button
@@ -960,58 +1034,78 @@ public sealed partial class ControlSurfacesWindow : Window
         hgrid.Children.Add(delc);
         expander.Header = hgrid;
 
-        // Body: learn + operand editor.
+        // Body: learn + operand editor, filled by PopulateIrCommandBody so a later
+        // noun / action / learn change refills it without recreating the card.
         var body = new StackPanel { Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
-
-        var learnPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        if (_learningSub == sub)
-        {
-            _irLearnButtons.Remove(sub); // this card shows a Cancel, not a Learn button
-            learnPanel.Children.Add(new ProgressRing { IsActive = true, Width = 16, Height = 16 });
-            learnPanel.Children.Add(new TextBlock
-            {
-                Text = "Point the remote at the receiver…", VerticalAlignment = VerticalAlignment.Center, FontSize = 12,
-            });
-            var cancel = new Button { Content = "Cancel" };
-            cancel.Click += (_, _) => CancelLearn();
-            learnPanel.Children.Add(cancel);
-        }
-        else
-        {
-            var learn = new Button { Content = draft.IsConfigured ? "Re-learn" : "Learn Button" };
-            learn.IsEnabled = receiverLive && _learningSub == null && !_savingConfig;
-            learn.Click += (_, _) => StartLearn(sub);
-            learnPanel.Children.Add(learn);
-            _irLearnButtons[sub] = learn;
-        }
-        body.Children.Add(learnPanel);
-
-        // Noun / action / target / operand for the IR command (button-shaped).
-        body.Children.Add(BuildIrNounRow(sub));
-        var nd = _vm.CsNounDescFor(draft.Noun);
-        if (nd != null)
-        {
-            var actions = ValidIrActions(nd);
-            if (actions.Count > 1) body.Children.Add(BuildIrActionRow(sub, actions));
-            if (nd.IsTargeted) body.Children.Add(BuildIrTargetRows(sub, nd));
-            var op = BuildIrOperand(sub, nd);
-            if (op != null) body.Children.Add(op);
-        }
-
-        var applyRow = new StackPanel
-        {
-            Orientation = Orientation.Horizontal, Spacing = 8,
-            HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 4, 0, 0),
-        };
-        var apply = new Button { Content = "Apply", Style = AccentStyle };
-        apply.IsEnabled = draft.IsConfigured && receiverLive;
-        apply.Click += (_, _) => _ = ApplyIrCommandAsync(sub);
-        applyRow.Children.Add(apply);
-        body.Children.Add(applyRow);
+        _irBodies[sub] = body;
+        PopulateIrCommandBody(sub);
 
         expander.Content = body;
         _irCommandCards[sub] = expander;
         return expander;
+    }
+
+    /// <summary>Fill (or refill) one remote-button card's body in place.</summary>
+    private void PopulateIrCommandBody(int sub)
+    {
+        if (!_irBodies.TryGetValue(sub, out var body)) return;
+        bool receiverLive = _vm.CsStatus?.IsSlotActive(_irSectionSlot) == true;
+        var draft = _irDrafts[sub];
+        bool wasBuilding = _building;
+        _building = true;
+        try
+        {
+            body.Children.Clear();
+            _irLearnButtons.Remove(sub);
+            _irChannelRelabel.Remove(sub);
+
+            var learnPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            if (_learningSub == sub)
+            {
+                // This card shows a Cancel, not a Learn button.
+                learnPanel.Children.Add(new ProgressRing { IsActive = true, Width = 16, Height = 16 });
+                learnPanel.Children.Add(new TextBlock
+                {
+                    Text = "Point the remote at the receiver…", VerticalAlignment = VerticalAlignment.Center, FontSize = 12,
+                });
+                var cancel = new Button { Content = "Cancel" };
+                cancel.Click += (_, _) => CancelLearn();
+                learnPanel.Children.Add(cancel);
+            }
+            else
+            {
+                var learn = new Button { Content = draft.IsConfigured ? "Re-learn" : "Learn Button" };
+                learn.IsEnabled = receiverLive && _learningSub == null && !_savingConfig;
+                learn.Click += (_, _) => StartLearn(sub);
+                learnPanel.Children.Add(learn);
+                _irLearnButtons[sub] = learn;
+            }
+            body.Children.Add(learnPanel);
+
+            // Noun / action / target / operand for the IR command (button-shaped).
+            body.Children.Add(BuildIrNounRow(sub));
+            var nd = _vm.CsNounDescFor(draft.Noun);
+            if (nd != null)
+            {
+                var actions = ValidIrActions(nd);
+                if (actions.Count > 1) body.Children.Add(BuildIrActionRow(sub, actions));
+                if (nd.IsTargeted) body.Children.Add(BuildIrTargetRows(sub, nd));
+                var op = BuildIrOperand(sub, nd);
+                if (op != null) body.Children.Add(op);
+            }
+
+            var applyRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal, Spacing = 8,
+                HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 4, 0, 0),
+            };
+            var apply = new Button { Content = "Apply", Style = AccentStyle };
+            apply.IsEnabled = draft.IsConfigured && receiverLive;
+            apply.Click += (_, _) => _ = ApplyIrCommandAsync(sub);
+            applyRow.Children.Add(apply);
+            body.Children.Add(applyRow);
+        }
+        finally { _building = wasBuilding; }
     }
 
     private FrameworkElement BuildIrNounRow(int sub)
@@ -1035,7 +1129,7 @@ public sealed partial class ControlSurfacesWindow : Window
                 var nd = _vm.CsNounDescFor(noun);
                 var acts = nd != null ? ValidIrActions(nd) : new List<CsAction>();
                 _irDrafts[sub].Action = acts.Count > 0 ? (byte)acts[0] : (byte)0;
-                RebuildIrCommandCard(sub);
+                RefreshIrCommandCard(sub);
             }
         };
         return Row("Controls", combo);
@@ -1056,7 +1150,7 @@ public sealed partial class ControlSurfacesWindow : Window
         {
             if (_building) return;
             if (combo.SelectedItem is ComboBoxItem it && it.Tag is CsAction a)
-            { _irDrafts[sub].Action = (byte)a; RebuildIrCommandCard(sub); }
+            { _irDrafts[sub].Action = (byte)a; RefreshIrCommandCard(sub); }
         };
         return Row("Action", combo);
     }
@@ -1131,14 +1225,15 @@ public sealed partial class ControlSurfacesWindow : Window
             {
                 var combo = new ComboBox { MinWidth = 120 };
                 for (int i = 0; i < Math.Max(1, (int)nd.EnumCount); i++)
-                    combo.Items.Add(new ComboBoxItem { Content = CsNounInfo.EnumLabel(draft.Noun, i), Tag = (short)i });
+                    combo.Items.Add(new ComboBoxItem { Content = EnumLabel(draft.Noun, i), Tag = (short)i });
                 combo.SelectedIndex = Math.Clamp((int)draft.Value, 0, Math.Max(0, nd.EnumCount - 1));
                 combo.SelectionChanged += (_, _) =>
                 {
                     if (_building) return;
-                    if (combo.SelectedItem is ComboBoxItem it && it.Tag is short v) _irDrafts[sub].Value = v;
+                    if (combo.SelectedItem is ComboBoxItem it && it.Tag is short v)
+                    { _irDrafts[sub].Value = v; UpdateIrTitle(sub); }
                 };
-                return Row("Value", combo);
+                return Row(draft.Noun == (byte)CsNoun.Macro ? "Macro" : "Value", combo);
             }
             var box = NumberField(CsWire.DecodeValue(draft.Value, nd.Unit), nd.Unit, v =>
                 _irDrafts[sub].Value = CsWire.EncodeValue(v, nd.Unit));
@@ -1186,10 +1281,11 @@ public sealed partial class ControlSurfacesWindow : Window
             var acts = ValidActions(b.Type, nd);
             if (!acts.Contains((CsAction)b.Action))
                 b.Action = acts.Count > 0 ? (byte)acts[0] : (byte)0;
-            if (b.Target >= nd.TargetCount) b.Target = 0;
+            if (!b.IsGrouped && b.Target >= nd.TargetCount) b.Target = 0;
         }
         // Reset operands to defaults for the new noun.
         b.Value = 0; b.Step = 0; b.RangeMin = 0; b.RangeMax = 0;
+        SanitizeDraft(slot);
         PopulateSlotBody(slot);
     }
 
@@ -1198,8 +1294,43 @@ public sealed partial class ControlSurfacesWindow : Window
         _drafts[slot].Action = (byte)action;
         _drafts[slot].Value = 0; _drafts[slot].Step = 0;
         _drafts[slot].RangeMin = 0; _drafts[slot].RangeMax = 0;
+        SanitizeDraft(slot);
         PopulateSlotBody(slot);
     }
+
+    /// <summary>Drop draft fields the firmware would now reject: a group reference
+    /// the new noun can't address, the two group-only flag modifiers outside the
+    /// action they belong to, and indicator delays on anything but an LED
+    /// condition. All three are strict, all-or-nothing checks in <c>cs_validate</c>,
+    /// so an edit that changes the noun or action has to clear them.</summary>
+    private void SanitizeDraft(int slot)
+    {
+        var b = _drafts[slot];
+        var nd = _vm.CsNounDescFor(b.Noun);
+        var action = (CsAction)b.Action;
+
+        if (b.IsGrouped && (nd == null || GroupKindFor(nd) == null || !CompatibleGroups(nd).Contains(b.Target)))
+        {
+            b.Flags &= ~CsFlags.Group;
+            b.Target = 0;
+        }
+        if (!b.IsGrouped)
+        {
+            b.Flags &= ~(CsFlags.LinkAbs | CsFlags.GroupAll);
+        }
+        else
+        {
+            if (action != CsAction.Adjust || nd?.Kind != CsKind.Continuous) b.Flags &= ~CsFlags.LinkAbs;
+            if (action is not (CsAction.IndEquals or CsAction.IndAbove)) b.Flags &= ~CsFlags.GroupAll;
+        }
+        if (!SupportsIndicatorDelay(b)) { b.OnDelay = 0; b.OffDelay = 0; }
+    }
+
+    /// <summary>Whether this binding may carry <c>on_delay</c>/<c>off_delay</c>:
+    /// an LED (plain or PWM) driving a boolean indicator condition.</summary>
+    private static bool SupportsIndicatorDelay(CsBinding b) =>
+        b.Type is CsType.Led or CsType.LedPwm
+        && (CsAction)b.Action is CsAction.IndEquals or CsAction.IndAbove;
 
     private async void RemoveControl(int slot)
     {
@@ -1253,23 +1384,13 @@ public sealed partial class ControlSurfacesWindow : Window
             _addRemoteButton = null;
             _irCountLabel = null;
             _irCommandCards.Clear();
+            _irBodies.Clear();
+            _irChips.Clear();
             _irLearnButtons.Clear();
             _irTitles.Clear();
             _irChannelRelabel.Clear();
         }
         if (CardsPanel.Children.Count == 0) EmptyHint.Visibility = Visibility.Visible;
-    }
-
-    /// <summary>Rebuild one slot's whole card (header + body) in place, e.g. after a
-    /// type change or revert alters the type badge. Other cards are left untouched.</summary>
-    private void RebuildSlotCard(int slot)
-    {
-        if (!_slotCards.TryGetValue(slot, out var old)) return;
-        int index = CardsPanel.Children.IndexOf(old);
-        if (index < 0) return;
-        var fresh = BuildSlotCard(slot); // re-registers this slot's UI handles
-        CardsPanel.Children.RemoveAt(index);
-        CardsPanel.Children.Insert(index, fresh);
     }
 
     private void CommitName(int slot, string text)
@@ -1281,8 +1402,9 @@ public sealed partial class ControlSurfacesWindow : Window
     private void RevertSlot(int slot)
     {
         SeedDraftFrom(slot);
-        // Reverting only restores this slot's draft; other cards are unaffected.
-        RebuildSlotCard(slot);
+        // Refill this card's body (the name box and every row come back from the
+        // restored draft); its header and the other cards are untouched.
+        PopulateSlotBody(slot);
     }
 
     private async Task ApplySlotAsync(int slot)
@@ -1381,7 +1503,7 @@ public sealed partial class ControlSurfacesWindow : Window
         if (!cmd.IsConfigured) { ShowToast("Learn a code before applying this button."); return; }
         byte status = await Task.Run(() => _vm.SetCsIrCommand(sub, cmd));
         _irDrafts[sub] = _vm.CsIrCommands[sub].Clone();
-        RebuildIrCommandCard(sub);
+        RefreshIrCommandCard(sub);
         UpdateIrCount();
         if (status != CsStatus.Success) ShowToast(CsStatus.Message(status));
     }
@@ -1390,7 +1512,7 @@ public sealed partial class ControlSurfacesWindow : Window
     {
         if (_learningSub != null) return;
         _learningSub = sub;
-        RebuildIrCommandCard(sub);   // show the learning spinner on this card
+        PopulateIrCommandBody(sub);  // show the learning spinner on this card
         RefreshIrLearnButtons();     // disable the other cards' Learn buttons
 
         var proto = _irDrafts[sub];
@@ -1438,7 +1560,7 @@ public sealed partial class ControlSurfacesWindow : Window
         else ShowToast(error);
 
         // Restore this card (learned chip / Learn button) and re-enable the others.
-        RebuildIrCommandCard(sub);
+        RefreshIrCommandCard(sub);
         UpdateIrCount();
         RefreshIrLearnButtons();
     }
@@ -1448,7 +1570,7 @@ public sealed partial class ControlSurfacesWindow : Window
         int? sub = _learningSub;
         _learningSub = null;
         _ = Task.Run(() => _vm.CsIrLearnCancel());
-        if (sub is int s) RebuildIrCommandCard(s);
+        if (sub is int s) PopulateIrCommandBody(s);
         RefreshIrLearnButtons();
     }
 
@@ -1503,6 +1625,8 @@ public sealed partial class ControlSurfacesWindow : Window
         foreach (var (slot, summary) in _slotSummaries) summary.Text = SlotSummary(slot);
         foreach (var (slot, apply) in _slotApply)
             apply.IsEnabled = SlotDirty(slot) && _applyingSlot == null && !_savingConfig;
+
+        RefreshGroupMacroIndicators();
 
         bool dirtyAll = _vm.CsDirty;
         SaveBar.Visibility = dirtyAll ? Visibility.Visible : Visibility.Collapsed;
@@ -1619,6 +1743,42 @@ public sealed partial class ControlSurfacesWindow : Window
         var subset = new[] { CsAction.Inc, CsAction.Dec, CsAction.Toggle, CsAction.Set, CsAction.Trigger, CsAction.Momentary };
         return subset.Where(nd.SupportsAction).ToList();
     }
+
+    /// <summary>Tag marking a target picker's group entries apart from its plain
+    /// channel entries (whose tag is the channel index).</summary>
+    private sealed record GroupTag(int Index);
+
+    /// <summary>The group kind a noun can address, or null if it can't be grouped.
+    /// Band nouns index the DSP channel space, and each member is validated
+    /// against the band separately.</summary>
+    private static CsTarget? GroupKindFor(CsNounDesc nd) => nd.TargetKind switch
+    {
+        CsTarget.InputCh => CsTarget.InputCh,
+        CsTarget.OutputCh => CsTarget.OutputCh,
+        CsTarget.DspCh or CsTarget.DspBand => CsTarget.DspCh,
+        _ => null,
+    };
+
+    /// <summary>Configured groups a binding on this noun may target: same channel
+    /// space, and at least one member inside the noun's range.</summary>
+    private IEnumerable<int> CompatibleGroups(CsNounDesc nd)
+    {
+        var want = GroupKindFor(nd);
+        if (want == null) yield break;
+        uint limit = nd.TargetCount >= 32 ? uint.MaxValue : (1u << nd.TargetCount) - 1u;
+        for (int g = 0; g < _vm.CsGroupMax; g++)
+        {
+            var grp = _vm.CsGroups[g];
+            if (!grp.IsConfigured || grp.Kind != want.Value) continue;
+            if ((grp.MemberMask & limit) == 0) continue;
+            yield return g;
+        }
+    }
+
+    /// <summary>Enum value label. The macro noun's positions are the user's macro
+    /// names, which live in the VM rather than the static noun table.</summary>
+    private string EnumLabel(int noun, int value) =>
+        noun == (int)CsNoun.Macro ? _vm.CsMacroLabel(value) : CsNounInfo.EnumLabel(noun, value);
 
     private IEnumerable<(int band, string label)> BandOptions(int noun)
     {
@@ -1741,7 +1901,10 @@ public sealed partial class ControlSurfacesWindow : Window
         var nd = _vm.CsNounDescFor(d.Noun);
         if (nd == null) return "Remote button";
         string s = CsNounInfo.Name(d.Noun);
+        // IR commands never carry the GROUP flag (caps v9): a remote key reaches a
+        // group by firing a macro whose steps use it.
         if (nd.IsTargeted) s += $" ({ChannelLabel(nd.TargetKind, d.Target)})";
+        else if (d.Noun == (byte)CsNoun.Macro) s += $" ({_vm.CsMacroLabel(d.Value)})";
         return $"{s} · {ActionName((CsAction)d.Action)}";
     }
 
@@ -1775,7 +1938,8 @@ public sealed partial class ControlSurfacesWindow : Window
             if (nd != null)
             {
                 string noun = CsNounInfo.Name(d.Noun);
-                if (nd.IsTargeted) noun += $" ({ChannelLabel(nd.TargetKind, d.Target)})";
+                if (nd.IsTargeted) noun += $" ({BindingTargetLabel(d, nd)})";
+                else if (d.Noun == (byte)CsNoun.Macro) noun += $" ({_vm.CsMacroLabel(d.Value)})";
                 parts.Add(noun);
             }
         }
@@ -1842,6 +2006,11 @@ public sealed partial class ControlSurfacesWindow : Window
     /// by <see cref="RefreshChannelLabels"/> while this window is open.</summary>
     private string ChannelLabel(CsTarget kind, int i) => _vm.CsTargetLabel(kind, i);
 
+    /// <summary>What a binding's <c>target</c> names — a channel, or the group it
+    /// stands for when the GROUP flag is set.</summary>
+    private string BindingTargetLabel(CsBinding b, CsNounDesc nd) =>
+        b.IsGrouped ? _vm.CsGroupLabel(b.Target) : ChannelLabel(nd.TargetKind, b.Target);
+
     /// <summary>Rewrite a channel picker's item captions in place. Items and the
     /// current selection are untouched, so no SelectionChanged handler fires.</summary>
     private void Relabel(ComboBox combo, CsTarget kind)
@@ -1858,6 +2027,7 @@ public sealed partial class ControlSurfacesWindow : Window
     {
         foreach (var relabel in _channelRelabel.Values) relabel();
         foreach (var relabel in _irChannelRelabel.Values) relabel();
+        foreach (var relabel in _groupChannelRelabel.Values) relabel();
         foreach (int sub in _irTitles.Keys) UpdateIrTitle(sub);
         RefreshStatusIndicators();
     }

@@ -146,6 +146,17 @@ public static class VendorCommands
     public const byte CsSave               = 0x9D; // IN 1 ack byte; persist whole live config (deferred)
     public const byte CsRevert             = 0x9E; // IN 1 ack byte; discard preview, reload flash (deferred)
 
+    // Control-surface target groups and macros (caps v9). Group SETs poll on
+    // 0x40|group and both macro SETs on 0x60|macro; the fire command is immediate
+    // (it STALLs on a bad macro, leaving the reason in the status packet).
+    public const byte SetCsGroup           = 0x20; // OUT 40-byte CsGroup, wValue=group (0-7)
+    public const byte GetCsGroup           = 0x21; // IN 40-byte CsGroup, wValue=group
+    public const byte SetCsMacro           = 0x22; // OUT 36-byte header (name+count), wValue=macro
+    public const byte GetCsMacro           = 0x23; // IN 132-byte CsMacro, wValue=macro
+    public const byte SetCsMacroStep       = 0x24; // OUT 12-byte CsMacroStep, wValue=(step<<8)|macro
+    public const byte CsMacroFire          = 0x25; // IN 1 ack byte; wValue=macro, 0xFFFF cancels
+    public const byte GetCsExtStatus       = 0x26; // IN 24-byte CsExtStatusPacket
+
     // I2S output configuration
     public const byte SetOutputType    = 0xC0;
     public const byte GetOutputType    = 0xC1;
@@ -2687,8 +2698,11 @@ public partial class DspDevice : ObservableObject, IDisposable
     // latches into a single-deep pending buffer and firmware immediately records
     // CS_STATUS_PENDING; the 1 kHz loop runs the apply and overwrites with the
     // real verdict. The host polls GetCsStatus until LastSlot names the op and
-    // LastStatus leaves Pending. All five deferred ops (binding, name, IR cmd,
-    // save, revert) share one LastStatus/LastSlot channel — serialize them.
+    // LastStatus leaves Pending. Every deferred op (binding, name, IR cmd, group,
+    // macro header, macro step, save, revert) shares one LastStatus/LastSlot
+    // channel — serialize them. LastSlot tags: the plain slot for a binding or
+    // name, 0x40|idx for a group, 0x60|idx for a macro, 0x80|sub for an IR
+    // command, 0xFF for save/revert.
 
     /// <summary>Read the caps header + type table (0x86 wValue 0xFFFF). Null if the
     /// firmware STALLs (older firmware without the feature). Request generously so a
@@ -2810,6 +2824,87 @@ public partial class DspDevice : ObservableObject, IDisposable
         var r = ControlTransferIn(VendorCommands.CsRevert, 0, 1);
         if (r == null) return 0xFF;
         return PollCsDeferred(CsLimits.LastSlotSave);
+    }
+
+    // ── Control-surface groups and macros (0x20–0x26, caps v9) ───────────────
+
+    /// <summary>Read one live 40-byte target group (0x21). Null on transfer failure
+    /// or a pre-caps-v9 firmware (which STALLs).</summary>
+    public CsGroup? GetCsGroup(int idx)
+    {
+        var r = ControlTransferIn(VendorCommands.GetCsGroup, (ushort)(idx & 0xFF), CsGroup.WireSize);
+        return r == null ? null : CsGroup.FromBytes(r);
+    }
+
+    /// <summary>Stage a target group (0x20 OUT) and wait for the deferred apply.
+    /// The poll key is 0x40|idx. An all-zero record clears the slot.</summary>
+    public byte SetCsGroup(int idx, CsGroup group)
+    {
+        if (!ControlTransferOut(VendorCommands.SetCsGroup, (ushort)(idx & 0xFF), group.ToBytes()))
+            return 0xFF;
+        return PollCsDeferred((byte)(CsLimits.LastSlotGroupFlag | (idx & 0x3F)));
+    }
+
+    /// <summary>Read one live 132-byte macro, steps included (0x23).</summary>
+    public CsMacro? GetCsMacro(int idx)
+    {
+        var r = ControlTransferIn(VendorCommands.GetCsMacro, (ushort)(idx & 0xFF), CsMacro.WireSize);
+        return r == null ? null : CsMacro.FromBytes(r);
+    }
+
+    /// <summary>Stage a macro header — name and step count (0x22 OUT). Poll key
+    /// 0x60|idx. Write the steps first so a concurrent fire never sees a count
+    /// past the written steps.</summary>
+    public byte SetCsMacroHeader(int idx, CsMacro macro)
+    {
+        byte key = (byte)(CsLimits.LastSlotMacroFlag | (idx & 0x1F));
+        return SetCsDeferredWithRetry(VendorCommands.SetCsMacro, (ushort)(idx & 0xFF),
+                                      macro.HeaderToBytes(), key);
+    }
+
+    /// <summary>Stage one macro step (0x24 OUT, wValue = (step &lt;&lt; 8) | macro).
+    /// An all-zero record clears it. Poll key 0x60|macro, shared with the header.</summary>
+    public byte SetCsMacroStep(int idx, int step, CsMacroStep value)
+    {
+        ushort wValue = (ushort)(((step & 0xFF) << 8) | (idx & 0xFF));
+        byte key = (byte)(CsLimits.LastSlotMacroFlag | (idx & 0x1F));
+        return SetCsDeferredWithRetry(VendorCommands.SetCsMacroStep, wValue, value.ToBytes(), key);
+    }
+
+    /// <summary>Stage a deferred CS SET, retrying on BUSY. Writing a whole macro
+    /// is a burst of same-key SETs, and the poll can only key off the shared
+    /// LastStatus/LastSlot pair: if the firmware hasn't picked up the previous
+    /// handoff yet, the poll can read that one's verdict and let the next SET land
+    /// on a still-occupied pending slot. BUSY explicitly means "retry shortly".</summary>
+    private byte SetCsDeferredWithRetry(byte request, ushort wValue, byte[] payload, byte pollKey)
+    {
+        byte status = CsStatus.Busy;
+        for (int attempt = 0; attempt < 4 && status == CsStatus.Busy; attempt++)
+        {
+            if (attempt > 0) System.Threading.Thread.Sleep(10);
+            if (!ControlTransferOut(request, wValue, payload)) return 0xFF;
+            status = PollCsDeferred(pollKey);
+        }
+        return status;
+    }
+
+    /// <summary>Fire a macro (0x25). Immediate, not deferred: false means the
+    /// firmware STALLed (bad index or step count), with the reason left in the
+    /// status packet.</summary>
+    public bool CsMacroFire(int idx) =>
+        ControlTransferIn(VendorCommands.CsMacroFire, (ushort)(idx & 0xFF), 1) != null;
+
+    /// <summary>Cancel the running macro (0x25 wValue 0xFFFF). Remaining steps are
+    /// dropped; anything already dispatched stands.</summary>
+    public void CsMacroCancel() =>
+        ControlTransferIn(VendorCommands.CsMacroFire, CsLimits.MacroFireCancel, 1);
+
+    /// <summary>Read the 24-byte group/macro status packet (0x26). Null on a
+    /// pre-caps-v9 firmware.</summary>
+    public CsExtStatusPacket? GetCsExtStatus()
+    {
+        var r = ControlTransferIn(VendorCommands.GetCsExtStatus, 0, CsExtStatusPacket.WireSize);
+        return r == null ? null : CsExtStatusPacket.FromBytes(r);
     }
 
     /// <summary>Arm IR learn (0x8F wValue=1). False if the firmware STALLs (no live
