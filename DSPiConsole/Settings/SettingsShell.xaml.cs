@@ -78,6 +78,8 @@ public sealed partial class SettingsShell : UserControl
             // stays false and the page can never appear in the nav. When the
             // probe confirms support, OnVmPropertyChanged rebuilds the menu.
             ProbeControlInterfaces();
+            ProbeControlSurfaces();
+            SyncControlSurfacesStaged();
         }
         catch (Exception ex)
         {
@@ -149,7 +151,7 @@ public sealed partial class SettingsShell : UserControl
                 // collapsing it just makes the user click it open on every
                 // Settings open. Other categories stay collapsed so the
                 // nav tree doesn't fill the sidebar by default.
-                IsExpanded = cat == SettingsCategory.Hardware,
+                IsExpanded = cat == SettingsCategory.System,
             };
             _categoryDots[cat] = catDot;
 
@@ -305,10 +307,16 @@ public sealed partial class SettingsShell : UserControl
         {
             DispatcherQueue.TryEnqueue(SyncOutputConfigStaged);
             DispatcherQueue.TryEnqueue(ProbeControlInterfaces); // re-probe on (re)connect
+            DispatcherQueue.TryEnqueue(ProbeControlSurfaces);
         }
-        else if (e.PropertyName == nameof(MainViewModel.ControlInterfacesSupported))
+        else if (e.PropertyName == nameof(MainViewModel.ControlInterfacesSupported)
+                 || e.PropertyName == nameof(MainViewModel.ControlSurfacesSupported))
         {
             DispatcherQueue.TryEnqueue(RebuildNavMenu);
+        }
+        else if (e.PropertyName == nameof(MainViewModel.CsDirty))
+        {
+            DispatcherQueue.TryEnqueue(SyncControlSurfacesStaged);
         }
     }
 
@@ -320,6 +328,17 @@ public sealed partial class SettingsShell : UserControl
     {
         if (_vm.IsDeviceConnected)
             _ = System.Threading.Tasks.Task.Run(_vm.FetchControlInterfaces);
+    }
+
+    /// <summary>Probe caps and read the whole live control-surface config. Unlike
+    /// the other capability flags this one is never seeded from the bulk blob, so
+    /// without this probe ControlSurfacesSupported stays false, the three Control
+    /// pages never appear, and nothing would ever trigger the fetch. Reading the
+    /// config here (not just the caps) also means the pages build populated.</summary>
+    private void ProbeControlSurfaces()
+    {
+        if (_vm.IsDeviceConnected)
+            _ = System.Threading.Tasks.Task.Run(_vm.FetchControlSurfaces);
     }
 
     /// <summary>Rebuild the nav after a page's availability changed (e.g. the
@@ -346,6 +365,49 @@ public sealed partial class SettingsShell : UserControl
 
     private void OnOutputConfigStateChanged(object? sender, EventArgs e) =>
         DispatcherQueue.TryEnqueue(SyncOutputConfigStaged);
+
+    /// <summary>
+    /// Reflect the VM's unsaved control-surface edits as staged entries, the same
+    /// way <see cref="SyncOutputConfigStaged"/> does for the IO block. Both are
+    /// live-on-the-device-but-not-in-flash, so they belong in the same prompt
+    /// rather than each editor growing its own Save/Revert bar. Each entry's Apply
+    /// persists the whole config via CS Save; the call no-ops once clean, so a
+    /// batch of entries still writes flash once.
+    /// </summary>
+    private void SyncControlSurfacesStaged()
+    {
+        var desired = _vm.IsDeviceConnected
+            ? _vm.GetControlSurfaceChanges()
+            : System.Array.Empty<PresetDiff.IoChange>();
+
+        var desiredKeys = new HashSet<string>();
+        foreach (var c in desired) desiredKeys.Add(c.Key);
+
+        foreach (var pc in _tracker.Pending.Where(p => p.Key.StartsWith("cs.")).ToList())
+            if (!desiredKeys.Contains(pc.Key))
+                _tracker.Discard(pc.Key);
+
+        var existing = _tracker.Pending.ToDictionary(p => p.Key);
+        foreach (var c in desired)
+        {
+            if (existing.TryGetValue(c.Key, out var ex) && ex.NewDisplay == c.New)
+                continue;
+            _tracker.Stage(new PendingChange(
+                Key: c.Key,
+                PageId: PageForCsKey(c.Key),
+                FieldLabel: c.Label,
+                OldDisplay: c.Old,
+                NewDisplay: c.New,
+                Apply: () => System.Threading.Tasks.Task.Run(() => _vm.CsSave())));
+        }
+    }
+
+    /// <summary>Send each control-surface change's pending-dot to the page that
+    /// edits it, so a macro edit doesn't dot the Control Surfaces page.</summary>
+    private static string PageForCsKey(string key) =>
+        key.StartsWith("cs.group") ? "control.groups"
+        : key.StartsWith("cs.macro") ? "control.macros"
+        : "control.surfaces";   // cs.slot.* / cs.ir.*
 
     /// <summary>
     /// Reflect the VM's unsaved independent-mode IO-block changes as staged
@@ -403,13 +465,18 @@ public sealed partial class SettingsShell : UserControl
         DiscardButton.IsEnabled = false;
         try
         {
+            bool hadCsChanges = _tracker.Pending.Any(p => p.Key.StartsWith("cs."));
             _tracker.DiscardAll();
-            // Output-config edits are already live-applied to RAM, so dropping the
-            // staged entries isn't enough — revert them to the last saved values.
-            // (The other staged pages were never applied, so DiscardAll IS their
-            // revert.) On completion OutputConfigDirty clears and the entries stay
-            // gone via OnOutputConfigStateChanged → SyncOutputConfigStaged.
+            // Output-config and control-surface edits are already live-applied to
+            // RAM, so dropping the staged entries isn't enough — both need their
+            // own revert to the last saved values. (The other staged pages were
+            // never applied, so DiscardAll IS their revert.) On completion the
+            // dirty flags clear and the entries stay gone via
+            // OnOutputConfigStateChanged / the CsDirty property change.
             await _vm.RevertOutputConfig();
+            // Reloads the stored config and raises ControlSurfacesReloaded, which
+            // is what re-seeds the editor pages' drafts.
+            if (hadCsChanges) await System.Threading.Tasks.Task.Run(() => _vm.CsRevert());
             HardwarePins.RaisePinAssignmentsChanged();
         }
         catch (Exception ex)

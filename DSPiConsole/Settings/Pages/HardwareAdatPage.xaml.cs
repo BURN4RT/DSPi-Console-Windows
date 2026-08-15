@@ -296,7 +296,7 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
     // ── ISettingsPage ──────────────────────────────────────────────────────
     public string Id => "hardware.adat";
     public string Title => "ADAT";
-    public SettingsCategory Category => SettingsCategory.Hardware;
+    public SettingsCategory Category => SettingsCategory.System;
     public string IconGlyph => "";
     public int Order => 20;
     public bool IsAvailable(MainViewModel vm) => vm.AdatSupported || vm.AdatInputSupported;

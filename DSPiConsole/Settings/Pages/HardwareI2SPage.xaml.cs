@@ -562,7 +562,7 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
     // ── ISettingsPage ──────────────────────────────────────────────────
     public string Id => "hardware.i2s";
     public string Title => "I²S Configuration";
-    public SettingsCategory Category => SettingsCategory.Hardware;
+    public SettingsCategory Category => SettingsCategory.System;
     public string IconGlyph => ""; // SoundLevels (waveform)
     public int Order => 60;
     public bool IsAvailable(MainViewModel vm) => true;

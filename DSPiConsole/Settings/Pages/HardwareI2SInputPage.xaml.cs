@@ -240,7 +240,7 @@ public sealed partial class HardwareI2SInputPage : SettingsModule, ISettingsPage
     // ── ISettingsPage ──────────────────────────────────────────────────
     public string Id => "hardware.i2s-input";
     public string Title => "I2S Input";
-    public SettingsCategory Category => SettingsCategory.Hardware;
+    public SettingsCategory Category => SettingsCategory.System;
     public string IconGlyph => "";
     public int Order => 50; // just after S/PDIF Input (40)
     public bool IsAvailable(MainViewModel vm) => vm.InputI2sSupported;

@@ -3,14 +3,12 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using DSPiConsole.Core.Models;
 using DSPiConsole.Settings;
 using DSPiConsole.ViewModels;
 using Microsoft.UI;
 using Microsoft.UI.Text;
-using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -18,28 +16,65 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.System;
 using Windows.UI;
-using WinRT.Interop;
 
 namespace DSPiConsole;
 
 /// <summary>
-/// Control Surfaces + IR remote editor. A caps-driven window that binds physical
+/// Which of the editor's three sections a <see cref="ControlSurfacesPanel"/>
+/// instance shows. The three Settings pages under Control each build one panel
+/// with a different value; everything else about them is identical.
+/// </summary>
+public enum CsSection { Bindings, Groups, Macros }
+
+/// <summary>
+/// Control Surfaces + IR remote editor. A caps-driven editor that binds physical
 /// GPIO controls (buttons, switches, pots, encoders, LEDs, PWM LEDs) and an IR
 /// receiver to DSP parameters. Every edit previews live on the device; Save
 /// persists to flash, Revert discards. Mirrors the macOS reference app.
+///
+/// <para>
+/// Hosted by three Settings pages rather than its own window. All three sections
+/// stay in this one class because they share the card builders, the caps gate and
+/// the device-wide dirty state — a page just picks a <see cref="CsSection"/>. The
+/// three live instances keep each other current through
+/// <see cref="StateChanged"/>, which only ever triggers in-place refreshes: a
+/// sibling must never reseed its drafts, or it would throw away edits the user
+/// hasn't applied yet.
+/// </para>
 /// </summary>
-public sealed partial class ControlSurfacesWindow : Window
+public sealed partial class ControlSurfacesPanel : UserControl
 {
-    [DllImport("user32.dll")]
-    private static extern uint GetDpiForWindow(IntPtr hwnd);
-
     private readonly MainViewModel _vm;
-    private AppWindow? _appWindow;
+    private readonly CsSection _section;
 
-    // Fixed logical width: 20px page padding each side + 120px row labels +
-    // editor controls + card chrome all fit comfortably; height stays resizable
-    // for the scrolling card list.
-    private const int FixedWidth = 560;
+    /// <summary>Raised after an edit that another section's cards render — a group
+    /// renamed or cleared, a macro renamed, a binding's slot health changed. The
+    /// panel that made the change passes itself so it doesn't handle its own
+    /// event; the others refresh in place.</summary>
+    internal static event Action<ControlSurfacesPanel>? StateChanged;
+
+    private void RaiseStateChanged() => StateChanged?.Invoke(this);
+
+    // A panel only listens to ControlSurfacesReloaded while it's mounted, so a
+    // revert (or a device push) that lands while you're on another page would
+    // otherwise leave that page's cached instance showing pre-revert drafts. One
+    // process-wide subscription counts the reloads; each panel records the count
+    // it last seeded at and re-seeds on the way back in if it fell behind.
+    private static int s_reloadGeneration;
+    private static MainViewModel? s_generationVm;
+    private int _seenGeneration;
+
+    private static void HookReloadCounter(MainViewModel vm)
+    {
+        if (ReferenceEquals(s_generationVm, vm)) return;
+        if (s_generationVm != null) s_generationVm.ControlSurfacesReloaded -= BumpGeneration;
+        s_generationVm = vm;
+        vm.ControlSurfacesReloaded += BumpGeneration;
+    }
+
+    // Subscribed before any panel's own handler, so a panel that IS mounted sees
+    // the bumped count when it records _seenGeneration.
+    private static void BumpGeneration() => s_reloadGeneration++;
 
     // Editable drafts (seeded from the VM's live values). A slot is "dirty" when
     // its draft differs from the applied device state.
@@ -52,7 +87,6 @@ public sealed partial class ControlSurfacesWindow : Window
 
     private bool _building;
     private int? _applyingSlot;
-    private bool _savingConfig;
     private int? _learningSub;
 
     // Per-slot / per-sub UI handles refreshed without a full rebuild.
@@ -85,56 +119,66 @@ public sealed partial class ControlSurfacesWindow : Window
     private readonly Dictionary<int, Button> _irLearnButtons = new();
     private readonly Dictionary<int, TextBlock> _irTitles = new();
 
-    public ControlSurfacesWindow(MainViewModel vm)
+    public ControlSurfacesPanel(MainViewModel vm, CsSection section)
     {
         _vm = vm;
+        _section = section;
         InitializeComponent();
+        HookReloadCounter(vm);
+        _seenGeneration = s_reloadGeneration;
 
-        var hWnd = WindowNative.GetWindowHandle(this);
-        var windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
-        var appWindow = AppWindow.GetFromWindowId(windowId);
-        _appWindow = appWindow;
-        double dpiScale = GetDpiForWindow(hWnd) / 96.0;
-        appWindow?.Resize(new Windows.Graphics.SizeInt32((int)(FixedWidth * dpiScale), (int)(780 * dpiScale)));
-        if (appWindow != null)
-        {
-            appWindow.Title = "Control Surfaces";
-            // Width is fixed; only the height may be resized.
-            if (appWindow.Presenter is OverlappedPresenter presenter)
-                presenter.IsMaximizable = false;
-            appWindow.Changed += OnAppWindowChanged;
-        }
-
-        if (appWindow?.TitleBar is { } titleBar)
-        {
-            titleBar.ForegroundColor = Color.FromArgb(255, 220, 220, 220);
-            titleBar.BackgroundColor = Color.FromArgb(255, 32, 32, 32);
-            titleBar.InactiveForegroundColor = Color.FromArgb(255, 140, 140, 140);
-            titleBar.InactiveBackgroundColor = Color.FromArgb(255, 32, 32, 32);
-            titleBar.ButtonForegroundColor = Color.FromArgb(255, 220, 220, 220);
-            titleBar.ButtonBackgroundColor = Color.FromArgb(255, 32, 32, 32);
-            titleBar.ButtonInactiveForegroundColor = Color.FromArgb(255, 140, 140, 140);
-            titleBar.ButtonInactiveBackgroundColor = Color.FromArgb(255, 32, 32, 32);
-            titleBar.ButtonHoverForegroundColor = Color.FromArgb(255, 255, 255, 255);
-            titleBar.ButtonHoverBackgroundColor = Color.FromArgb(255, 50, 50, 50);
-        }
-
-        _vm.PropertyChanged += OnVmPropertyChanged;
-        _vm.ControlSurfacesReloaded += OnReloaded;
-        _vm.ChannelNameChanged += OnChannelNameChanged;
-        Closed += OnClosed;
+        // Subscriptions live on Loaded/Unloaded, not the constructor: the settings
+        // shell caches page instances and detaches them from the visual tree when
+        // you navigate away, so a constructor-only subscription would survive but
+        // a Loaded-only rebuild wouldn't. Same convention as every SettingsModule.
+        Loaded += OnPanelLoaded;
+        Unloaded += OnPanelUnloaded;
 
         SeedDrafts();
         BuildAll();
     }
 
-    private void OnClosed(object sender, WindowEventArgs e)
+    private void OnPanelLoaded(object sender, RoutedEventArgs e)
+    {
+        _vm.PropertyChanged -= OnVmPropertyChanged;
+        _vm.PropertyChanged += OnVmPropertyChanged;
+        _vm.ControlSurfacesReloaded -= OnReloaded;
+        _vm.ControlSurfacesReloaded += OnReloaded;
+        _vm.ChannelNameChanged -= OnChannelNameChanged;
+        _vm.ChannelNameChanged += OnChannelNameChanged;
+        StateChanged -= OnSiblingStateChanged;
+        StateChanged += OnSiblingStateChanged;
+
+        // Catch up on anything that happened while we were detached.
+        if (_seenGeneration != s_reloadGeneration)
+        {
+            _seenGeneration = s_reloadGeneration;
+            SeedDrafts();
+            BuildAll();
+        }
+        else RefreshStatusIndicators();
+    }
+
+    private void OnPanelUnloaded(object sender, RoutedEventArgs e)
     {
         StopMacroPoll();
         _vm.PropertyChanged -= OnVmPropertyChanged;
         _vm.ControlSurfacesReloaded -= OnReloaded;
         _vm.ChannelNameChanged -= OnChannelNameChanged;
-        if (_appWindow != null) _appWindow.Changed -= OnAppWindowChanged;
+        StateChanged -= OnSiblingStateChanged;
+    }
+
+    /// <summary>Another section changed something this one displays. Refresh in
+    /// place only — reseeding would discard drafts the user hasn't applied.</summary>
+    private void OnSiblingStateChanged(ControlSurfacesPanel source)
+    {
+        if (ReferenceEquals(source, this)) return;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_section == CsSection.Bindings) RefreshGroupedBindingCards();
+            else RefreshGroupMacroIndicators();
+            RefreshStatusIndicators();
+        });
     }
 
     /// <summary>A channel was renamed (sidebar edit, preset load, or a device
@@ -142,18 +186,12 @@ public sealed partial class ControlSurfacesWindow : Window
     private void OnChannelNameChanged(int channelId) =>
         DispatcherQueue.TryEnqueue(RefreshChannelLabels);
 
-    /// <summary>Snap the width back to <see cref="FixedWidth"/> if a resize (edge
-    /// drag, snap layout, …) changed it; height is left alone.</summary>
-    private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
+    private void OnReloaded() => DispatcherQueue.TryEnqueue(() =>
     {
-        if (!args.DidSizeChange) return;
-        double scale = GetDpiForWindow(WindowNative.GetWindowHandle(this)) / 96.0;
-        int w = (int)(FixedWidth * scale);
-        if (sender.Size.Width != w)
-            sender.Resize(new Windows.Graphics.SizeInt32(w, sender.Size.Height));
-    }
-
-    private void OnReloaded() => DispatcherQueue.TryEnqueue(() => { SeedDrafts(); BuildAll(); });
+        _seenGeneration = s_reloadGeneration;
+        SeedDrafts();
+        BuildAll();
+    });
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -185,17 +223,26 @@ public sealed partial class ControlSurfacesWindow : Window
         {
             UnsupportedBar.IsOpen = true;
             BodyPanel.Visibility = Visibility.Collapsed;
-            SaveBar.Visibility = Visibility.Collapsed;
             return;
         }
 
         UnsupportedBar.IsOpen = false;
         BodyPanel.Visibility = Visibility.Visible;
-        BuildAddMenu();
-        RebuildCards();
+
+        // Only this panel's section is built. The others stay collapsed and their
+        // card dictionaries stay empty — every refresh path already skips slots it
+        // has no card for, so they no-op rather than misbehave.
+        BindingsSection.Visibility = Vis(_section == CsSection.Bindings);
+        if (_section == CsSection.Bindings)
+        {
+            BuildAddMenu();
+            RebuildCards();
+        }
         BuildGroupsAndMacros();
         RefreshStatusIndicators();
     }
+
+    private static Visibility Vis(bool show) => show ? Visibility.Visible : Visibility.Collapsed;
 
     private void BuildAddMenu()
     {
@@ -938,7 +985,7 @@ public sealed partial class ControlSurfacesWindow : Window
     {
         bool receiverLive = _vm.CsStatus?.IsSlotActive(_irSectionSlot) == true;
         foreach (var (_, btn) in _irLearnButtons)
-            btn.IsEnabled = receiverLive && _learningSub == null && !_savingConfig;
+            btn.IsEnabled = receiverLive && _learningSub == null;
     }
 
     /// <summary>Build and insert one remote-button card at its sub-ordered position,
@@ -1088,7 +1135,7 @@ public sealed partial class ControlSurfacesWindow : Window
             else
             {
                 var learn = new Button { Content = draft.IsConfigured ? "Re-learn" : "Learn Button" };
-                learn.IsEnabled = receiverLive && _learningSub == null && !_savingConfig;
+                learn.IsEnabled = receiverLive && _learningSub == null;
                 learn.Click += (_, _) => StartLearn(sub);
                 learnPanel.Children.Add(learn);
                 _irLearnButtons[sub] = learn;
@@ -1447,6 +1494,8 @@ public sealed partial class ControlSurfacesWindow : Window
         PopulateSlotBody(slot);
         RefreshOtherSlotPins(slot);
         BuildAddMenu();
+        // Slot health moved, which the group and macro pages show in their pills.
+        RaiseStateChanged();
 
         if (status != CsStatus.Success)
             ShowToast(CsStatus.Message(status));
@@ -1587,39 +1636,6 @@ public sealed partial class ControlSurfacesWindow : Window
         RefreshIrLearnButtons();
     }
 
-    // ── Save / revert all ────────────────────────────────────────────────────
-
-    private async void OnSaveAllClick(object sender, RoutedEventArgs e)
-    {
-        if (_savingConfig) return;
-        _savingConfig = true;
-        SaveRing.IsActive = true;
-        SaveAllButton.IsEnabled = RevertAllButton.IsEnabled = false;
-
-        byte status = await Task.Run(() => _vm.CsSave());
-
-        _savingConfig = false;
-        SaveRing.IsActive = false;
-        RefreshStatusIndicators();
-        if (status != CsStatus.Success) ShowToast(CsStatus.Message(status));
-        else ShowToast("Saved to device.");
-    }
-
-    private async void OnRevertAllClick(object sender, RoutedEventArgs e)
-    {
-        if (_savingConfig) return;
-        _savingConfig = true;
-        SaveRing.IsActive = true;
-        SaveAllButton.IsEnabled = RevertAllButton.IsEnabled = false;
-
-        await Task.Run(() => _vm.CsRevert());
-
-        _savingConfig = false;
-        SaveRing.IsActive = false;
-        HardwarePins.RaisePinAssignmentsChanged();
-        // OnReloaded re-seeds drafts and rebuilds.
-    }
-
     // ── Status refresh ───────────────────────────────────────────────────────
 
     private void RefreshStatusIndicators()
@@ -1637,13 +1653,11 @@ public sealed partial class ControlSurfacesWindow : Window
         foreach (var (slot, title) in _slotTitles) title.Text = SlotTitle(slot);
         foreach (var (slot, summary) in _slotSummaries) summary.Text = SlotSummary(slot);
         foreach (var (slot, apply) in _slotApply)
-            apply.IsEnabled = SlotDirty(slot) && _applyingSlot == null && !_savingConfig;
+            apply.IsEnabled = SlotDirty(slot) && _applyingSlot == null;
 
         RefreshGroupMacroIndicators();
-
-        bool dirtyAll = _vm.CsDirty;
-        SaveBar.Visibility = dirtyAll ? Visibility.Visible : Visibility.Collapsed;
-        SaveAllButton.IsEnabled = RevertAllButton.IsEnabled = dirtyAll && !_savingConfig;
+        // Nothing here reflects the flash-dirty state any more: the settings
+        // window's pending-changes prompt owns that, fed by CsDirty.
     }
 
     private bool SlotDirty(int slot)
@@ -1654,18 +1668,14 @@ public sealed partial class ControlSurfacesWindow : Window
         return false;
     }
 
+    /// <summary>Per-edit feedback (a rejected Apply, a stranded control). Distinct
+    /// from the pending-changes prompt, which reports on persisting to flash.</summary>
     private void ShowToast(string msg)
     {
-        SaveStatusText.Text = msg;
-        SaveStatusText.Visibility = string.IsNullOrEmpty(msg) ? Visibility.Collapsed : Visibility.Visible;
-        if (SaveBar.Visibility != Visibility.Visible)
-        {
-            // Surface the message via the InfoBar when the save bar is hidden.
-            LoadingBar.Title = "";
-            LoadingBar.Message = msg;
-            LoadingBar.Severity = InfoBarSeverity.Informational;
-            LoadingBar.IsOpen = true;
-        }
+        MessageBar.Title = "";
+        MessageBar.Message = msg;
+        MessageBar.Severity = InfoBarSeverity.Informational;
+        MessageBar.IsOpen = !string.IsNullOrEmpty(msg);
     }
 
     // ── Helpers: seeding, pins, caps queries ─────────────────────────────────

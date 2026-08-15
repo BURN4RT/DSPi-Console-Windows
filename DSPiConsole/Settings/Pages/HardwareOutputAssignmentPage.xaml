@@ -6,7 +6,7 @@
     xmlns:settings="using:DSPiConsole.Settings">
 
     <!--
-        Mains Outputs page. Per-output rows are built dynamically in
+        Main Outputs page. Per-output rows are built dynamically in
         code-behind (RP2040 vs RP2350 differ), so the XAML defines only
         the section frame + the Reset action.
 

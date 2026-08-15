@@ -309,9 +309,9 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
     // ── ISettingsPage ──────────────────────────────────────────────────
     public string Id => "hardware.dac-mute";
     public string Title => "External Mute Control";
-    public SettingsCategory Category => SettingsCategory.Hardware;
+    public SettingsCategory Category => SettingsCategory.Control;
     public string IconGlyph => ""; // Mute
-    public int Order => 70;
+    public int Order => 40;
     // V10+ feature — hide the sidebar entry entirely on older firmware.
     public bool IsAvailable(MainViewModel vm) => vm.DacHwMuteSupported;
     public UIElement BuildContent(MainViewModel vm, IPendingChangeTracker tracker)

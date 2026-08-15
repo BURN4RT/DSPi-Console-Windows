@@ -375,9 +375,9 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
     // ── ISettingsPage ──────────────────────────────────────────────────────
     public string Id => "hardware.control-interfaces";
     public string Title => "Control Interfaces";
-    public SettingsCategory Category => SettingsCategory.Hardware;
+    public SettingsCategory Category => SettingsCategory.Control;
     public string IconGlyph => "";
-    public int Order => 80;
+    public int Order => 50;
     public bool IsAvailable(MainViewModel vm) => vm.ControlInterfacesSupported;
     public UIElement BuildContent(MainViewModel vm, IPendingChangeTracker tracker)
     {

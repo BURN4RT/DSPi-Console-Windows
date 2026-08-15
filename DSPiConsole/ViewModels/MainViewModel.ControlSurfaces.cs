@@ -368,9 +368,12 @@ public partial class MainViewModel
     }
 
     /// <summary>Persist the whole live config to flash. On success re-captures the
-    /// clean baseline so the Save bar clears.</summary>
+    /// clean baseline so the pending-changes prompt clears.</summary>
     public byte CsSave()
     {
+        // Nothing outstanding → no-op, so the batched save the settings prompt
+        // issues once per staged entry only writes flash on the first call.
+        if (!CsDirty) return DSPiConsole.Core.Models.CsStatus.Success;
         lock (_csWriteLock)
         {
             byte result = _device.CsSave();
@@ -516,6 +519,77 @@ public partial class MainViewModel
         for (int i = 0; i < _csGroups.Length; i++) _csCleanGroups[i] = _csGroups[i].Clone();
         _csCleanMacros = new CsMacro[_csMacros.Length];
         for (int i = 0; i < _csMacros.Length; i++) _csCleanMacros[i] = _csMacros[i].Clone();
+    }
+
+    /// <summary>
+    /// Per-item diff of the live control-surface config against the last-saved
+    /// baseline — the same shape the IO block produces, so the Settings window can
+    /// stage control-surface edits in its pending-changes prompt instead of the
+    /// editor carrying a second Save/Revert bar of its own.
+    ///
+    /// <para>One entry per control, group or macro rather than one aggregate entry,
+    /// so the prompt's count is a real count and its sidebar dot lands on the page
+    /// that owns the change. A slot's binding and its name fold into one entry: to
+    /// the user, renaming a control and re-targeting it are one edit to one thing.
+    /// Empty while the firmware reports clean.</para>
+    ///
+    /// <para>The baseline only gets captured when the device is seen clean, so
+    /// opening the app onto an already-dirty device leaves us with nothing to diff
+    /// against. That must still raise the prompt — the edits are real and unsaved,
+    /// we just can't itemise them — so it falls back to one aggregate entry rather
+    /// than reporting no changes.</para>
+    /// </summary>
+    public IReadOnlyList<PresetDiff.IoChange> GetControlSurfaceChanges()
+    {
+        var changes = new List<PresetDiff.IoChange>();
+        if (!CsDirty) return changes;
+
+        if (_csCleanBindings == null || _csCleanNames == null || _csCleanIrCommands == null
+            || _csCleanGroups == null || _csCleanMacros == null)
+        {
+            changes.Add(new("cs.all", "Control surfaces", "saved", "edited"));
+            return changes;
+        }
+
+        for (int i = 0; i < _csBindings.Length; i++)
+        {
+            bool bindingSame = _csBindings[i].WireEquals(_csCleanBindings[i]);
+            bool nameSame = string.Equals(_csNames[i], _csCleanNames[i], StringComparison.Ordinal);
+            if (bindingSame && nameSame) continue;
+            string label = string.IsNullOrWhiteSpace(_csNames[i]) ? $"Control {i + 1}" : _csNames[i];
+            var d = Delta(_csCleanBindings[i].IsConfigured, _csBindings[i].IsConfigured);
+            changes.Add(new($"cs.slot.{i}", label, d.Old, d.New));
+        }
+        for (int i = 0; i < _csIrCommands.Length; i++)
+        {
+            if (_csIrCommands[i].WireEquals(_csCleanIrCommands[i])) continue;
+            var d = Delta(_csCleanIrCommands[i].IsConfigured, _csIrCommands[i].IsConfigured);
+            changes.Add(new($"cs.ir.{i}", $"Remote button {i + 1}", d.Old, d.New));
+        }
+        for (int i = 0; i < _csGroups.Length; i++)
+        {
+            if (_csGroups[i].WireEquals(_csCleanGroups[i])) continue;
+            string label = string.IsNullOrWhiteSpace(_csGroups[i].Name)
+                ? $"Group {i + 1}" : _csGroups[i].Name;
+            var d = Delta(_csCleanGroups[i].IsConfigured, _csGroups[i].IsConfigured);
+            changes.Add(new($"cs.group.{i}", label, d.Old, d.New));
+        }
+        for (int i = 0; i < _csMacros.Length; i++)
+        {
+            if (_csMacros[i].WireEquals(_csCleanMacros[i])) continue;
+            string label = string.IsNullOrWhiteSpace(_csMacros[i].Name)
+                ? $"Macro {i + 1}" : _csMacros[i].Name;
+            var d = Delta(_csCleanMacros[i].IsConfigured, _csMacros[i].IsConfigured);
+            changes.Add(new($"cs.macro.{i}", label, d.Old, d.New));
+        }
+        return changes;
+
+        // These are whole records, not single fields, so the prompt says what
+        // happened to the item rather than a before/after value it has no room for.
+        static (string Old, string New) Delta(bool before, bool after) =>
+            !before && after ? ("not set", "added")
+            : before && !after ? ("set", "removed")
+            : ("saved", "edited");
     }
 
     private bool MatchesCleanBaseline()

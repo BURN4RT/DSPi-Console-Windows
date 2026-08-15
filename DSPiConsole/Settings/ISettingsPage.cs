@@ -69,7 +69,8 @@ public enum SettingsCategory
 {
     General,
     Graphing,
-    Hardware,
+    System,
+    Control,
     Presets,
     Advanced,
     About,
@@ -93,7 +94,8 @@ public static class SettingsCategoryInfo
     {
         SettingsCategory.General  => ("General",  ""),  // Settings (gear)
         SettingsCategory.Graphing => ("Graphing", ""),  // BarChart4
-        SettingsCategory.Hardware => ("Hardware", ""),  // USB
+        SettingsCategory.System   => ("System",   ""),  // USB
+        SettingsCategory.Control  => ("Control",  ""),  // Sliders
         SettingsCategory.Presets  => ("Presets",  ""),  // Save
         SettingsCategory.Advanced => ("Advanced", ""),  // DeveloperTools
         SettingsCategory.About    => ("About",    ""),  // Info

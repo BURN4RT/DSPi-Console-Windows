@@ -241,7 +241,7 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
     // ── ISettingsPage ──────────────────────────────────────────────────
     public string Id => "hardware.spdif-input";
     public string Title => "S/PDIF Input";
-    public SettingsCategory Category => SettingsCategory.Hardware;
+    public SettingsCategory Category => SettingsCategory.System;
     public string IconGlyph => "";
     public int Order => 40;
     public bool IsAvailable(MainViewModel vm) => vm.InputSourceSupported;

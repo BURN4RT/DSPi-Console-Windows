@@ -621,8 +621,8 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
 
     // ── ISettingsPage ──────────────────────────────────────────────────
     public string Id => "hardware.output-assignment";
-    public string Title => "Mains Outputs";
-    public SettingsCategory Category => SettingsCategory.Hardware;
+    public string Title => "Main Outputs";
+    public SettingsCategory Category => SettingsCategory.System;
     public string IconGlyph => ""; // Speakers
     public int Order => 10;
     public bool IsAvailable(MainViewModel vm) => true;

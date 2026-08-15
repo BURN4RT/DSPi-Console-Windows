@@ -243,14 +243,14 @@ action: absolute adjustment, stepped increment or decrement, toggle, set, follow
 the LED indicator behaviours. Parameters include volume, mute, preset selection, input source, the processing
 blocks, per-output gain and delay, and individual filter parameters. Infrared remotes are handled by a learning
 mode that captures NEC, RC5 and RC6 codes directly from the handset. Channel targets are presented using your own
-channel names.
+channel names. Control surfaces, channel groups and macros are edited under Settings > Control.
 
 ### Input sources and hardware configuration
 
 The device is not limited to USB. Depending on your hardware and Firmware, the input source selector offers USB,
 S/PDIF, I2S and ADAT, and the settings window provides a page for each:
 
-- **Mains Outputs** assigns a GPIO pin to each output, with duplicate detection and conflict warnings.
+- **Main Outputs** assigns a GPIO pin to each output, with duplicate detection and conflict warnings.
 - **Clocking** holds the default sample rate and the master or slave choice for the I2S and ADAT clocks, each with
   its lock indicator.
 - **I²S Configuration** covers the shared bit and word clocks, the optional master clock, and the pins the
@@ -313,9 +313,8 @@ S/PDIF, I2S and ADAT, and the settings window provides a page for each:
 | Ctrl+Shift+T | Statistics |
 | Alt+F4 | Exit |
 
-Ctrl+Shift+I and Ctrl+Shift+B are each currently assigned to two menu items (control surfaces and the bulk
-endpoint monitor respectively, in addition to the entries listed above). Both of those windows are always
-reachable from the File menu.
+Ctrl+Shift+B is currently assigned to two menu items (the bulk endpoint monitor, in addition to the entry listed
+above); that window is always reachable from the File menu.
 
 Numeric fields throughout the application share the same conventions: type a value directly, hold Ctrl and scroll
 to adjust it, or right-click to reset it to its default.
@@ -331,8 +330,11 @@ The settings window is organised into sections:
   presets or is saved independently.
 - **Graphing > Style, Scale and Grid & Labels.** Control the appearance of the frequency response plot, including
   its frequency and amplitude ranges, gridlines, labels, and whether inactive channels are drawn as dotted traces.
-- **Hardware.** Covers output pin assignment, clocking, ADAT, I²S configuration, S/PDIF input, I2S input, external
-  mute control and control interfaces, as described above.
+- **System.** Covers output pin assignment, clocking, ADAT, I²S configuration, S/PDIF input and I2S input, as
+  described above.
+- **Control > Control Surfaces, Channel Groups and Macros.** Bind physical controls and an IR remote to DSP
+  parameters, name sets of channels that one control drives together, and build sequences of delayed parameter
+  changes. Also covers external mute control and the UART and I2C control interfaces.
 - **Presets > UI.** Determines how presets are presented in the main window.
 - **Advanced > Debug.** Provides diagnostic options intended for development and for investigating unexpected
   behaviour.

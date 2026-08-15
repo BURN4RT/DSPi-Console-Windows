@@ -18,18 +18,19 @@ namespace DSPiConsole;
 /// <summary>
 /// Target groups and macros (firmware caps v9, commands 0x20–0x26). A group is a
 /// named set of channels one binding drives as a unit; a macro is a sequence of up
-/// to eight delayed steps a button, remote key or this window can fire.
+/// to eight delayed steps a button, remote key or this page can fire.
 ///
 /// <para>Both follow the same three-tier persistence as bindings: an Apply is a
-/// live-only preview on the device, the shared Save bar writes it to flash, and
-/// Revert reloads the stored config. Steps are written before the header carrying
-/// the final step count, so a macro fired mid-edit never sees a count past its
-/// written steps (groups/macros spec, s3).</para>
+/// live-only preview on the device, and the settings window's pending-changes
+/// prompt writes it to flash or reverts it — the same prompt the System pages use.
+/// Steps are written before the header carrying the final step count, so a macro
+/// fired mid-edit never sees a count past its written steps (groups/macros spec,
+/// s3).</para>
 ///
 /// <para>The sections are hidden outright on a pre-v9 firmware, which advertises
 /// no group or macro slots and STALLs the commands.</para>
 /// </summary>
-public sealed partial class ControlSurfacesWindow
+public sealed partial class ControlSurfacesPanel
 {
     private readonly CsGroup[] _groupDrafts = new CsGroup[CsLimits.MaxGroups];
     private readonly CsMacro[] _macroDrafts = new CsMacro[CsLimits.MaxMacros];
@@ -109,12 +110,15 @@ public sealed partial class ControlSurfacesWindow
     private void BuildGroupsAndMacros()
     {
         bool supported = _vm.CsGroupsSupported;
-        GroupsSection.Visibility = MacrosSection.Visibility =
-            supported ? Visibility.Visible : Visibility.Collapsed;
+        GroupsSection.Visibility = Vis(supported && _section == CsSection.Groups);
+        MacrosSection.Visibility = Vis(supported && _section == CsSection.Macros);
         if (!supported) return;
 
-        RebuildGroupCards();
-        RebuildMacroCards();
+        // The bindings panel builds neither, but still needs the drafts seeded —
+        // its group and macro pickers read them, and a group edit elsewhere has to
+        // be able to report which controls it stranded.
+        if (_section == CsSection.Groups) RebuildGroupCards();
+        if (_section == CsSection.Macros) RebuildMacroCards();
     }
 
     private bool GroupShown(int idx) => _groupDrafts[idx].IsConfigured || _groupAdded.Contains(idx);
@@ -162,7 +166,8 @@ public sealed partial class ControlSurfacesWindow
     private void UpdateGroupsChrome()
     {
         int shown = _groupCards.Count;
-        GroupsHeading.Text = shown > 0 ? $"Channel Groups ({shown}/{_vm.CsGroupMax})" : "Channel Groups";
+        // The page title already names the section; this line only carries the count.
+        GroupsHeading.Text = shown > 0 ? $"{shown} of {_vm.CsGroupMax} groups in use" : "";
         AddGroupButton.IsEnabled = FirstFreeGroup() >= 0;
         // A card built here starts with a default-enabled Apply; the refresh is
         // what puts it (and its tooltip) into the right state.
@@ -431,6 +436,7 @@ public sealed partial class ControlSurfacesWindow
         _groupDrafts[idx] = _vm.CsGroups[idx].Clone();
         var orphaned = RefreshGroupedBindingCards();
         RefreshStatusIndicators();
+        RaiseStateChanged();
 
         if (status != CsStatus.Success) ShowToast(CsStatus.Message(status));
         else ReportOrphanedControls(name, orphaned);
@@ -457,6 +463,7 @@ public sealed partial class ControlSurfacesWindow
         // delete does.
         var orphaned = RefreshGroupedBindingCards();
         RefreshStatusIndicators();
+        RaiseStateChanged();
         if (status != CsStatus.Success) ShowToast(CsStatus.Message(status));
         else ReportOrphanedControls(GroupTitle(idx), orphaned);
     }
@@ -502,9 +509,13 @@ public sealed partial class ControlSurfacesWindow
     private List<string> RefreshGroupedBindingCards()
     {
         var orphaned = new List<string>();
-        foreach (int slot in _slotBodies.Keys.ToList())
+        // Scan every draft rather than only the slots this panel drew a card for:
+        // the Channel Groups page holds no binding cards at all, and it's the page
+        // most likely to strand one. PopulateSlotBody no-ops without a card.
+        int slots = Math.Min(_vm.CsSlotCount, CsLimits.MaxBindings);
+        for (int slot = 0; slot < slots; slot++)
         {
-            if (slot >= CsLimits.MaxBindings || !_drafts[slot].IsGrouped) continue;
+            if (!_drafts[slot].IsGrouped) continue;
             SanitizeDraft(slot);
             if (!_drafts[slot].IsGrouped) orphaned.Add(SlotTitle(slot));
             PopulateSlotBody(slot);
@@ -540,7 +551,7 @@ public sealed partial class ControlSurfacesWindow
     private void UpdateMacrosChrome()
     {
         int shown = _macroCards.Count;
-        MacrosHeading.Text = shown > 0 ? $"Macros ({shown}/{_vm.CsMacroMax})" : "Macros";
+        MacrosHeading.Text = shown > 0 ? $"{shown} of {_vm.CsMacroMax} macros in use" : "";
         AddMacroButton.IsEnabled = FirstFreeMacro() >= 0;
     }
 
@@ -683,7 +694,7 @@ public sealed partial class ControlSurfacesWindow
         // Only what the device already holds can be fired: an unapplied draft isn't
         // there yet. While this macro is the running one the button stops it.
         var fire = new Button { Content = _vm.CsRunningMacro == idx ? "Stop" : "Run", Padding = new Thickness(12, 3, 12, 4) };
-        fire.IsEnabled = (_vm.CsMacros[idx].StepCount > 0 || _vm.CsRunningMacro == idx) && !_savingConfig;
+        fire.IsEnabled = (_vm.CsMacros[idx].StepCount > 0 || _vm.CsRunningMacro == idx);
         fire.Click += (_, _) => FireMacro(idx);
         _macroFireButtons[idx] = fire;
 
@@ -1027,7 +1038,7 @@ public sealed partial class ControlSurfacesWindow
             SyncMacroCard(idx);
         };
         var apply = new Button { Content = "Apply", Style = AccentStyle };
-        apply.IsEnabled = MacroDirty(idx) && _applyingMacro == null && !_savingConfig;
+        apply.IsEnabled = MacroDirty(idx) && _applyingMacro == null;
         apply.Click += (_, _) => _ = ApplyMacroAsync(idx);
         _macroApply[idx] = apply;
         panel.Children.Add(revert);
@@ -1148,6 +1159,7 @@ public sealed partial class ControlSurfacesWindow
         SyncMacroCard(idx);
         // Bindings and remote buttons that fire a macro show its name.
         RefreshStatusIndicators();
+        RaiseStateChanged();
         if (status != CsStatus.Success) ShowToast(CsStatus.Message(status));
     }
 
@@ -1362,7 +1374,7 @@ public sealed partial class ControlSurfacesWindow
         {
             bool populated = _groupDrafts[idx].IsConfigured;
             apply.Content = _applyingGroup == idx ? "Applying…" : "Apply";
-            apply.IsEnabled = GroupDirty(idx) && populated && _applyingGroup == null && !_savingConfig;
+            apply.IsEnabled = GroupDirty(idx) && populated && _applyingGroup == null;
             // The reason it's disabled changes as members are ticked, so the
             // tooltip has to follow rather than stay at its build-time text.
             ToolTipService.SetToolTip(apply, populated
@@ -1383,14 +1395,14 @@ public sealed partial class ControlSurfacesWindow
             // noticeable moment; say so rather than just going grey.
             bool inFlight = _applyingMacro == idx;
             apply.Content = inFlight ? "Applying…" : "Apply";
-            apply.IsEnabled = MacroDirty(idx) && _applyingMacro == null && !_savingConfig;
+            apply.IsEnabled = MacroDirty(idx) && _applyingMacro == null;
         }
         foreach (var (idx, fire) in _macroFireButtons)
         {
             // Running a macro mid-write would fire a half-written sequence.
             bool running = _vm.CsRunningMacro == idx;
             fire.IsEnabled = (_vm.CsMacros[idx].StepCount > 0 || running)
-                             && _applyingMacro == null && !_savingConfig;
+                             && _applyingMacro == null;
             fire.Content = running ? "Stop" : "Run";
             // Run fires what the device holds, not the draft on screen — worth
             // saying while the card has edits that haven't been applied.

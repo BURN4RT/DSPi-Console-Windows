@@ -47,13 +47,18 @@ internal static class SettingsRegistry
         TryAdd<GraphingScalePage>(pages);
         TryAdd<GraphingGridLabelsPage>(pages);
 
-        // ── Hardware ───────────────────────────────────────────────
+        // ── System ─────────────────────────────────────────────────
         TryAdd<HardwareOutputAssignmentPage>(pages);
         TryAdd<HardwareClockingPage>(pages);
         TryAdd<HardwareAdatPage>(pages);
         TryAdd<HardwareI2SPage>(pages);
         TryAdd<HardwareSpdifInputPage>(pages);
         TryAdd<HardwareI2SInputPage>(pages);
+
+        // ── Control ────────────────────────────────────────────────
+        TryAdd<ControlSurfacesPage>(pages);
+        TryAdd<ControlGroupsPage>(pages);
+        TryAdd<ControlMacrosPage>(pages);
         TryAdd<HardwareDacMutePage>(pages);
         TryAdd<HardwareControlInterfacesPage>(pages);
 

@@ -320,7 +320,7 @@ public sealed partial class HardwareClockingPage : SettingsModule, ISettingsPage
     // ── ISettingsPage ──────────────────────────────────────────────────────
     public string Id => "hardware.clocking";
     public string Title => "Clocking";
-    public SettingsCategory Category => SettingsCategory.Hardware;
+    public SettingsCategory Category => SettingsCategory.System;
     public string IconGlyph => "";
     public int Order => 15;
     public bool IsAvailable(MainViewModel vm) =>

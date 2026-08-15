@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="DSPiConsole.ControlSurfacesPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!--
+        The control-surfaces editor body, hosted by three Settings pages (Control
+        Surfaces, Channel Groups, Macros). Each page builds one instance and sets
+        Section, which decides who is visible; the rest of the tree stays in this
+        one file so the three sections keep sharing the card builders and the caps
+        gate. Persisting to flash isn't here: edits preview live on the device and
+        the settings window's pending-changes prompt writes them, exactly as it
+        does for the System pages.
+    -->
+    <StackPanel Spacing="12">
+
+        <InfoBar x:Name="UnsupportedBar" IsOpen="False" IsClosable="False"
+                 Severity="Informational" Title="Not available"
+                 Message="This firmware does not include control-surface support."/>
+
+        <!-- Per-edit feedback (a rejected Apply, a stranded control). Flash-save
+             reporting belongs to the settings window's pending-changes prompt. -->
+        <InfoBar x:Name="MessageBar" IsOpen="False" IsClosable="True"
+                 Severity="Informational"/>
+
+        <StackPanel x:Name="BodyPanel" Spacing="12">
+
+            <!-- ── Bindings ─────────────────────────────────────────── -->
+            <StackPanel x:Name="BindingsSection" Spacing="12">
+
+                <!-- Empty state -->
+                <Border x:Name="EmptyHint" Visibility="Collapsed"
+                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                        CornerRadius="8" Padding="24,32">
+                    <StackPanel Spacing="6" HorizontalAlignment="Center">
+                        <FontIcon Glyph="&#xE9E9;" FontSize="28" HorizontalAlignment="Center"
+                                  Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                        <TextBlock Text="No controls yet" FontWeight="SemiBold" FontSize="14"
+                                   HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                        <TextBlock Text="Add a button, knob, switch, encoder, LED or IR receiver to get started."
+                                   FontSize="12" TextWrapping="Wrap" TextAlignment="Center"
+                                   HorizontalAlignment="Center" MaxWidth="320"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Dynamic slot cards -->
+                <StackPanel x:Name="CardsPanel" Spacing="10"/>
+
+                <!-- Add control -->
+                <DropDownButton x:Name="AddButton" HorizontalAlignment="Left">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE710;" FontSize="13" VerticalAlignment="Center"/>
+                        <TextBlock Text="Add Control" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <DropDownButton.Flyout>
+                        <MenuFlyout x:Name="AddFlyout"/>
+                    </DropDownButton.Flyout>
+                </DropDownButton>
+            </StackPanel>
+
+            <!-- Channel groups (caps v9): one control drives a set of channels -->
+            <StackPanel x:Name="GroupsSection" Spacing="10" Visibility="Collapsed">
+                <StackPanel Spacing="2">
+                    <TextBlock Text="Name a set of channels so one knob, button or LED can drive them all at once. Apply a group before a control can target it."
+                               FontSize="11" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <TextBlock x:Name="GroupsHeading" FontSize="11"
+                               Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                </StackPanel>
+                <StackPanel x:Name="GroupsPanel" Spacing="10"/>
+                <Button x:Name="AddGroupButton" HorizontalAlignment="Left" Click="OnAddGroupClick">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE710;" FontSize="13" VerticalAlignment="Center"/>
+                        <TextBlock Text="Add Group" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+
+            <!-- Macros (caps v9): a button or remote key fires a sequence of steps -->
+            <StackPanel x:Name="MacrosSection" Spacing="10" Visibility="Collapsed">
+                <StackPanel Spacing="2">
+                    <TextBlock Text="A sequence of parameter changes, each with its own delay, fired by a button, a remote key or from here."
+                               FontSize="11" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <TextBlock x:Name="MacrosHeading" FontSize="11"
+                               Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                </StackPanel>
+                <StackPanel x:Name="MacrosPanel" Spacing="10"/>
+                <Button x:Name="AddMacroButton" HorizontalAlignment="Left" Click="OnAddMacroClick">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE710;" FontSize="13" VerticalAlignment="Center"/>
+                        <TextBlock Text="Add Macro" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+
+            <TextBlock
+                Text="Changes preview live on the device. Saving them to flash is handled by the settings window's pending-changes prompt, the same as every other page."
+                FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+        </StackPanel>
+    </StackPanel>
+</UserControl>
