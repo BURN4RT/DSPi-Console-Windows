@@ -48,6 +48,14 @@ public partial class MainViewModel
     private CsGroup[]? _csCleanGroups;
     private CsMacro[]? _csCleanMacros;
 
+    /// <summary>Serializes the deferred CS writes. Individual control transfers are
+    /// already locked, but a deferred SET is a <i>sequence</i> — the OUT, then a
+    /// poll of the shared <c>LastStatus</c>/<c>LastSlot</c> pair until it names the
+    /// op. Two sequences interleaving (Apply on a binding while a group Apply is
+    /// still polling, say) let one overwrite the verdict the other is waiting for,
+    /// which surfaces as a spurious "Applying…" or BUSY. One writer at a time.</summary>
+    private readonly object _csWriteLock = new();
+
     public CsCapsHeader? CsCaps => _csCaps;
     public IReadOnlyList<CsNounDesc?> CsNounDescs => _csNounDescs;
     public IReadOnlyList<CsBinding> CsBindings => _csBindings;
@@ -238,39 +246,51 @@ public partial class MainViewModel
     /// Returns the firmware CS status byte.</summary>
     public byte SetCsBinding(int slot, CsBinding binding)
     {
-        byte result = _device.SetCsBinding(slot, binding);
-        _csBindings[slot] = _device.GetCsBinding(slot) ?? CsBinding.Cleared();
-        RefreshCsStatus();
-        return result;
+        lock (_csWriteLock)
+        {
+            byte result = _device.SetCsBinding(slot, binding);
+            _csBindings[slot] = _device.GetCsBinding(slot) ?? CsBinding.Cleared();
+            RefreshCsStatus();
+            return result;
+        }
     }
 
     /// <summary>Stage a slot name (live preview). Empty string clears it.</summary>
     public byte SetCsName(int slot, string name)
     {
-        byte result = _device.SetCsName(slot, name ?? "");
-        _csNames[slot] = _device.GetCsName(slot);
-        RefreshCsStatus();
-        return result;
+        lock (_csWriteLock)
+        {
+            byte result = _device.SetCsName(slot, name ?? "");
+            _csNames[slot] = _device.GetCsName(slot);
+            RefreshCsStatus();
+            return result;
+        }
     }
 
     /// <summary>Stage an IR command sub-slot (live preview) and re-read it.</summary>
     public byte SetCsIrCommand(int sub, IrCommand cmd)
     {
-        byte result = _device.SetCsIrCommand(sub, cmd);
-        _csIrCommands[sub] = _device.GetCsIrCommand(sub) ?? new IrCommand();
-        RefreshCsStatus();
-        return result;
+        lock (_csWriteLock)
+        {
+            byte result = _device.SetCsIrCommand(sub, cmd);
+            _csIrCommands[sub] = _device.GetCsIrCommand(sub) ?? new IrCommand();
+            RefreshCsStatus();
+            return result;
+        }
     }
 
     /// <summary>Re-read the group/macro status packet (table limits, per-slot
-    /// validity, the running macro).</summary>
-    public void RefreshCsExtStatus()
+    /// validity, the running macro). False if the device didn't answer — a caller
+    /// polling macro progress uses that to give up rather than poll a dead or
+    /// unplugged device forever.</summary>
+    public bool RefreshCsExtStatus()
     {
-        if (!CsGroupsSupported) return;
+        if (!CsGroupsSupported || !IsDeviceConnected) return false;
         var ext = _device.GetCsExtStatus();
-        if (ext == null) return;
+        if (ext == null) return false;
         _csExtStatus = ext;
         _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(CsExtStatus)));
+        return true;
     }
 
     /// <summary>Stage a target group (live preview) and re-read it. Applying a
@@ -278,11 +298,14 @@ public partial class MainViewModel
     /// (and any slot health it changed) is re-read too.</summary>
     public byte SetCsGroup(int idx, CsGroup group)
     {
-        byte result = _device.SetCsGroup(idx, group);
-        _csGroups[idx] = _device.GetCsGroup(idx) ?? CsGroup.Cleared();
-        RefreshCsStatus();
-        RefreshCsExtStatus();
-        return result;
+        lock (_csWriteLock)
+        {
+            byte result = _device.SetCsGroup(idx, group);
+            _csGroups[idx] = _device.GetCsGroup(idx) ?? CsGroup.Cleared();
+            RefreshCsStatus();
+            RefreshCsExtStatus();
+            return result;
+        }
     }
 
     /// <summary>Stage a whole macro: the changed steps first, then the header
@@ -292,82 +315,100 @@ public partial class MainViewModel
     /// and is returned.</summary>
     public byte SetCsMacro(int idx, CsMacro macro)
     {
-        byte result = DSPiConsole.Core.Models.CsStatus.Success;
-        var live = _csMacros[idx];
-        var empty = new CsMacroStep();
-
-        for (int s = 0; s < CsMacroStepMax; s++)
+        lock (_csWriteLock)
         {
-            // Steps past the new count are cleared, so shortening a macro leaves
-            // no stale tail behind.
-            var step = s < macro.StepCount ? macro.Steps[s] : empty;
-            if (s < live.Steps.Length && step.WireEquals(live.Steps[s])) continue;
-            result = _device.SetCsMacroStep(idx, s, step);
-            if (result != DSPiConsole.Core.Models.CsStatus.Success) break;
-        }
-        if (result == DSPiConsole.Core.Models.CsStatus.Success
-            && (live.StepCount != macro.StepCount
-                || !string.Equals(live.Name, macro.Name, StringComparison.Ordinal)))
-            result = _device.SetCsMacroHeader(idx, macro);
+            byte result = DSPiConsole.Core.Models.CsStatus.Success;
+            var live = _csMacros[idx];
+            var empty = new CsMacroStep();
 
-        _csMacros[idx] = _device.GetCsMacro(idx) ?? new CsMacro();
-        RefreshCsStatus();
-        RefreshCsExtStatus();
-        return result;
+            for (int s = 0; s < CsMacroStepMax; s++)
+            {
+                // Steps past the new count are cleared, so shortening a macro
+                // leaves no stale tail behind.
+                var step = s < macro.StepCount ? macro.Steps[s] : empty;
+                if (s < live.Steps.Length && step.WireEquals(live.Steps[s])) continue;
+                result = _device.SetCsMacroStep(idx, s, step);
+                if (result != DSPiConsole.Core.Models.CsStatus.Success) break;
+            }
+            if (result == DSPiConsole.Core.Models.CsStatus.Success
+                && (live.StepCount != macro.StepCount
+                    || !string.Equals(live.Name, macro.Name, StringComparison.Ordinal)))
+                result = _device.SetCsMacroHeader(idx, macro);
+
+            _csMacros[idx] = _device.GetCsMacro(idx) ?? new CsMacro();
+            RefreshCsStatus();
+            RefreshCsExtStatus();
+            return result;
+        }
     }
 
     /// <summary>Fire a macro on the device. False if the firmware rejected it
     /// (bad index or step count) — the reason lands in the status packet.</summary>
     public bool CsMacroFire(int idx)
     {
-        bool ok = _device.CsMacroFire(idx);
-        RefreshCsStatus();
-        RefreshCsExtStatus();
-        return ok;
+        // A rejected fire writes the shared LastStatus/LastSlot pair, so it queues
+        // behind any deferred write that is still polling for its own verdict.
+        lock (_csWriteLock)
+        {
+            bool ok = _device.CsMacroFire(idx);
+            RefreshCsStatus();
+            RefreshCsExtStatus();
+            return ok;
+        }
     }
 
     /// <summary>Cancel the running macro. Steps already dispatched stand.</summary>
     public void CsMacroCancel()
     {
-        _device.CsMacroCancel();
-        RefreshCsExtStatus();
+        lock (_csWriteLock)
+        {
+            _device.CsMacroCancel();
+            RefreshCsExtStatus();
+        }
     }
 
     /// <summary>Persist the whole live config to flash. On success re-captures the
     /// clean baseline so the Save bar clears.</summary>
     public byte CsSave()
     {
-        byte result = _device.CsSave();
-        RefreshCsStatus();
-        if (result == DSPiConsole.Core.Models.CsStatus.Success) CaptureCsCleanBaseline();
-        _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(CsDirty)));
-        return result;
+        lock (_csWriteLock)
+        {
+            byte result = _device.CsSave();
+            RefreshCsStatus();
+            if (result == DSPiConsole.Core.Models.CsStatus.Success) CaptureCsCleanBaseline();
+            _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(CsDirty)));
+            return result;
+        }
     }
 
     /// <summary>Discard the live preview, reload the stored config from flash, and
     /// re-read every slot / IR command / name.</summary>
     public byte CsRevert()
     {
-        byte result = _device.CsRevert();
-
-        int slots = CsSlotCount;
-        for (int s = 0; s < slots; s++)
+        byte result;
+        lock (_csWriteLock)
         {
-            _csBindings[s] = _device.GetCsBinding(s) ?? CsBinding.Cleared();
-            _csNames[s] = _device.GetCsName(s);
-        }
-        int irMax = CsIrMax;
-        for (int i = 0; i < irMax; i++)
-            _csIrCommands[i] = _device.GetCsIrCommand(i) ?? new IrCommand();
-        for (int g = 0; g < CsGroupMax; g++)
-            _csGroups[g] = _device.GetCsGroup(g) ?? CsGroup.Cleared();
-        for (int m = 0; m < CsMacroMax; m++)
-            _csMacros[m] = _device.GetCsMacro(m) ?? new CsMacro();
-        if (CsGroupsSupported) _csExtStatus = _device.GetCsExtStatus() ?? _csExtStatus;
+            result = _device.CsRevert();
 
-        var status = _device.GetCsStatus();
-        _csStatus = status;
-        if (status != null && !status.Dirty) CaptureCsCleanBaseline();
+            int slots = CsSlotCount;
+            for (int s = 0; s < slots; s++)
+            {
+                _csBindings[s] = _device.GetCsBinding(s) ?? CsBinding.Cleared();
+                _csNames[s] = _device.GetCsName(s);
+            }
+            int irMax = CsIrMax;
+            for (int i = 0; i < irMax; i++)
+                _csIrCommands[i] = _device.GetCsIrCommand(i) ?? new IrCommand();
+            for (int g = 0; g < CsGroupMax; g++)
+                _csGroups[g] = _device.GetCsGroup(g) ?? CsGroup.Cleared();
+            for (int m = 0; m < CsMacroMax; m++)
+                _csMacros[m] = _device.GetCsMacro(m) ?? new CsMacro();
+            if (CsGroupsSupported) _csExtStatus = _device.GetCsExtStatus() ?? _csExtStatus;
+
+            var status = _device.GetCsStatus();
+            _csStatus = status;
+            if (status != null && !status.Dirty) CaptureCsCleanBaseline();
+        }
 
         _dispatcher.TryEnqueue(() =>
         {

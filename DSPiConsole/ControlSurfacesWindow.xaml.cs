@@ -800,10 +800,23 @@ public sealed partial class ControlSurfacesWindow : Window
         var draft = _drafts[slot];
         var panel = new StackPanel { Spacing = 8 };
 
-        var onBox = NumberField(draft.OnDelay * CsLimits.IndicatorDelayUnitSeconds, CsUnit.None, v =>
-        { _drafts[slot].OnDelay = EncodeIndicatorDelay(v); RefreshStatusIndicators(); });
-        var offBox = NumberField(draft.OffDelay * CsLimits.IndicatorDelayUnitSeconds, CsUnit.None, v =>
-        { _drafts[slot].OffDelay = EncodeIndicatorDelay(v); RefreshStatusIndicators(); });
+        // 0.1 s units in a uint16, so the field clamps at 0..6553.5 s; echo the
+        // stored value back rather than leave an out-of-range number on screen.
+        TextBox onBox = null!, offBox = null!;
+        onBox = NumberField(draft.OnDelay * CsLimits.IndicatorDelayUnitSeconds, CsUnit.None, v =>
+        {
+            _drafts[slot].OnDelay = EncodeIndicatorDelay(v);
+            double stored = _drafts[slot].OnDelay * CsLimits.IndicatorDelayUnitSeconds;
+            if (Math.Abs(stored - v) > 0.005) onBox.Text = FormatNumber(stored);
+            RefreshStatusIndicators();
+        });
+        offBox = NumberField(draft.OffDelay * CsLimits.IndicatorDelayUnitSeconds, CsUnit.None, v =>
+        {
+            _drafts[slot].OffDelay = EncodeIndicatorDelay(v);
+            double stored = _drafts[slot].OffDelay * CsLimits.IndicatorDelayUnitSeconds;
+            if (Math.Abs(stored - v) > 0.005) offBox.Text = FormatNumber(stored);
+            RefreshStatusIndicators();
+        });
         ToolTipService.SetToolTip(onBox, "Hold the condition this long before lighting (0 = immediate)");
         ToolTipService.SetToolTip(offBox, "Hold the condition false this long before going out (0 = immediate)");
 

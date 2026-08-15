@@ -83,6 +83,10 @@ public sealed partial class ControlSurfacesWindow
     }
 
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _macroPoll;
+    private int _macroPollTicks;
+    private const int MacroPollFastMs = 400;
+    private const int MacroPollSlowMs = 2000;
+    private const int MacroPollFastTicks = 25;   // ~10 s of close watching
 
     // Segoe Fluent Icons: reorder chevrons on a macro step.
     private const string GlyphChevronUp = "";
@@ -422,11 +426,14 @@ public sealed partial class ControlSurfacesWindow
         // Clearing a group deactivates the bindings that referenced it (the
         // firmware reports the failure per slot rather than refusing the edit),
         // so the binding cards need their status and target pickers refreshed.
+        string name = GroupTitle(idx);
         byte status = await Task.Run(() => _vm.SetCsGroup(idx, CsGroup.Cleared()));
         _groupDrafts[idx] = _vm.CsGroups[idx].Clone();
-        RefreshGroupedBindingCards();
+        var orphaned = RefreshGroupedBindingCards();
         RefreshStatusIndicators();
+
         if (status != CsStatus.Success) ShowToast(CsStatus.Message(status));
+        else ReportOrphanedControls(name, orphaned);
     }
 
     private async Task ApplyGroupAsync(int idx)
@@ -439,13 +446,31 @@ public sealed partial class ControlSurfacesWindow
         byte status = await Task.Run(() => _vm.SetCsGroup(idx, group));
 
         _applyingGroup = null;
-        _groupDrafts[idx] = _vm.CsGroups[idx].Clone();
+        // Only a success re-seeds from the device (which may have truncated a long
+        // name). A rejection keeps the user's edit on screen so they can fix what
+        // the firmware objected to instead of losing it.
+        if (status == CsStatus.Success) _groupDrafts[idx] = _vm.CsGroups[idx].Clone();
         // The card stays put; only its controls restate the device's answer.
         SyncGroupCard(idx);
-        // A rename or a member change shows up in every binding that targets it.
-        RefreshGroupedBindingCards();
+        // A rename or a member change shows up in every binding that targets it —
+        // and re-scoping to another channel space orphans them, exactly as a
+        // delete does.
+        var orphaned = RefreshGroupedBindingCards();
         RefreshStatusIndicators();
         if (status != CsStatus.Success) ShowToast(CsStatus.Message(status));
+        else ReportOrphanedControls(GroupTitle(idx), orphaned);
+    }
+
+    /// <summary>Tell the user when a group edit left controls stranded. The
+    /// firmware deactivates a binding whose group no longer resolves, and the card
+    /// falls back to a plain channel — a different binding than the one they had,
+    /// which a casual Apply would then commit.</summary>
+    private void ReportOrphanedControls(string groupName, List<string> orphaned)
+    {
+        if (orphaned.Count == 0) return;
+        ShowToast($"\"{groupName}\" was used by {string.Join(", ", orphaned)} — " +
+                  $"{(orphaned.Count == 1 ? "that control is" : "those controls are")} " +
+                  "now off and fell back to a single channel. Re-target and apply.");
     }
 
     private bool GroupDirty(int idx) => !_groupDrafts[idx].WireEquals(_vm.CsGroups[idx]);
@@ -471,15 +496,20 @@ public sealed partial class ControlSurfacesWindow
             : Color.FromArgb(255, 240, 180, 90);
 
     /// <summary>Re-populate the body of every binding card that targets a group, so
-    /// a group rename, re-scope or removal is reflected in its picker and summary.</summary>
-    private void RefreshGroupedBindingCards()
+    /// a group rename, re-scope or removal is reflected in its picker and summary.
+    /// Returns the names of the controls whose group reference no longer resolves
+    /// and was therefore dropped back to a plain channel.</summary>
+    private List<string> RefreshGroupedBindingCards()
     {
+        var orphaned = new List<string>();
         foreach (int slot in _slotBodies.Keys.ToList())
-            if (slot < CsLimits.MaxBindings && _drafts[slot].IsGrouped)
-            {
-                SanitizeDraft(slot);
-                PopulateSlotBody(slot);
-            }
+        {
+            if (slot >= CsLimits.MaxBindings || !_drafts[slot].IsGrouped) continue;
+            SanitizeDraft(slot);
+            if (!_drafts[slot].IsGrouped) orphaned.Add(SlotTitle(slot));
+            PopulateSlotBody(slot);
+        }
+        return orphaned;
     }
 
     // ── Macros ───────────────────────────────────────────────────────────────
@@ -746,9 +776,20 @@ public sealed partial class ControlSurfacesWindow
             panel.Children.Clear();
             var draft = _macroDrafts[macro].Steps[step];
 
-            var delayBox = NumberField(draft.PreDelaySeconds, CsUnit.None, v =>
-            { _macroDrafts[macro].Steps[step].PreDelaySeconds = v; RefreshGroupMacroIndicators(); });
-            ToolTipService.SetToolTip(delayBox, "Wait this long before running the step (10 ms resolution)");
+            TextBox delayBox = null!;
+            delayBox = NumberField(draft.PreDelaySeconds, CsUnit.None, v =>
+            {
+                var s = _macroDrafts[macro].Steps[step];
+                s.PreDelaySeconds = v;
+                // The wire field is 10 ms units capped at ~10.9 minutes, so echo
+                // what was actually stored instead of leaving a typed -5 or 9999
+                // on screen that the step doesn't hold.
+                if (Math.Abs(s.PreDelaySeconds - v) > 0.0005)
+                    delayBox.Text = FormatNumber(s.PreDelaySeconds);
+                RefreshGroupMacroIndicators();
+            });
+            ToolTipService.SetToolTip(delayBox,
+                "Wait this long before running the step (10 ms resolution, up to 655 s)");
             panel.Children.Add(Row("Delay (s)", delayBox));
 
             panel.Children.Add(BuildMacroStepNounRow(macro, step, draft));
@@ -1099,7 +1140,11 @@ public sealed partial class ControlSurfacesWindow
         byte status = await Task.Run(() => _vm.SetCsMacro(idx, macro));
 
         _applyingMacro = null;
-        _macroDrafts[idx] = _vm.CsMacros[idx].Clone();
+        // A partial write (one step rejected, the rest already staged) leaves the
+        // device half-updated; keeping the draft means the user still has their
+        // whole sequence to correct and re-apply, rather than the device's
+        // fragment. Only a clean apply re-seeds.
+        if (status == CsStatus.Success) _macroDrafts[idx] = _vm.CsMacros[idx].Clone();
         SyncMacroCard(idx);
         // Bindings and remote buttons that fire a macro show its name.
         RefreshStatusIndicators();
@@ -1128,21 +1173,26 @@ public sealed partial class ControlSurfacesWindow
     private void StartMacroPoll()
     {
         _macroPoll ??= DispatcherQueue.CreateTimer();
-        _macroPoll.Interval = TimeSpan.FromMilliseconds(400);
         if (_macroPoll.IsRunning) return;
+        _macroPollTicks = 0;
+        _macroPoll.Interval = TimeSpan.FromMilliseconds(MacroPollFastMs);
         _macroPoll.Tick += OnMacroPollTick;
         _macroPoll.Start();
     }
 
     private async void OnMacroPollTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
     {
-        await Task.Run(() => _vm.RefreshCsExtStatus());
+        // A read that fails (unplugged mid-run, device wedged) would otherwise
+        // leave the last "running" reading in place and poll forever.
+        bool alive = await Task.Run(() => _vm.RefreshCsExtStatus());
         RefreshGroupMacroIndicators();
-        if (_vm.CsRunningMacro == null)
-        {
-            sender.Stop();
-            sender.Tick -= OnMacroPollTick;
-        }
+        if (!alive || _vm.CsRunningMacro == null) { StopMacroPoll(); return; }
+
+        // A step's pre-delay reaches ~10.9 minutes, so a macro can legitimately
+        // run for a long time. Watch it closely at first, then ease off rather
+        // than keep a twice-a-second transfer going for minutes.
+        if (++_macroPollTicks == MacroPollFastTicks)
+            sender.Interval = TimeSpan.FromMilliseconds(MacroPollSlowMs);
     }
 
     private bool MacroDirty(int idx) => !_macroDrafts[idx].WireEquals(_vm.CsMacros[idx]);
@@ -1311,6 +1361,7 @@ public sealed partial class ControlSurfacesWindow
         foreach (var (idx, apply) in _groupApply)
         {
             bool populated = _groupDrafts[idx].IsConfigured;
+            apply.Content = _applyingGroup == idx ? "Applying…" : "Apply";
             apply.IsEnabled = GroupDirty(idx) && populated && _applyingGroup == null && !_savingConfig;
             // The reason it's disabled changes as members are ticked, so the
             // tooltip has to follow rather than stay at its build-time text.
@@ -1327,11 +1378,25 @@ public sealed partial class ControlSurfacesWindow
             labels.Summary.Text = MacroSummary(idx);
         }
         foreach (var (idx, apply) in _macroApply)
+        {
+            // Writing a macro is up to eight deferred SETs, which can take a
+            // noticeable moment; say so rather than just going grey.
+            bool inFlight = _applyingMacro == idx;
+            apply.Content = inFlight ? "Applying…" : "Apply";
             apply.IsEnabled = MacroDirty(idx) && _applyingMacro == null && !_savingConfig;
+        }
         foreach (var (idx, fire) in _macroFireButtons)
         {
-            fire.IsEnabled = (_vm.CsMacros[idx].StepCount > 0 || _vm.CsRunningMacro == idx) && !_savingConfig;
-            fire.Content = _vm.CsRunningMacro == idx ? "Stop" : "Run";
+            // Running a macro mid-write would fire a half-written sequence.
+            bool running = _vm.CsRunningMacro == idx;
+            fire.IsEnabled = (_vm.CsMacros[idx].StepCount > 0 || running)
+                             && _applyingMacro == null && !_savingConfig;
+            fire.Content = running ? "Stop" : "Run";
+            // Run fires what the device holds, not the draft on screen — worth
+            // saying while the card has edits that haven't been applied.
+            ToolTipService.SetToolTip(fire, running ? "Stop the running macro"
+                : MacroDirty(idx) ? "Runs the version on the device — apply your changes first"
+                : "Run this macro on the device");
         }
     }
 

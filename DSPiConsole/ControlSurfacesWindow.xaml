@@ -76,7 +76,7 @@
                                 Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
                         <StackPanel Spacing="1">
                             <TextBlock x:Name="GroupsHeading" Text="Channel Groups" FontWeight="SemiBold" FontSize="14"/>
-                            <TextBlock Text="Name a set of channels so one knob, button or LED can drive them all at once."
+                            <TextBlock Text="Name a set of channels so one knob, button or LED can drive them all at once. Apply a group before a control can target it."
                                        FontSize="11" TextWrapping="Wrap"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         </StackPanel>
