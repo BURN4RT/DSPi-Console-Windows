@@ -56,11 +56,11 @@ internal static class SettingsRegistry
         TryAdd<HardwareI2SInputPage>(pages);
 
         // ── Control ────────────────────────────────────────────────
-        TryAdd<ControlSurfacesPage>(pages);
-        TryAdd<ControlGroupsPage>(pages);
         TryAdd<ControlMacrosPage>(pages);
-        TryAdd<HardwareDacMutePage>(pages);
+        TryAdd<ControlGroupsPage>(pages);
+        TryAdd<ControlSurfacesPage>(pages);
         TryAdd<HardwareControlInterfacesPage>(pages);
+        TryAdd<HardwareDacMutePage>(pages);
 
         // ── Presets ────────────────────────────────────────────────
         // Startup + output-config (Inclusion) moved to General › Globals.

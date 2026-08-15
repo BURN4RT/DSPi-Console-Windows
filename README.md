@@ -332,9 +332,9 @@ The settings window is organised into sections:
   its frequency and amplitude ranges, gridlines, labels, and whether inactive channels are drawn as dotted traces.
 - **System.** Covers output pin assignment, clocking, ADAT, I²S configuration, S/PDIF input and I2S input, as
   described above.
-- **Control > Control Surfaces, Channel Groups and Macros.** Bind physical controls and an IR remote to DSP
-  parameters, name sets of channels that one control drives together, and build sequences of delayed parameter
-  changes. Also covers external mute control and the UART and I2C control interfaces.
+- **Control > Macros, Channel Groups and Control Surfaces.** Build sequences of delayed parameter changes, name
+  sets of channels that one control drives together, and bind physical controls and an IR remote to DSP
+  parameters. Also covers the UART and I2C control interfaces and external mute control.
 - **Presets > UI.** Determines how presets are presented in the main window.
 - **Advanced > Debug.** Provides diagnostic options intended for development and for investigating unexpected
   behaviour.

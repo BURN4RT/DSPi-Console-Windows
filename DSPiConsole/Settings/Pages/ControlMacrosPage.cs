@@ -15,7 +15,7 @@ public sealed class ControlMacrosPage : ISettingsPage
     public string Title => "Macros";
     public SettingsCategory Category => SettingsCategory.Control;
     public string IconGlyph => ""; // Sliders
-    public int Order => 30;
+    public int Order => 10;
     public bool IsAvailable(MainViewModel vm) => vm.ControlSurfacesSupported && vm.CsGroupsSupported;
     public UIElement BuildContent(MainViewModel vm, IPendingChangeTracker tracker)
         => new ControlSurfacesPanel(vm, CsSection.Macros);

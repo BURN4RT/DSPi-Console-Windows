@@ -23,7 +23,7 @@ public sealed class ControlSurfacesPage : ISettingsPage
     public string Title => "Control Surfaces";
     public SettingsCategory Category => SettingsCategory.Control;
     public string IconGlyph => ""; // Sliders
-    public int Order => 10;
+    public int Order => 30;
     public bool IsAvailable(MainViewModel vm) => vm.ControlSurfacesSupported;
     public UIElement BuildContent(MainViewModel vm, IPendingChangeTracker tracker)
         => new ControlSurfacesPanel(vm, CsSection.Bindings);
