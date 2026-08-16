@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.HardwareMasterClockPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls">
+
+    <!--
+        Master Clock. The clock the DSPi generates when it is the master, and the
+        MCK it hands to external DACs. Each interface's own master/slave choice
+        sits with that interface (I2S, ADAT), because it is a property of the link;
+        what is common to all of them is here.
+
+          • Sample rate (V12+): the rate the DSPi generates. Greyed out while the
+            I2S clock is slaved, because then an external master owns it and the
+            firmware auto-detects what arrives. Hidden on firmware that can't
+            report it.
+          • MCK enable: whether the master clock is generated at all.
+          • MCK pin: which GPOUT-capable GPIO it comes out of. A wiring choice,
+            but an inseparable one, since the pin can only be changed while MCK
+            is off.
+          • MCK multiplier: the ratio to the sample rate. 256× is unavailable at
+            96 kHz and above (the firmware's PLL constraint), so the picker locks
+            to 128× and says why.
+
+        The three MCK cards grey out in I2S slave mode along with the rate. None of
+        them is firmware-gated, so this page always has something to show.
+    -->
+    <StackPanel Spacing="4">
+
+        <controls:SettingsCard x:Name="RateCard" Header="Default Sample Rate"
+                               Description="Active when DSPi is the I2S or ADAT clock master">
+            <ComboBox x:Name="RateCombo" MinWidth="140" SelectionChanged="OnRateChanged">
+                <ComboBoxItem Content="44.1 kHz" Tag="44100"/>
+                <ComboBoxItem Content="48 kHz" Tag="48000"/>
+                <ComboBoxItem Content="96 kHz" Tag="96000"/>
+            </ComboBox>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="MckEnableCard" Header="Master Clock (MCK)"
+                               Description="Clock reference for external DACs, generated at the sample rate times the multiplier below.">
+            <ToggleSwitch x:Name="MckToggle" OnContent="On" OffContent="Off"
+                          Toggled="OnMckToggled"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="MckPinCard" Header="MCK pin"
+                               Description="Turn MCK off to change its pin.">
+            <ComboBox x:Name="MckPinCombo" MinWidth="140"
+                      SelectionChanged="OnMckPinChanged"/>
+        </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="MckMultiplierCard" Header="MCK multiplier"
+                               Description="Use 256× for DACs that require higher MCK rates.">
+            <ComboBox x:Name="MckMultiplierCombo" MinWidth="100"
+                      SelectionChanged="OnMckMultiplierChanged">
+                <ComboBoxItem Content="128×" Tag="128"/>
+                <ComboBoxItem Content="256×" Tag="256"/>
+            </ComboBox>
+        </controls:SettingsCard>
+
+        <TextBlock x:Name="StatusText"
+                   FontSize="11"
+                   TextWrapping="Wrap"
+                   Visibility="Collapsed"/>
+    </StackPanel>
+</settings:SettingsModule>

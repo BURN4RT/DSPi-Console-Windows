@@ -261,14 +261,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     // I2S input (firmware V12+). True when the bulk packet carries the I2S input
     // fields (format_version >= 12). Gates the I2S item in the Source dropdown
-    // and the I2S Input settings page.
+    // and the input half of the I2S settings page.
     [ObservableProperty]
     private bool _inputI2sSupported;
 
     // Multiple selectable SPDIF inputs (firmware v1.1.5+). True when the device
     // answers REQ_GET_SPDIF_INPUT_CONFIG (0xEF) / the bulk enable-mask field is
-    // present. Gates the SPDIF "Instances" selector; when false the S/PDIF Input
-    // page shows a single RX pin as before.
+    // present. Gates the SPDIF "Instances" selector; when false the S/PDIF page
+    // shows a single RX pin as before.
     [ObservableProperty]
     private bool _multiSpdifSupported;
 

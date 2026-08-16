@@ -251,15 +251,16 @@ The device is not limited to USB. Depending on your hardware and Firmware, the i
 S/PDIF, I2S and ADAT, and the settings window provides a page for each:
 
 - **Main Outputs** assigns a GPIO pin to each output, with duplicate detection and conflict warnings.
-- **Clocking** holds the default sample rate and the master or slave choice for the I2S and ADAT clocks, each with
-  its lock indicator.
-- **I²S Configuration** covers the shared bit and word clocks, the optional master clock, and the pins the
-  slave-mode clocks arrive on.
-- **S/PDIF Input** configures the receiver, including multiple selectable instances on Firmware that supports them,
-  and LG Sound Sync, which decodes volume and mute messages sent by LG televisions over TOSLINK.
-- **I2S Input** configures the multichannel I2S input.
+- **Master Clock** holds what every interface shares: the default sample rate the device generates as clock master,
+  and the master clock supplied to external DACs, with the pin it is generated on and its multiplier.
 - **ADAT** configures both directions of the optical link on RP2350 devices: the eight-channel output and the
-  eight-channel input, each with its enable and data pin.
+  eight-channel input, each with its enable and data pin, plus which end of the incoming lightpipe owns the clock
+  and whether it is locked.
+- **I2S** covers the whole interface, input and output together because they share the clocks: master or slave with
+  a lock indicator, the bit and word clock pins, the optional separate pair for slave mode, and the multichannel
+  input's channel count and per-pair data pins.
+- **S/PDIF** configures the receiver, including multiple selectable instances on Firmware that supports them,
+  and LG Sound Sync, which decodes volume and mute messages sent by LG televisions over TOSLINK.
 - **External Mute Control** drives a DAC's hardware mute pin, so that muting produces true silence rather than a
   low signal level.
 - **Control Interfaces** configures the device's UART and I2C interfaces.
@@ -330,7 +331,7 @@ The settings window is organised into sections:
   presets or is saved independently.
 - **Graphing > Style, Scale and Grid & Labels.** Control the appearance of the frequency response plot, including
   its frequency and amplitude ranges, gridlines, labels, and whether inactive channels are drawn as dotted traces.
-- **System.** Covers output pin assignment, clocking, ADAT, I²S configuration, S/PDIF input and I2S input, as
+- **System.** Covers output pin assignment, the master clock, and the ADAT, I2S and S/PDIF interfaces, as
   described above.
 - **Control > Macros, Channel Groups and Control Surfaces.** Build sequences of delayed parameter changes, name
   sets of channels that one control drives together, and bind physical controls and an IR remote to DSP

@@ -11,21 +11,23 @@ using Windows.UI;
 namespace DSPiConsole.Settings.Pages;
 
 /// <summary>
-/// Hardware › I²S Configuration — MCK enable + pin + multiplier, BCK
-/// pin, and the slave-role clock pair. Mirrors the legacy dialog's I²S
-/// section, with the same firmware constraints encoded in real-time
-/// control enablement. The master/slave choice these controls answer to
-/// is on Hardware › Clocking; this page is the wiring.
+/// Hardware › I2S — the whole interface: the clock mode and lock state,
+/// the BCK pin and the slave-role clock pair, and (on V12+ firmware) the
+/// input's channel count and per-pair data pins. Input and output are one
+/// page because they share the bit and word clocks. The rate the DSPi
+/// generates as master, and MCK, are common to every interface and live
+/// on Hardware › Master Clock.
 ///
 /// <para>
 /// Subscribes to <see cref="HardwarePins.PinAssignmentsChanged"/> for
 /// cross-page conflict refreshes and to <see cref="MainViewModel"/>
-/// PropertyChanged for sample-rate-driven multiplier locking.
+/// PropertyChanged for the slot- and slave-driven pin locking.
 /// </para>
 /// </summary>
 public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
 {
     private bool _suppress;
+    private readonly ComboBox[] _rxCombos;
 
     public HardwareI2SPage()
     {
@@ -37,15 +39,21 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         // label — it MUST NOT clear/rebuild the Items collection,
         // because doing so races the popup-dismissal of a user
         // selection and triggers "Element not found" (E_FAIL) in
-        // WinUI's ComboBox layout on the next tick. The MCK combo's
-        // contents are platform-dependent, so it's populated in
-        // Attach (and re-populated on Platform change) — both code
-        // paths are outside a SelectionChanged dispatch, so they're
-        // safe to Clear/Add.
+        // WinUI's ComboBox layout on the next tick.
         foreach (var pin in HardwarePins.ValidPins)
             BckPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
         foreach (var pin in HardwarePins.ValidPins)
             SlaveBckCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
+
+        // Same for the input's data pins — one combo per stereo pair, each
+        // tagged with its pair index so the shared handler knows which it is.
+        _rxCombos = new[] { RxPinCombo0, RxPinCombo1, RxPinCombo2, RxPinCombo3 };
+        for (int pair = 0; pair < _rxCombos.Length; pair++)
+        {
+            _rxCombos[pair].Tag = pair;
+            foreach (var pin in HardwarePins.ValidPins)
+                _rxCombos[pair].Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
+        }
 
         // Subscriptions go in Loaded/Unloaded so they survive sidebar
         // navigation cycles — see HardwareOutputAssignmentPage for the
@@ -56,45 +64,24 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
 
     public override void Attach(MainViewModel vm, IPendingChangeTracker tracker)
     {
-        // Populate MCK pin combo for the current platform. Re-runs on
-        // Platform PropertyChanged below to handle board swaps and the
-        // "settings opened before first connect" case.
-        PopulateMckPinCombo(vm.Platform);
-
         base.Attach(vm, tracker);
 
         // Kick off background fetches to populate the page with the
         // device's current values. The PropertyChanged handler is what
-        // pushes them into the UI once they arrive.
+        // pushes them into the UI once they arrive. The input read is
+        // skipped where the firmware lacks it — it stalls rather than
+        // failing, and the baselined support flag already knows.
         var fetchVm = vm;
         _ = Task.Run(() =>
-        {
-            fetchVm.FetchI2SBckPin();
-            fetchVm.FetchMckEnable();
-            fetchVm.FetchMckPin();
-            fetchVm.FetchMckMultiplier();
-            fetchVm.FetchI2sClockConfig();
-        });
-    }
-
-    /// <summary>
-    /// Populate the MCK pin combo with the platform's GPOUT-capable
-    /// GPIOs (RP2040 = 21 only; RP2350 = 13/15/21). Only called from
-    /// Attach and from the Platform PropertyChanged path — never from
-    /// inside a SelectionChanged handler — so it's safe to mutate the
-    /// Items collection here. RefreshConflicts then only toggles each
-    /// item's IsEnabled / Content based on the current conflict map.
-    /// </summary>
-    private void PopulateMckPinCombo(string platform)
-    {
-        _suppress = true;
-        try
-        {
-            MckPinCombo.Items.Clear();
-            foreach (var pin in HardwarePins.McKCapablePins(platform))
-                MckPinCombo.Items.Add(new ComboBoxItem { Content = $"GPIO {pin}", Tag = pin });
-        }
-        finally { _suppress = false; }
+            {
+                fetchVm.FetchI2SBckPin();
+                fetchVm.FetchI2sClockConfig();
+                if (fetchVm.InputI2sSupported) fetchVm.FetchI2sInputConfig();
+            })
+            // The fetches raise PropertyChanged for what they read, but a device
+            // that answers nothing raises nothing — repaint once regardless so
+            // the page can't be left showing pre-Attach defaults.
+            .ContinueWith(_ => DispatcherQueue.TryEnqueue(Refresh));
     }
 
     private void OnPageLoaded(object sender, RoutedEventArgs e)
@@ -123,41 +110,34 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        // Platform changes (first connect after Settings opens, or a
-        // board swap from RP2040 to RP2350 / vice versa) change the
-        // set of MCK-capable pins. Repopulate the MCK combo before
-        // refreshing — RefreshConflicts only toggles enablement, it
-        // doesn't change which pins are in the list.
-        if (e.PropertyName == nameof(MainViewModel.Platform))
-        {
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                if (Vm != null) PopulateMckPinCombo(Vm.Platform);
-                Refresh();
-            });
-            return;
-        }
-
-        // Refresh on any I²S-relevant VM property change:
-        //   • SampleRateHz / AnySlotIsI2S — enable-state of the
-        //     multiplier and BCK pin combos depend on them.
-        //   • MckEnabled — gates the MCK pin combo.
-        //   • MckMultiplier / MckPin / I2SBckPin — direct combo state,
-        //     fired from setters AND from the bulk-params load path
-        //     so preset reloads / reconnects also repaint.
-        if (e.PropertyName == nameof(MainViewModel.SampleRateHz)
+        // Refresh on any I2S-relevant VM property change:
+        //   • AnySlotIsI2S — the BCK pin can't be re-routed while a
+        //     slot is driving it.
+        //   • I2SBckPin / I2sRxPin — direct combo state, fired from the
+        //     setters AND from the bulk-params load path so preset
+        //     reloads / reconnects also repaint.
+        //   • I2sSlaveActive — greys out the BCK picker.
+        //   • Platform — decides how many stereo pairs exist (RP2350 has
+        //     four, RP2040 one), so a board swap changes whether the
+        //     Channels card is shown at all.
+        if (e.PropertyName == nameof(MainViewModel.Platform)
             || e.PropertyName == nameof(MainViewModel.AnySlotIsI2S)
-            || e.PropertyName == nameof(MainViewModel.MckEnabled)
-            || e.PropertyName == nameof(MainViewModel.MckMultiplier)
-            || e.PropertyName == nameof(MainViewModel.MckPin)
             || e.PropertyName == nameof(MainViewModel.I2SBckPin)
+            || e.PropertyName == nameof(MainViewModel.I2sClockMode)
+            || e.PropertyName == nameof(MainViewModel.I2sClockModeSupported)
             || e.PropertyName == nameof(MainViewModel.I2sClockPinModeSupported)
             || e.PropertyName == nameof(MainViewModel.I2sClockPinMode)
             || e.PropertyName == nameof(MainViewModel.I2sBckPinSlave)
-            // Set on Clocking, but it greys out this page's BCK/MCK/multiplier.
-            || e.PropertyName == nameof(MainViewModel.I2sSlaveActive))
+            || e.PropertyName == nameof(MainViewModel.I2sSlaveActive)
+            || e.PropertyName == nameof(MainViewModel.I2sRxPin)
+            || e.PropertyName == nameof(MainViewModel.I2sInputChannels)
+            || e.PropertyName == nameof(MainViewModel.InputI2sSupported))
         {
             DispatcherQueue.TryEnqueue(Refresh);
+        }
+        else if (e.PropertyName == nameof(MainViewModel.I2sSlaveStatus))
+        {
+            DispatcherQueue.TryEnqueue(RefreshLockPill);
         }
     }
 
@@ -165,42 +145,32 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
     {
         if (Vm == null) return;
 
-        // In slave mode an external master drives the clocks, so the DSPi's own
-        // BCK/MCK/rate controls don't apply.
+        // In slave mode an external master drives BCK, so re-routing it here
+        // would do nothing.
         bool slave = Vm.I2sSlaveActive;
 
         _suppress = true;
         try
         {
+            ClockModeCard.Visibility = Vis(Vm.I2sClockModeSupported);
+            if (Vm.I2sClockModeSupported)
+                SelectByStringTag(ClockModeCombo, Vm.I2sClockMode);
+
             BckPinCard.Description = $"LRCK auto-assigned to GPIO {Vm.I2SBckPin + 1} (BCK + 1).";
             BckPinCombo.IsEnabled = !Vm.AnySlotIsI2S && !slave;
 
-            MckToggle.IsOn = Vm.MckEnabled;
-            MckToggle.IsEnabled = !slave;
-            MckPinCombo.IsEnabled = !Vm.MckEnabled && !slave;
-            MckPinCard.Description = Vm.MckEnabled
-                ? "Turn MCK off to change its pin."
-                : "Pin on which MCK is generated.";
-
-            // MCK multiplier
-            MckMultiplierCombo.SelectedIndex = Vm.MckMultiplier == 256 ? 1 : 0;
-            var highRate = Vm.SampleRateHz >= 96000;
-            MckMultiplierCombo.IsEnabled = !highRate && !slave;
-            MckMultiplierCard.Description = highRate
-                ? $"Locked to 128× at {Vm.SampleRateHz / 1000.0:F1} kHz."
-                : "Use 256× for DACs that require higher MCK rates.";
-
             RefreshClockCards();
+            RefreshInputCards();
         }
         finally { _suppress = false; }
 
         RefreshConflicts();
+        RefreshLockPill();
     }
 
     /// <summary>Show/populate the clock-pin and slave-BCK cards when the firmware
-    /// supports them. The master/slave mode that decides whether the slave pair is
-    /// ever used lives on Hardware › Clocking. Runs under the <c>_suppress</c>
-    /// guard (called from Refresh).</summary>
+    /// supports them. Runs under the <c>_suppress</c> guard (called from
+    /// Refresh).</summary>
     private void RefreshClockCards()
     {
         if (Vm == null) return;
@@ -208,8 +178,8 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         // Clock-pin unified/split + slave BCK pin. The slave pair only exists in
         // Split mode, so hide the card entirely in Unified (it can't be changed).
         bool pinModeShown = Vm.I2sClockPinModeSupported;
-        ClockPinsCard.Visibility = pinModeShown ? Visibility.Visible : Visibility.Collapsed;
-        SlaveBckCard.Visibility = (pinModeShown && Vm.I2sClockSplit) ? Visibility.Visible : Visibility.Collapsed;
+        ClockPinsCard.Visibility = Vis(pinModeShown);
+        SlaveBckCard.Visibility = Vis(pinModeShown && Vm.I2sClockSplit);
         if (pinModeShown)
         {
             SelectByStringTag(ClockPinsCombo, Vm.I2sClockPinMode);
@@ -218,17 +188,65 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         }
     }
 
-    /// <summary>Refresh the BCK and MCK pin pickers' per-item state so
-    /// that pins claimed by other features appear disabled and labelled
-    /// with their owner ("GPIO 6 (Output 1)"), while still-selectable
-    /// pins read as a plain "GPIO N". The Items collection itself is
-    /// never modified here — that's a hard requirement because WinUI's
-    /// ComboBox throws "Element not found" (E_FAIL) when its Items are
-    /// cleared/rebuilt on a dispatcher tick that races the popup
-    /// dismissal of a user selection. Items are populated once: BCK in
-    /// the constructor, MCK in PopulateMckPinCombo (Attach / Platform
-    /// change). Both of those paths are outside a SelectionChanged
-    /// dispatch and are safe.</summary>
+    /// <summary>Show the input half and size it to the active pair count. The
+    /// section headings and the rule above them only earn their place when there
+    /// is in fact a second section. Runs under the <c>_suppress</c> guard (called
+    /// from Refresh).</summary>
+    private void RefreshInputCards()
+    {
+        if (Vm == null) return;
+
+        bool input = Vm.InputI2sSupported;
+        ClockHeading.Visibility = Vis(input);
+        SectionDivider.Visibility = Vis(input);
+        InputHeading.Visibility = Vis(input);
+
+        // Channel selector only on parts with more than one stereo pair (RP2350).
+        bool multi = input && Vm.I2sMaxInputChannels > 2;
+        ChannelsCard.Visibility = Vis(multi);
+        if (multi) SelectChannelCount(Vm.I2sInputChannels);
+
+        // One data-pin card per active stereo pair.
+        int pairs = input ? Vm.I2sActivePairs : 0;
+        RxPinCard0.Header = pairs > 1 ? "Serial Data 1" : "Serial Data";
+        RxPinCard0.Visibility = Vis(pairs >= 1);
+        RxPinCard1.Visibility = Vis(pairs >= 2);
+        RxPinCard2.Visibility = Vis(pairs >= 3);
+        RxPinCard3.Visibility = Vis(pairs >= 4);
+    }
+
+    /// <summary>Show the slave-mode lock state beside the clock picker. Only
+    /// meaningful while slaved — as master there is nothing to lock to. The state
+    /// arrives on notification 0x09, so unlike ADAT's receiver it needs no polling
+    /// timer.</summary>
+    private void RefreshLockPill()
+    {
+        if (Vm == null) return;
+        var st = Vm.I2sSlaveStatus;
+        if (!Vm.I2sSlaveActive || st == null)
+        {
+            ClockLockPill.Visibility = Visibility.Collapsed;
+            return;
+        }
+        ClockLockPill.Visibility = Visibility.Visible;
+        string rate = st.IsLocked ? $" · {st.DetectedRateText}" : "";
+        ClockLockPill.Text = st.StateText + rate;
+        ClockLockPill.Foreground = new SolidColorBrush(st.IsLocked
+            ? Color.FromArgb(255, 100, 200, 140)
+            : Color.FromArgb(255, 240, 180, 90));
+    }
+
+    private static Visibility Vis(bool show) => show ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>Refresh the BCK and slave-BCK pin pickers' per-item
+    /// state so that pins claimed by other features appear disabled and
+    /// labelled with their owner ("GPIO 6 (Output 1)"), while
+    /// still-selectable pins read as a plain "GPIO N". The Items
+    /// collection itself is never modified here — that's a hard
+    /// requirement because WinUI's ComboBox throws "Element not found"
+    /// (E_FAIL) when its Items are cleared/rebuilt on a dispatcher tick
+    /// that races the popup dismissal of a user selection. Both combos
+    /// are populated once, in the constructor.</summary>
     private void RefreshConflicts()
     {
         if (Vm == null) return;
@@ -290,31 +308,6 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
             }
             SelectPinInCombo(BckPinCombo, currentBck);
 
-            // ── MCK ──────────────────────────────────────────────────
-            // MCK is restricted to GPOUT-capable pins (platform-
-            // dependent — RP2040: 21 only; RP2350: 13/15/21). The
-            // platform list is set in PopulateMckPinCombo; here we
-            // just relabel and toggle each existing item.
-            var mckOwners = HardwarePins.BuildOwnerMap(Vm, excludeMckSelf: true);
-            byte currentMck = Vm.MckPin;
-
-            for (int i = 0; i < MckPinCombo.Items.Count; i++)
-            {
-                if (MckPinCombo.Items[i] is not ComboBoxItem item) continue;
-                if (item.Tag is not byte pin) continue;
-
-                bool isCurrent = pin == currentMck;
-                string? ownerLabel = null;
-                if (!isCurrent && mckOwners.TryGetValue(pin, out var owner))
-                    ownerLabel = owner;
-
-                item.Content = ownerLabel != null
-                    ? $"GPIO {pin} ({ownerLabel})"
-                    : $"GPIO {pin}";
-                item.IsEnabled = ownerLabel == null;
-            }
-            SelectPinInCombo(MckPinCombo, currentMck);
-
             // ── Slave BCK (SPLIT mode) — reserves pin AND pin+1 (LRCLK) ──
             if (Vm.I2sClockPinModeSupported)
             {
@@ -341,6 +334,34 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
                     item.IsEnabled = ownerLabel == null;
                 }
                 SelectPinInCombo(SlaveBckCombo, currentSlave);
+            }
+
+            // ── Input data pins — one per active stereo pair ──────────
+            // Each pair excludes only its own claim, so a sibling pair's
+            // pin still shows as taken.
+            if (Vm.InputI2sSupported)
+            {
+                int pairs = Vm.I2sActivePairs;
+                for (int pair = 0; pair < _rxCombos.Length; pair++)
+                {
+                    if (pair >= pairs) continue; // hidden card — skip
+                    var combo = _rxCombos[pair];
+                    var rxOwners = HardwarePins.BuildOwnerMap(Vm, excludeI2sRxPair: pair);
+                    byte currentRx = Vm.I2sRxPinAt(pair);
+
+                    for (int i = 0; i < combo.Items.Count; i++)
+                    {
+                        if (combo.Items[i] is not ComboBoxItem item || item.Tag is not byte pin) continue;
+
+                        string? ownerLabel = null;
+                        if (pin != currentRx && rxOwners.TryGetValue(pin, out var owner))
+                            ownerLabel = owner;
+
+                        item.Content = ownerLabel != null ? $"GPIO {pin} ({ownerLabel})" : $"GPIO {pin}";
+                        item.IsEnabled = ownerLabel == null;
+                    }
+                    SelectPinInCombo(combo, currentRx);
+                }
             }
         }
         finally { _suppress = false; }
@@ -384,66 +405,6 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         ShowStatus(msg, true);
     }
 
-    private async void OnMckToggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppress || Vm == null) return;
-        ClearStatus();
-
-        bool newVal = MckToggle.IsOn;
-        var status = await Task.Run(() => Vm.SetMckEnable(newVal));
-        if (status == PinConfigResult.Success)
-        {
-            // Refresh reads the new MckEnabled and rebuilds enablement.
-            Refresh();
-            HardwarePins.RaisePinAssignmentsChanged();
-            ShowStatus($"Master clock {(newVal ? "enabled" : "disabled")}", false);
-            return;
-        }
-
-        _suppress = true;
-        MckToggle.IsOn = Vm.MckEnabled;
-        _suppress = false;
-        ShowStatus($"Failed to {(newVal ? "enable" : "disable")} master clock", true);
-    }
-
-    private async void OnMckPinChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppress || Vm == null) return;
-        if (MckPinCombo.SelectedItem is not ComboBoxItem item || item.Tag is not byte newPin) return;
-
-        ClearStatus();
-        var status = await Task.Run(() => Vm.SetMckPin(newPin));
-        if (status == PinConfigResult.Success)
-        {
-            // Same as OnBckPinChanged: the queued PropertyChanged + the
-            // PinAssignmentsChanged paths relabel the combos on the
-            // next tick. Items collection isn't mutated, so it's safe.
-            HardwarePins.RaisePinAssignmentsChanged();
-            ShowStatus($"MCK pin set to GPIO {newPin}", false);
-            return;
-        }
-
-        // Revert by matching the device's actual MCK pin in the combo
-        // by Tag — MckPinCombo is platform-restricted and rebuilt by
-        // RefreshConflicts, so item indices don't match ValidPins.
-        _suppress = true;
-        SelectPinInCombo(MckPinCombo, Vm.MckPin);
-        _suppress = false;
-
-        var msg = status switch
-        {
-            PinConfigResult.OutputActive => "Disable MCK before changing its pin",
-            PinConfigResult.PinInUse     => $"GPIO {newPin} is already in use",
-            // Filter-on-populate already keeps non-GPOUT pins out of
-            // the combo, so this branch is defensive — kept for the
-            // unlikely case of a stale combo or firmware mismatch.
-            PinConfigResult.InvalidPin   => $"GPIO {newPin} can't drive MCK on this platform. "
-                                            + $"Use {string.Join(" / ", System.Array.ConvertAll(HardwarePins.McKCapablePins(Vm.Platform), p => $"GPIO {p}"))}.",
-            _ => $"Failed to set MCK pin (0x{status:X2})"
-        };
-        ShowStatus(msg, true);
-    }
-
     /// <summary>Select the combo entry whose byte Tag matches
     /// <paramref name="pin"/>. No-op if no match — leaves the
     /// previous selection in place rather than blanking the combo.</summary>
@@ -459,29 +420,43 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         }
     }
 
-    private async void OnMckMultiplierChanged(object sender, SelectionChangedEventArgs e)
+    // ── Clock-mode handler ──────────────────────────────────────────────────
+
+    private async void OnClockModeChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppress || Vm == null) return;
-        // ComboBoxItem.Tag set in XAML (Tag="128") is parsed as STRING,
-        // not int — the pattern `is not int` always fails, which is why
-        // the original silently dropped multiplier changes. Parse the
-        // string explicitly. (BCK / MCK-pin combos populate from C# and
-        // store byte tags, so they don't hit this XAML quirk.)
-        if (MckMultiplierCombo.SelectedItem is not ComboBoxItem item) return;
-        if (!int.TryParse(item.Tag?.ToString(), out var newMul)) return;
-
+        if (ClockModeCombo.SelectedItem is not ComboBoxItem item || item.Tag is not string tag) return;
+        if (!byte.TryParse(tag, out var mode) || mode == Vm.I2sClockMode) return;
         ClearStatus();
-        var status = await Task.Run(() => Vm.SetMckMultiplier(newMul));
-        if (status == PinConfigResult.Success)
+
+        // Switching mode while an I2S output is live can emit sustained loud noise
+        // from the DAC if wiring hasn't been adjusted — confirm first.
+        if (Vm.AnySlotIsI2S)
         {
-            ShowStatus($"MCK multiplier set to {newMul}×", false);
-            return;
+            var dialog = new ContentDialog
+            {
+                Title = "Change I2S clock mode?",
+                Content = "One or more I2S outputs are active. Switching between Master and Slave "
+                        + "modes may cause sustained loud noise from the connected DAC if the wiring "
+                        + "has not been adjusted.",
+                PrimaryButtonText = "Change Clock Mode",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = XamlRoot
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            {
+                _suppress = true;
+                SelectByStringTag(ClockModeCombo, Vm.I2sClockMode);
+                _suppress = false;
+                return;
+            }
         }
 
-        _suppress = true;
-        MckMultiplierCombo.SelectedIndex = Vm.MckMultiplier == 256 ? 1 : 0;
-        _suppress = false;
-        ShowStatus("Failed to set MCK multiplier", true);
+        await Task.Run(() => Vm.SetI2sClockMode(mode));
+        // Slave mode releases the BCK/LRCK GPIOs, which the pin pages show as owners.
+        HardwarePins.RaisePinAssignmentsChanged();
+        ShowStatus($"I2S clock mode set to {(mode == 1 ? "Slave" : "Master")}", false);
     }
 
     // ── Clock-pin handlers ──────────────────────────────────────────────────
@@ -535,6 +510,78 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         }, true);
     }
 
+    // ── Input handlers ──────────────────────────────────────────────────────
+
+    private async void OnChannelsChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppress || Vm == null) return;
+        if (ChannelsCombo.SelectedItem is not ComboBoxItem item) return;
+        if (item.Tag is not string s || !int.TryParse(s, out int count)) return;
+        if (count == Vm.I2sInputChannels) return;
+
+        ClearStatus();
+        var status = await Task.Run(() => Vm.SetI2sInputChannels(count));
+        if (status == PinConfigResult.Success)
+        {
+            HardwarePins.RaisePinAssignmentsChanged();
+            ShowStatus($"{count} channels ({count / 2} pair{(count / 2 == 1 ? "" : "s")})", false);
+        }
+        else
+        {
+            ShowStatus(status switch
+            {
+                PinConfigResult.InvalidOutput => "Multichannel I2S isn't supported on this device",
+                PinConfigResult.PinInUse => "A pair's data pin conflicts — assign different GPIOs first",
+                _ => $"Failed to set channel count (0x{status:X2})"
+            }, true);
+        }
+        DispatcherQueue.TryEnqueue(Refresh);
+    }
+
+    private async void OnI2sRxPinChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppress || Vm == null) return;
+        if (sender is not ComboBox combo) return;
+        int pair = combo.Tag is int t ? t : 0;
+        if (combo.SelectedItem is not ComboBoxItem item || item.Tag is not byte newPin) return;
+
+        ClearStatus();
+        var status = await Task.Run(() => Vm.SetI2sRxPin(newPin, pair));
+        if (status == PinConfigResult.Success)
+        {
+            HardwarePins.RaisePinAssignmentsChanged();
+            ShowStatus($"{PairLabel(pair)} pin set to GPIO {newPin}", false);
+            return;
+        }
+
+        _suppress = true;
+        SelectPinInCombo(combo, Vm.I2sRxPinAt(pair));
+        _suppress = false;
+
+        ShowStatus(status switch
+        {
+            PinConfigResult.PinInUse => $"GPIO {newPin} is already in use",
+            PinConfigResult.InvalidPin => $"GPIO {newPin} is not a valid pin",
+            _ => $"Failed to set I2S RX pin (0x{status:X2})"
+        }, true);
+    }
+
+    private string PairLabel(int pair) =>
+        Vm != null && Vm.I2sActivePairs > 1 ? $"Serial Data {pair + 1}" : "I2S RX data";
+
+    private void SelectChannelCount(int count)
+    {
+        for (int i = 0; i < ChannelsCombo.Items.Count; i++)
+        {
+            if (ChannelsCombo.Items[i] is ComboBoxItem item
+                && int.TryParse(item.Tag?.ToString(), out var c) && c == count)
+            {
+                ChannelsCombo.SelectedIndex = i;
+                return;
+            }
+        }
+    }
+
     /// <summary>Select the combo item whose string Tag ("0"/"1") equals the byte
     /// <paramref name="value"/>.</summary>
     private static void SelectByStringTag(ComboBox combo, byte value)
@@ -561,10 +608,12 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
 
     // ── ISettingsPage ──────────────────────────────────────────────────
     public string Id => "hardware.i2s";
-    public string Title => "I²S Configuration";
+    public string Title => "I2S";
     public SettingsCategory Category => SettingsCategory.System;
     public string IconGlyph => ""; // SoundLevels (waveform)
-    public int Order => 60;
+    public int Order => 30;
+    // The clock pins exist on every build, so the page always has something to
+    // show even where the input half is absent.
     public bool IsAvailable(MainViewModel vm) => true;
     public UIElement BuildContent(MainViewModel vm, IPendingChangeTracker tracker)
     {

@@ -16,9 +16,11 @@
             mapping is fixed (slot N = output N) and S/MUX isn't exposed, so
             enable + transmit pin are the whole of it.
           • Input (V24+): a selectable 8-channel input source feeding input
-            channels 1-8. Its master/slave clock source and lock indicator are on
-            Hardware › Clocking with the rest of the clock domain; what's left
-            here is the enable and the receive pin.
+            channels 1-8 — the enable, the receive pin, and which end of the
+            lightpipe owns the clock. Master with the ADAT output off leaves the
+            far end free-running, hence the warning below the clock picker. The
+            rate the DSPi generates when it is the master is shared with the other
+            interfaces and lives on Hardware › Master Clock.
 
         Either half can be absent — the input needs newer firmware than the output
         — so each section hides on its own and the section headings only earn
@@ -56,9 +58,29 @@
         </controls:SettingsCard>
 
         <controls:SettingsCard x:Name="InPinCard" Header="Receive pin (RX)"
-                               Description="GPIO fed by the optical receiver. Whether the DSPi is the clock master or slaves to this lightpipe, and its lock state, are on the Clocking page.">
+                               Description="GPIO fed by the optical receiver.">
             <ComboBox x:Name="InPinCombo" MinWidth="160" SelectionChanged="OnInPinChanged"/>
         </controls:SettingsCard>
+
+        <controls:SettingsCard x:Name="InClockCard" Header="Clock Mode"
+                               Description="Master: the DSPi sets the rate and the far end follows the lightpipe it sends. Use this when the ADAT output feeds an outboard DAC/ADC whose return comes back in.&#x0A;Slave: the DSPi locks to the incoming lightpipe from an external ADAT master, which then owns the rate (44.1/48 kHz, auto-detected).">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <TextBlock x:Name="InLockPill" FontSize="11"
+                           VerticalAlignment="Center" Visibility="Collapsed"/>
+                <ComboBox x:Name="InClockCombo" MinWidth="120" SelectionChanged="OnInClockModeChanged">
+                    <ComboBoxItem Content="Master" Tag="0"/>
+                    <ComboBoxItem Content="Slave" Tag="1"/>
+                </ComboBox>
+            </StackPanel>
+        </controls:SettingsCard>
+
+        <InfoBar x:Name="FreeRunBar" IsOpen="False" IsClosable="False"
+                 Severity="Warning" Title="ADAT clock is free-running" Margin="0,4,0,0"
+                 Message="The ADAT input is set to Master but the ADAT output is off, so nothing external is locked to the DSPi's clock. The source drifts against it and you will hear periodic pops and clicks. Turn the ADAT output on and connect its lightpipe to the source to close the loop.">
+            <InfoBar.ActionButton>
+                <Button Content="Turn the ADAT output on" Click="OnEnableAdatOutputClick"/>
+            </InfoBar.ActionButton>
+        </InfoBar>
 
         <TextBlock x:Name="StatusText"
                    FontSize="11"

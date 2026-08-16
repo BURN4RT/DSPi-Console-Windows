@@ -450,14 +450,16 @@ public sealed partial class SettingsShell : UserControl
     /// the sidebar pending-dot lands on the right page instead of always the
     /// Output Assignment page.</summary>
     private static string PageForIoKey(string key) =>
-        // Clock domain first — these three are exact keys, and two of them would
-        // otherwise be swallowed by the io.i2s- / io.adat prefixes below.
-        key is "io.i2s-clock" or "io.i2s-rate" or "io.adat-in-clock" ? "hardware.clocking"
+        // Master Clock owns what every interface shares: the generated rate and
+        // all of MCK. io.i2s-rate has to be matched exactly, before the io.i2s-
+        // prefix below claims it.
+        key is "io.i2s-rate" ? "hardware.master-clock"
+        : key.StartsWith("io.mck") ? "hardware.master-clock"
         : key.StartsWith("io.spdif") ? "hardware.spdif-input"
-        : key.StartsWith("io.i2s-clock") ? "hardware.i2s"    // io.i2s-clock-pins
-        : key.StartsWith("io.i2s-") ? "hardware.i2s-input"   // io.i2s-rx / io.i2s-ch
-        : key.StartsWith("io.bck") || key.StartsWith("io.mck") ? "hardware.i2s"
-        : key.StartsWith("io.adat") ? "hardware.adat"   // both directions share one page
+        : key.StartsWith("io.adat") ? "hardware.adat"        // both directions share one page
+        // Clock mode, clock pins, BCK, slave BCK, RX pins and channel count are
+        // all one page now.
+        : key.StartsWith("io.i2s-") || key.StartsWith("io.bck") ? "hardware.i2s"
         : "hardware.output-assignment";                      // io.pin.* / io.slot.*
 
     private async void OnDiscardClick(object sender, RoutedEventArgs e)

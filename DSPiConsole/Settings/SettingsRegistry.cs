@@ -49,11 +49,10 @@ internal static class SettingsRegistry
 
         // ── System ─────────────────────────────────────────────────
         TryAdd<HardwareOutputAssignmentPage>(pages);
-        TryAdd<HardwareClockingPage>(pages);
+        TryAdd<HardwareMasterClockPage>(pages);
         TryAdd<HardwareAdatPage>(pages);
         TryAdd<HardwareI2SPage>(pages);
         TryAdd<HardwareSpdifInputPage>(pages);
-        TryAdd<HardwareI2SInputPage>(pages);
 
         // ── Control ────────────────────────────────────────────────
         TryAdd<ControlMacrosPage>(pages);

@@ -7,7 +7,8 @@
     xmlns:controls="using:CommunityToolkit.WinUI.Controls">
 
     <!--
-        S/PDIF Input page.
+        S/PDIF page — the receive side. S/PDIF *outputs* are a per-slot output
+        type and are set on Hardware › Main Outputs, with the rest of the slots.
           - Instances: number of selectable S/PDIF inputs sharing one receiver
             (firmware v1.1.5+; hidden on older firmware). Driving the count
             enables/disables the optional inputs. How many the firmware offers

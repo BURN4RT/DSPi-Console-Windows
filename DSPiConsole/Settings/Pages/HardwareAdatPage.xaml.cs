@@ -1,8 +1,10 @@
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Threading.Tasks;
 using DSPiConsole.Usb;
 using DSPiConsole.ViewModels;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -12,14 +14,16 @@ namespace DSPiConsole.Settings.Pages;
 
 /// <summary>
 /// Hardware › ADAT. Both directions of the RP2350-only optical link: the 8-channel
-/// transmitter (enable + TX pin) and the 8-channel receiver (enable + RX pin). The
-/// receiver's clock source and lock state are on Hardware › Clocking. Registered
-/// when the firmware reports either half (see <see cref="IsAvailable"/>);
-/// whichever half is missing hides.
+/// transmitter (enable + TX pin) and the 8-channel receiver (enable + RX pin,
+/// clock source and lock state). The rate the DSPi generates as master is common
+/// to every interface and lives on Hardware › Master Clock. Registered when the
+/// firmware reports either half (see <see cref="IsAvailable"/>); whichever half is
+/// missing hides.
 /// </summary>
 public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
 {
     private bool _suppress;
+    private DispatcherQueueTimer? _statusTimer;
 
     public HardwareAdatPage()
     {
@@ -68,12 +72,25 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
             Vm.PropertyChanged += OnVmPropertyChanged;
             Refresh();
         }
+
+        // The receiver's lock state has no push notification, so poll it while the
+        // page is visible.
+        _statusTimer = DispatcherQueue.CreateTimer();
+        _statusTimer.Interval = TimeSpan.FromMilliseconds(700);
+        _statusTimer.Tick += (_, _) =>
+        {
+            if (Vm is { AdatInputSupported: true, AdatInputEnabled: true })
+                _ = Task.Run(() => Vm.RefreshAdatInputStatus());
+        };
+        _statusTimer.Start();
     }
 
     private void OnPageUnloaded(object sender, RoutedEventArgs e)
     {
         HardwarePins.PinAssignmentsChanged -= OnExternalPinChange;
         if (Vm != null) Vm.PropertyChanged -= OnVmPropertyChanged;
+        _statusTimer?.Stop();
+        _statusTimer = null;
     }
 
     private void OnExternalPinChange() => DispatcherQueue.TryEnqueue(RefreshConflicts);
@@ -88,7 +105,11 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
             case nameof(MainViewModel.AdatInputEnabled):
             case nameof(MainViewModel.AdatInputPin):
             case nameof(MainViewModel.AdatInputSupported):
+            case nameof(MainViewModel.AdatInputClockMode):
                 DispatcherQueue.TryEnqueue(Refresh);
+                break;
+            case nameof(MainViewModel.AdatInputStatus):
+                DispatcherQueue.TryEnqueue(RefreshInLock);
                 break;
         }
     }
@@ -101,10 +122,48 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
         {
             OutEnableToggle.IsOn = Vm.AdatEnabled;
             InEnableToggle.IsOn = Vm.AdatInputEnabled;
+            SelectByStringTag(InClockCombo, Vm.AdatInputClockMode);
         }
         finally { _suppress = false; }
         RefreshSections();
         RefreshConflicts();
+        RefreshInLock();
+        RefreshFreeRunWarning();
+    }
+
+    /// <summary>Show the receiver's lock state beside its clock picker. Only
+    /// meaningful once the input is on — the slave state is readable, never
+    /// settable.</summary>
+    private void RefreshInLock()
+    {
+        if (Vm == null) return;
+        var st = Vm.AdatInputStatus;
+        if (!Vm.AdatInputSupported || !Vm.AdatInputEnabled || st == null)
+        {
+            InLockPill.Visibility = Visibility.Collapsed;
+            return;
+        }
+        InLockPill.Visibility = Visibility.Visible;
+        string rate = st.IsLocked ? $" · {st.DetectedRateText}" : "";
+        InLockPill.Text = st.StateText + rate;
+        InLockPill.Foreground = new SolidColorBrush(st.IsLocked
+            ? Color.FromArgb(255, 100, 200, 140)
+            : Color.FromArgb(255, 240, 180, 90));
+    }
+
+    /// <summary>Master clock mode with the ADAT output off means nothing external
+    /// is locked to the DSPi's clock — the source drifts against it and produces
+    /// periodic pops/clicks. Surface a warning with a one-click fix.</summary>
+    private void RefreshFreeRunWarning()
+    {
+        FreeRunBar.IsOpen = Vm is
+        {
+            AdatInputSupported: true,
+            AdatInputEnabled: true,
+            AdatInputClockMode: 0, // Master
+            AdatSupported: true,
+            AdatEnabled: false,
+        };
     }
 
     /// <summary>Show only the halves this firmware has. The "Output"/"Input"
@@ -124,6 +183,7 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
         InputHeading.Visibility = Vis(both);
         InEnableCard.Visibility = Vis(rx);
         InPinCard.Visibility = Vis(rx);
+        InClockCard.Visibility = Vis(rx);
     }
 
     private static Visibility Vis(bool show) => show ? Visibility.Visible : Visibility.Collapsed;
@@ -244,6 +304,50 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
         }, true);
     }
 
+    private async void OnInClockModeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppress || Vm == null) return;
+        if (InClockCombo.SelectedItem is not ComboBoxItem item || item.Tag is not string tag) return;
+        if (!byte.TryParse(tag, out var mode) || mode == Vm.AdatInputClockMode) return;
+        ClearStatus();
+
+        var status = await Task.Run(() => Vm.SetAdatInputClockMode(mode));
+        if (status != PinConfigResult.Success)
+        {
+            _suppress = true;
+            SelectByStringTag(InClockCombo, Vm.AdatInputClockMode);
+            _suppress = false;
+            ShowStatus($"Failed to set the ADAT clock source (0x{status:X2}).", true);
+            return;
+        }
+        ShowStatus($"ADAT clock source set to {(mode == 1 ? "Slave" : "Master")}", false);
+        RefreshFreeRunWarning();
+    }
+
+    /// <summary>The free-running warning's one-click fix. The output toggle is on
+    /// this page too, so turning it on from here has to repaint it — the queued
+    /// PropertyChanged(AdatEnabled) does that, and Refresh re-evaluates the
+    /// warning that prompted the click.</summary>
+    private async void OnEnableAdatOutputClick(object sender, RoutedEventArgs e)
+    {
+        if (Vm == null) return;
+        ClearStatus();
+        var status = await Task.Run(() => Vm.SetAdatEnable(true));
+        if (status == PinConfigResult.Success)
+        {
+            HardwarePins.RaisePinAssignmentsChanged();
+            Refresh();
+            ShowStatus("ADAT output enabled.", false);
+            return;
+        }
+        ShowStatus(status switch
+        {
+            PinConfigResult.PinInUse => "The ADAT transmit pin is already claimed — free it above.",
+            PinConfigResult.InvalidPin => "Pick a valid ADAT transmit pin above first.",
+            _ => $"Failed to enable the ADAT output (0x{status:X2})."
+        }, true);
+    }
+
     private async void OnInPinChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppress || Vm == null) return;
@@ -280,6 +384,20 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
                 return;
             }
         }
+    }
+
+    /// <summary>Select the combo item whose string Tag ("0"/"1") equals the byte
+    /// <paramref name="value"/>. The clock-mode items are declared in XAML, so
+    /// their tags arrive as strings rather than the bytes the pin combos use.</summary>
+    private static void SelectByStringTag(ComboBox combo, byte value)
+    {
+        for (int i = 0; i < combo.Items.Count; i++)
+            if (combo.Items[i] is ComboBoxItem item && item.Tag is string s
+                && byte.TryParse(s, out var v) && v == value)
+            {
+                combo.SelectedIndex = i;
+                return;
+            }
     }
 
     private void ShowStatus(string msg, bool isError)

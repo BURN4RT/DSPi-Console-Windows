@@ -47,7 +47,7 @@ public interface ISettingsPage
 
     /// <summary>Capability gate. Returns false to hide the page from the
     /// sidebar entirely — used for firmware-version-dependent features
-    /// (e.g. S/PDIF Input needs V7+, DAC Mute needs V10+).</summary>
+    /// (e.g. S/PDIF needs V7+, DAC Mute needs V10+).</summary>
     bool IsAvailable(MainViewModel vm);
 
     /// <summary>Build (or rebuild) the page's content tree. Called once

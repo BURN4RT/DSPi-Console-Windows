@@ -11,7 +11,7 @@ using Windows.UI;
 namespace DSPiConsole.Settings.Pages;
 
 /// <summary>
-/// Hardware › S/PDIF Input. An "Instances" selector on firmware that exposes
+/// Hardware › S/PDIF. An "Instances" selector on firmware that exposes
 /// multiple selectable inputs, one conflict-aware RX pin combo per active
 /// input, and the LG Sound Sync toggle. How many inputs the firmware has is
 /// device-reported (3 before wire V28, 4 from V28), so the fourth instance and
@@ -240,7 +240,7 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
 
     // ── ISettingsPage ──────────────────────────────────────────────────
     public string Id => "hardware.spdif-input";
-    public string Title => "S/PDIF Input";
+    public string Title => "S/PDIF";
     public SettingsCategory Category => SettingsCategory.System;
     public string IconGlyph => "";
     public int Order => 40;
