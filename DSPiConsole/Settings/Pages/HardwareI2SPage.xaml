@@ -74,7 +74,7 @@
             <ComboBox x:Name="SlaveBckCombo" MinWidth="140" SelectionChanged="OnSlaveBckChanged"/>
         </controls:SettingsCard>
 
-        <Border x:Name="SectionDivider" Height="1" Margin="0,10,0,6"
+        <Border x:Name="InputDivider" Height="1" Margin="0,10,0,6"
                 Background="{ThemeResource DividerStrokeColorDefaultBrush}"
                 Visibility="Collapsed"/>
 

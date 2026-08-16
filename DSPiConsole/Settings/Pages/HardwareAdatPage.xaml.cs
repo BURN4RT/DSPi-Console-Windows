@@ -13,12 +13,13 @@ using Windows.UI;
 namespace DSPiConsole.Settings.Pages;
 
 /// <summary>
-/// Hardware › ADAT. Both directions of the RP2350-only optical link: the 8-channel
-/// transmitter (enable + TX pin) and the 8-channel receiver (enable + RX pin,
-/// clock source and lock state). The rate the DSPi generates as master is common
-/// to every interface and lives on Hardware › Master Clock. Registered when the
-/// firmware reports either half (see <see cref="IsAvailable"/>); whichever half is
-/// missing hides.
+/// Hardware › ADAT. The RP2350-only optical link, laid out like Hardware › I2S:
+/// the clock mode and its lock state first, because it governs both directions,
+/// then the 8-channel transmitter (enable + TX pin) and the 8-channel receiver
+/// (enable + RX pin). The rate the DSPi generates as master is common to every
+/// interface and lives on Hardware › Master Clock. Registered when the firmware
+/// reports either half (see <see cref="IsAvailable"/>); whichever half is missing
+/// hides, along with its heading and rule.
 /// </summary>
 public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
 {
@@ -109,7 +110,7 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
                 DispatcherQueue.TryEnqueue(Refresh);
                 break;
             case nameof(MainViewModel.AdatInputStatus):
-                DispatcherQueue.TryEnqueue(RefreshInLock);
+                DispatcherQueue.TryEnqueue(RefreshLockPill);
                 break;
         }
     }
@@ -122,31 +123,31 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
         {
             OutEnableToggle.IsOn = Vm.AdatEnabled;
             InEnableToggle.IsOn = Vm.AdatInputEnabled;
-            SelectByStringTag(InClockCombo, Vm.AdatInputClockMode);
+            SelectByStringTag(ClockModeCombo, Vm.AdatInputClockMode);
         }
         finally { _suppress = false; }
         RefreshSections();
         RefreshConflicts();
-        RefreshInLock();
+        RefreshLockPill();
         RefreshFreeRunWarning();
     }
 
-    /// <summary>Show the receiver's lock state beside its clock picker. Only
+    /// <summary>Show the receiver's lock state beside the clock picker. Only
     /// meaningful once the input is on — the slave state is readable, never
-    /// settable.</summary>
-    private void RefreshInLock()
+    /// settable. It has no push notification, hence the polling timer above.</summary>
+    private void RefreshLockPill()
     {
         if (Vm == null) return;
         var st = Vm.AdatInputStatus;
         if (!Vm.AdatInputSupported || !Vm.AdatInputEnabled || st == null)
         {
-            InLockPill.Visibility = Visibility.Collapsed;
+            ClockLockPill.Visibility = Visibility.Collapsed;
             return;
         }
-        InLockPill.Visibility = Visibility.Visible;
+        ClockLockPill.Visibility = Visibility.Visible;
         string rate = st.IsLocked ? $" · {st.DetectedRateText}" : "";
-        InLockPill.Text = st.StateText + rate;
-        InLockPill.Foreground = new SolidColorBrush(st.IsLocked
+        ClockLockPill.Text = st.StateText + rate;
+        ClockLockPill.Foreground = new SolidColorBrush(st.IsLocked
             ? Color.FromArgb(255, 100, 200, 140)
             : Color.FromArgb(255, 240, 180, 90));
     }
@@ -166,24 +167,29 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
         };
     }
 
-    /// <summary>Show only the halves this firmware has. The "Output"/"Input"
-    /// headings and the rule between them exist to tell the two apart, so they
-    /// only appear when there are in fact two.</summary>
+    /// <summary>Show only the parts this firmware has. Clock and Input both come
+    /// with the receiver, so the input half is what creates a second section —
+    /// without it there is one section, and the headings and rules that exist to
+    /// tell sections apart have nothing to do. Each rule sits above a section and
+    /// shows only when that section has something above it to be divided from.</summary>
     private void RefreshSections()
     {
         if (Vm == null) return;
         bool tx = Vm.AdatSupported, rx = Vm.AdatInputSupported;
-        bool both = tx && rx;
 
+        ClockHeading.Visibility = Vis(rx);
+        ClockModeCard.Visibility = Vis(rx);
+
+        OutputDivider.Visibility = Vis(rx && tx);
+        OutputHeading.Visibility = Vis(rx && tx);
         OutEnableCard.Visibility = Vis(tx);
         OutPinCard.Visibility = Vis(tx);
-        OutputHeading.Visibility = Vis(both);
 
-        SectionDivider.Visibility = Vis(both);
-        InputHeading.Visibility = Vis(both);
+        // Input is only ever preceded by Clock, which is present whenever it is.
+        InputDivider.Visibility = Vis(rx);
+        InputHeading.Visibility = Vis(rx);
         InEnableCard.Visibility = Vis(rx);
         InPinCard.Visibility = Vis(rx);
-        InClockCard.Visibility = Vis(rx);
     }
 
     private static Visibility Vis(bool show) => show ? Visibility.Visible : Visibility.Collapsed;
@@ -304,10 +310,10 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
         }, true);
     }
 
-    private async void OnInClockModeChanged(object sender, SelectionChangedEventArgs e)
+    private async void OnClockModeChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppress || Vm == null) return;
-        if (InClockCombo.SelectedItem is not ComboBoxItem item || item.Tag is not string tag) return;
+        if (ClockModeCombo.SelectedItem is not ComboBoxItem item || item.Tag is not string tag) return;
         if (!byte.TryParse(tag, out var mode) || mode == Vm.AdatInputClockMode) return;
         ClearStatus();
 
@@ -315,7 +321,7 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
         if (status != PinConfigResult.Success)
         {
             _suppress = true;
-            SelectByStringTag(InClockCombo, Vm.AdatInputClockMode);
+            SelectByStringTag(ClockModeCombo, Vm.AdatInputClockMode);
             _suppress = false;
             ShowStatus($"Failed to set the ADAT clock source (0x{status:X2}).", true);
             return;
@@ -342,8 +348,8 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
         }
         ShowStatus(status switch
         {
-            PinConfigResult.PinInUse => "The ADAT transmit pin is already claimed — free it above.",
-            PinConfigResult.InvalidPin => "Pick a valid ADAT transmit pin above first.",
+            PinConfigResult.PinInUse => "The ADAT transmit pin is already claimed — free it in the Output section.",
+            PinConfigResult.InvalidPin => "Pick a valid ADAT transmit pin in the Output section first.",
             _ => $"Failed to enable the ADAT output (0x{status:X2})."
         }, true);
     }

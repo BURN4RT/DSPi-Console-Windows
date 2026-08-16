@@ -198,7 +198,7 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
 
         bool input = Vm.InputI2sSupported;
         ClockHeading.Visibility = Vis(input);
-        SectionDivider.Visibility = Vis(input);
+        InputDivider.Visibility = Vis(input);
         InputHeading.Visibility = Vis(input);
 
         // Channel selector only on parts with more than one stereo pair (RP2350).
