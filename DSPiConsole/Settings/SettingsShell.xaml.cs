@@ -259,38 +259,7 @@ public sealed partial class SettingsShell : UserControl
         // case so we don't read like a beta tool.
         var n = _tracker.Count;
         PendingTitle.Text = n == 1 ? "1 pending device change" : $"{n} pending device changes";
-        RebuildPendingList();
         AnimatePendingOverlay(n > 0);
-    }
-
-    /// <summary>List what is pending, one row per staged change: the field, then
-    /// the value it had and the value it will be saved with. Rebuilt wholesale —
-    /// the list is small, nothing in it holds focus, and the prompt is only on
-    /// screen while it has entries.</summary>
-    private void RebuildPendingList()
-    {
-        PendingList.Children.Clear();
-        foreach (var change in _tracker.Pending)
-        {
-            var row = new TextBlock
-            {
-                FontSize = 12,
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-            };
-            row.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
-            {
-                Text = change.FieldLabel,
-                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorPrimaryBrush"],
-            });
-            row.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
-            {
-                Text = $"  {change.OldDisplay} → {change.NewDisplay}",
-            });
-            PendingList.Children.Add(row);
-        }
-        PendingListScroller.Visibility = PendingList.Children.Count > 0
-            ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private bool _overlayShown;
