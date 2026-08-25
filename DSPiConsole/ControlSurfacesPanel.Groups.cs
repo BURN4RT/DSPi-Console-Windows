@@ -503,10 +503,14 @@ public sealed partial class ControlSurfacesPanel
             ? Color.FromArgb(255, 100, 200, 140)
             : Color.FromArgb(255, 240, 180, 90);
 
-    /// <summary>Re-populate the body of every binding card and remote button that
-    /// targets a group, so a group rename, re-scope or removal is reflected in its
-    /// picker and summary. Returns the names of the controls whose group reference
-    /// no longer resolves and was therefore dropped back to a plain channel.</summary>
+    /// <summary>Re-populate everything on the bindings page that names a group: a
+    /// binding card whose parameter takes a channel, a remote button's target
+    /// picker, and the display's own pages. A group added, renamed or re-scoped
+    /// has to appear in — or leave — all three, not only the cards already
+    /// pointing at one, which is what made a new group unselectable until the
+    /// settings window was reopened. Returns the names of the controls whose group
+    /// reference no longer resolves and was therefore dropped back to a plain
+    /// channel.</summary>
     private List<string> RefreshGroupedBindingCards()
     {
         var orphaned = new List<string>();
@@ -516,22 +520,48 @@ public sealed partial class ControlSurfacesPanel
         int slots = Math.Min(_vm.CsSlotCount, CsLimits.MaxBindings);
         for (int slot = 0; slot < slots; slot++)
         {
-            if (!_drafts[slot].IsGrouped) continue;
-            SanitizeDraft(slot);
-            if (!_drafts[slot].IsGrouped) orphaned.Add(SlotTitle(slot));
+            var draft = _drafts[slot];
+            if (!draft.IsConfigured) continue;
+            if (draft.IsGrouped)
+            {
+                SanitizeDraft(slot);
+                if (!_drafts[slot].IsGrouped) orphaned.Add(SlotTitle(slot));
+            }
+            // The two containers have no target picker of their own: a receiver's
+            // remote buttons and a panel's pages are refreshed on their own below,
+            // and rebuilding either card body would tear that section down.
+            else if (draft.Type is CsType.Ir or CsType.Display) continue;
+            else if (_vm.CsNounDescFor(draft.Noun) is not { IsTargeted: true }) continue;
             PopulateSlotBody(slot);
         }
         // A remote key can carry a group too since caps v10, and a group edit
         // strands one exactly as it strands a control.
         for (int sub = 0; sub < _vm.CsIrMax; sub++)
         {
-            if (!_irDrafts[sub].IsGrouped) continue;
-            string title = IrCommandTitle(sub);
-            SanitizeIrDraft(sub);
-            if (!_irDrafts[sub].IsGrouped) orphaned.Add(title);
+            var cmd = _irDrafts[sub];
+            if (cmd.IsGrouped)
+            {
+                string title = IrCommandTitle(sub);
+                SanitizeIrDraft(sub);
+                if (!_irDrafts[sub].IsGrouped) orphaned.Add(title);
+            }
+            else if (_vm.CsNounDescFor(cmd.Noun) is not { IsTargeted: true }) continue;
             if (_irBodies.ContainsKey(sub)) RefreshIrCommandCard(sub);
         }
+        // A display page picks a channel or a group from the same list.
+        PopulateDisplayHost();
         return orphaned;
+    }
+
+    /// <summary>Rebuild the step rows of every macro card on screen. A step's
+    /// target picker lists groups, so a group edit has to reach it the same way it
+    /// reaches a binding's picker.</summary>
+    private void RefreshMacroStepCards()
+    {
+        foreach (int idx in _macroCards.Keys.ToList())
+            for (int step = 0; step < _macroDrafts[idx].StepCount; step++)
+                PopulateMacroStepRows(idx, step);
+        RefreshGroupMacroIndicators();
     }
 
     // ── Macros ───────────────────────────────────────────────────────────────

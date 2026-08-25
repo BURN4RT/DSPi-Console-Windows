@@ -5,9 +5,11 @@ using System.Threading.Tasks;
 using DSPiConsole.Core.Models;
 using DSPiConsole.Settings;
 using Microsoft.UI.Text;
+using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Shapes;
 using Windows.System;
 using Windows.UI;
 
@@ -38,6 +40,19 @@ public sealed partial class ControlSurfacesPanel
     private TextBlock? _displayStateLabel;
     private TextBlock? _displayStateDetail;
 
+    // The live half is split so an edit repaints only what it changed. The config
+    // rows change shape with the config (a cycle mode swaps the page picker for a
+    // dwell) and no page row depends on any of them; the page rows change only
+    // when a page does. Rebuilding the lot on every write flashed every checkbox
+    // in the list, and the panel's own cycling did it once a dwell.
+    private StackPanel? _displayCfgHost;
+    private StackPanel? _displayPagesHost;
+    private StackPanel? _displayPagesList;
+    private TextBlock? _displayWarning;
+    private ComboBox? _displayHomePageCombo;
+    private readonly Dictionary<int, FrameworkElement> _displayPageRows = new();
+    private readonly Dictionary<int, Ellipse> _displayPageMarkers = new();
+
     // A display write blocks on the device's deferred-apply poll, and the view
     // model serializes them anyway (the config and page 0 share a poll key). Count
     // them rather than dropping an edit made while one is in flight: the rows are
@@ -51,6 +66,23 @@ public sealed partial class ControlSurfacesPanel
     // for. Poll it only while a display card is actually open.
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _displayPoll;
     private const int DisplayPollMs = 1000;
+
+    /// <summary>Drop every handle into a display card that is no longer in the
+    /// tree, so a later refresh fills nothing rather than a detached panel.</summary>
+    private void ClearDisplayHandles()
+    {
+        _displaySlot = -1;
+        _displayHost = null;
+        _displayCfgHost = null;
+        _displayPagesHost = null;
+        _displayPagesList = null;
+        _displayWarning = null;
+        _displayHomePageCombo = null;
+        _displayStateLabel = null;
+        _displayStateDetail = null;
+        _displayPageRows.Clear();
+        _displayPageMarkers.Clear();
+    }
 
     // ── Card body ────────────────────────────────────────────────────────────
 
@@ -78,8 +110,11 @@ public sealed partial class ControlSurfacesPanel
         UpdateDisplayPoll();
     }
 
-    /// <summary>Fill (or refill) the live-applying half of the display card: what
-    /// the panel rests on, how editing is armed, how it looks, and its pages.</summary>
+    /// <summary>Build (or rebuild) the whole live-applying half of the display
+    /// card. Its three parts refresh independently afterwards — see the field
+    /// declarations — so this runs only when the card itself is built, or when
+    /// something outside it moves everything at once (a group edit, which every
+    /// page's target picker lists).</summary>
     private void PopulateDisplayHost()
     {
         var host = _displayHost;
@@ -89,12 +124,36 @@ public sealed partial class ControlSurfacesPanel
         try
         {
             host.Children.Clear();
-            var cfg = _vm.CsDisplayCfg;
-
             // The rows below have no Apply button to carry a refusal, so the last
-            // one the device turned down is stated here until the next write.
-            if (_vm.CsDisplayLastStatus != CsStatus.Success)
-                host.Children.Add(WarningLine(CsStatus.Message(_vm.CsDisplayLastStatus)));
+            // one the device turned down is stated here until the next write. It
+            // keeps its place in the tree and hides, so saying it costs no layout.
+            _displayWarning = WarningLine("");
+            host.Children.Add(_displayWarning);
+            _displayCfgHost = new StackPanel { Spacing = 8 };
+            host.Children.Add(_displayCfgHost);
+            _displayPagesHost = new StackPanel { Spacing = 8 };
+            host.Children.Add(_displayPagesHost);
+        }
+        finally { _building = wasBuilding; }
+
+        RefreshDisplayWarning();
+        PopulateDisplayCfgHost();
+        PopulateDisplayPagesHost();
+    }
+
+    /// <summary>What the panel rests on, how editing is armed, and how it looks.
+    /// Refilled on a config write, which is the only thing that changes it.</summary>
+    private void PopulateDisplayCfgHost()
+    {
+        var host = _displayCfgHost;
+        if (host == null) return;
+        bool wasBuilding = _building;
+        _building = true;
+        try
+        {
+            host.Children.Clear();
+            _displayHomePageCombo = null;
+            var cfg = _vm.CsDisplayCfg;
 
             host.Children.Add(SectionHeading("Behavior"));
             host.Children.Add(BuildDisplayModeRow(cfg));
@@ -143,12 +202,94 @@ public sealed partial class ControlSurfacesPanel
                     "Value Alignment", "Horizontal placement of the current page's value.",
                     cfg.ValueAlign, (c, a) => c.ValueAlign = a));
             }
+        }
+        finally { _building = wasBuilding; }
+    }
+
+    /// <summary>The page list. Refilled only when a page appears or vanishes; a
+    /// page edited in place replaces its own row, and the on-screen marker moves
+    /// without rebuilding anything at all.</summary>
+    private void PopulateDisplayPagesHost()
+    {
+        var host = _displayPagesHost;
+        if (host == null) return;
+        bool wasBuilding = _building;
+        _building = true;
+        try
+        {
+            host.Children.Clear();
+            _displayPageRows.Clear();
+            _displayPageMarkers.Clear();
 
             host.Children.Add(SectionHeading("Dashboard Pages"));
-            foreach (int i in ActiveDisplayPages()) host.Children.Add(BuildDisplayPageCard(i));
+            // On the same rhythm as the rows above: a list of pickers has no
+            // business being denser than the pickers it follows.
+            var pages = new StackPanel { Spacing = 8 };
+            _displayPagesList = pages;
+            foreach (int i in ActiveDisplayPages())
+            {
+                var row = BuildDisplayPageRow(i);
+                _displayPageRows[i] = row;
+                pages.Children.Add(row);
+            }
+            host.Children.Add(pages);
             host.Children.Add(BuildDisplayAddPageRow());
         }
         finally { _building = wasBuilding; }
+    }
+
+    /// <summary>Swap one page's row for a freshly built one, leaving the rest of
+    /// the list alone.</summary>
+    private void RefreshDisplayPageRow(int index)
+    {
+        if (_displayPagesList == null || !_displayPageRows.TryGetValue(index, out var old)
+            || _displayPagesList.Children.IndexOf(old) is var pos && pos < 0)
+        {
+            PopulateDisplayPagesHost();
+            return;
+        }
+        bool wasBuilding = _building;
+        _building = true;
+        try
+        {
+            var row = BuildDisplayPageRow(index);
+            _displayPageRows[index] = row;
+            _displayPagesList.Children[pos] = row;
+        }
+        finally { _building = wasBuilding; }
+    }
+
+    /// <summary>Move the on-screen marker. The panel cycles on its own, so this
+    /// runs once a second while a display card is open — nothing is rebuilt for
+    /// it, only two dots change opacity.</summary>
+    private void RefreshDisplayPageMarkers()
+    {
+        byte current = _vm.CsDisplayStatus.CurrentPage;
+        foreach (var (index, marker) in _displayPageMarkers)
+        {
+            bool onScreen = current == index;
+            marker.Opacity = onScreen ? 1 : 0;
+            ToolTipService.SetToolTip(marker, onScreen ? "Currently on screen" : null);
+        }
+    }
+
+    /// <summary>State the last refused live write, or take the line away.</summary>
+    private void RefreshDisplayWarning()
+    {
+        if (_displayWarning == null) return;
+        bool refused = _vm.CsDisplayLastStatus != CsStatus.Success;
+        _displayWarning.Text = refused ? CsStatus.Message(_vm.CsDisplayLastStatus) : "";
+        _displayWarning.Visibility = refused ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>Restate the home-page picker's captions after a page edit: it
+    /// lists pages by what they show. Items and selection are untouched, so no
+    /// SelectionChanged fires.</summary>
+    private void RelabelDisplayHomePages()
+    {
+        if (_displayHomePageCombo == null) return;
+        foreach (var o in _displayHomePageCombo.Items)
+            if (o is ComboBoxItem item && item.Tag is int i) item.Content = DisplayPageMenuLabel(i);
     }
 
     // ── Wiring rows ──────────────────────────────────────────────────────────
@@ -250,7 +391,9 @@ public sealed partial class ControlSurfacesPanel
 
     /// <summary>Live panel state. A miswired or absent module announces itself
     /// through the I2C abort counter: the driver keeps retrying, so the count
-    /// climbs rather than the feature failing silently.</summary>
+    /// climbs rather than the feature failing silently. The number itself tells
+    /// nobody anything they can act on, so it only decides whether the wiring
+    /// advice shows.</summary>
     private FrameworkElement BuildDisplayStateRow()
     {
         var stack = new StackPanel { Spacing = 1 };
@@ -281,8 +424,7 @@ public sealed partial class ControlSurfacesPanel
         _displayStateLabel.Text = text;
         _displayStateLabel.Foreground = new SolidColorBrush(colour);
         _displayStateDetail.Text = st.NakCount > 0
-            ? $"{st.NakCount} I2C error{(st.NakCount == 1 ? "" : "s")} so far. "
-              + "Check wiring, pull-up resistors, and the address."
+            ? "Check wiring, pull-up resistors, and the address."
             : "Reported by the device.";
     }
 
@@ -326,6 +468,7 @@ public sealed partial class ControlSurfacesPanel
             _ = ApplyDisplayCfgAsync(next);
         };
         ToolTipService.SetToolTip(combo, "Which page rests on screen.");
+        _displayHomePageCombo = combo;
         return DisplayRow("Page", combo);
     }
 
@@ -445,71 +588,92 @@ public sealed partial class ControlSurfacesPanel
             : $"Page {index + 1} (empty)";
     }
 
-    private FrameworkElement BuildDisplayPageCard(int index)
+    /// <summary>One page, on one row: its ordinal and a marker for the page the
+    /// panel is showing, what it shows, and the options that apply to the value.
+    /// A page is a {noun, target} and two flags — a card per page spent six rows
+    /// on four fields, and a list of them is easier to read across than down.</summary>
+    private FrameworkElement BuildDisplayPageRow(int index)
     {
         var page = _vm.CsDisplayPages[index];
-        var card = new Border
-        {
-            CornerRadius = new CornerRadius(6),
-            BorderThickness = new Thickness(1),
-            BorderBrush = Application.Current.Resources.TryGetValue("CardStrokeColorDefaultBrush", out var sb) && sb is Brush sbr
-                ? sbr : new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
-            Padding = new Thickness(10, 8, 10, 10),
-        };
-        var panel = new StackPanel { Spacing = 8 };
+        var nd = _vm.CsNounDescFor(page.Noun);
 
-        // Head: the page's number, a marker while the panel is showing it, remove.
-        var head = new Grid { ColumnSpacing = 8 };
-        head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var title = new TextBlock
+        var grid = new Grid { ColumnSpacing = 10 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                    // ordinal + marker
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // pickers
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                    // options + remove
+
+        // The ordinal is what the "Page" picker up in Behavior names, and the
+        // marker holds its column whether or not this page is the one on screen,
+        // so the pickers beside it stay in a line instead of shuffling sideways
+        // every time the panel cycles.
+        bool onScreen = _vm.CsDisplayStatus.CurrentPage == index;
+        var lead = new StackPanel
         {
-            Text = $"Page {index + 1}",
-            FontWeight = FontWeights.SemiBold,
-            FontSize = 12,
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        Grid.SetColumn(title, 0);
-        head.Children.Add(title);
-        if (_vm.CsDisplayStatus.CurrentPage == index)
+        lead.Children.Add(new TextBlock
         {
-            var onScreen = new TextBlock
-            {
-                Text = "On screen",
-                FontSize = 11,
-                VerticalAlignment = VerticalAlignment.Center,
-                Foreground = new SolidColorBrush(Color.FromArgb(255, 100, 200, 140)),
-            };
-            Grid.SetColumn(onScreen, 1);
-            head.Children.Add(onScreen);
-        }
-        var del = new Button
+            Text = $"{index + 1}",
+            FontSize = 11,
+            Width = 14,
+            TextAlignment = TextAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = SecondaryBrush,
+        });
+        var marker = new Ellipse
         {
-            Content = new FontIcon { Glyph = "", FontSize = 12 },
-            Padding = new Thickness(6, 2, 6, 2),
-            IsEnabled = !DisplayApplying,
+            Width = 6,
+            Height = 6,
+            VerticalAlignment = VerticalAlignment.Center,
+            Fill = new SolidColorBrush(Color.FromArgb(255, 100, 200, 140)),
+            Opacity = onScreen ? 1 : 0,
         };
-        ToolTipService.SetToolTip(del, "Remove this page");
-        del.Click += (_, _) => _ = ApplyDisplayPageAsync(index, new CsDisplayPage());
-        Grid.SetColumn(del, 2);
-        head.Children.Add(del);
-        panel.Children.Add(head);
+        if (onScreen) ToolTipService.SetToolTip(marker, "Currently on screen");
+        _displayPageMarkers[index] = marker;
+        lead.Children.Add(marker);
+        Grid.SetColumn(lead, 0);
+        grid.Children.Add(lead);
 
-        panel.Children.Add(BuildDisplayPageNounRow(index, page));
-        var nd = _vm.CsNounDescFor(page.Noun);
+        // Fixed picker widths, so the target column starts at the same place on
+        // every row however wide the item beside it reads.
+        var pickers = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        pickers.Children.Add(BuildDisplayPageNounCombo(index, page));
         if (nd != null && nd.IsTargeted)
         {
-            panel.Children.Add(BuildDisplayPageTargetRow(index, page, nd));
-            if (nd.HasBand) panel.Children.Add(BuildDisplayPageBandRow(index, page));
+            pickers.Children.Add(BuildDisplayPageTargetCombo(index, page, nd));
+            if (nd.HasBand) pickers.Children.Add(BuildDisplayPageBandCombo(index, page));
         }
+        Grid.SetColumn(pickers, 1);
+        grid.Children.Add(pickers);
 
+        // The value options ride in this row rather than one of their own: on a
+        // page with no target they were a whole row holding a single checkbox.
+        // Both labels are the same on every row, so they land in a column down
+        // the list without being given a width.
+        //
+        // The group stands off the pickers by the same margin the remove button
+        // stands off the group. A row carrying a band picker fills the width, so
+        // without it the first checkbox butts straight up against a picker.
+        var options = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 10,
+            Margin = new Thickness(14, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
         // Large text is a graphic-OLED feature; character modules ignore the flag.
         // Read the model off this card's own draft, so switching panel type shows
         // the right options before the wiring change is applied.
         int model = _displaySlot >= 0 ? _drafts[_displaySlot].Index : 0;
         if (CsDisplayModels.IsGraphic(model))
-            panel.Children.Add(DisplayPageFlagToggle(index, CsDisplayPageFlags.Large, "Large value",
+            options.Children.Add(DisplayPageFlagToggle(index, CsDisplayPageFlags.Large, "Large value",
                 "Renders the value pixel-doubled.", true));
         if (_vm.CsDisplayBarSupported)
         {
@@ -517,19 +681,36 @@ public sealed partial class ControlSurfacesPanel
             // keeps its place, and the tooltip says why it is out instead of
             // leaving a silent gap.
             bool allowed = DisplayPageBarAllowed(page.Noun);
-            panel.Children.Add(DisplayPageFlagToggle(index, CsDisplayPageFlags.Bar, "Level bar",
+            options.Children.Add(DisplayPageFlagToggle(index, CsDisplayPageFlags.Bar, "Level bar",
                 allowed ? DisplayBarTip(CsDisplayModels.IsGraphic(model), model)
                         : "Only a value with a range can be drawn as a bar.",
                 allowed));
         }
+        var del = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE74D", FontSize = 12 },
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6, 4, 6, 4),
+            // Stand clear of the two checkboxes: those are settings on the page,
+            // this throws the page away, and at the stack's own spacing the
+            // nearer box sits close enough to catch a stray click.
+            Margin = new Thickness(14, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            IsEnabled = !DisplayApplying,
+        };
+        ToolTipService.SetToolTip(del, "Remove this page");
+        del.Click += (_, _) => _ = ApplyDisplayPageAsync(index, new CsDisplayPage());
+        options.Children.Add(del);
+        Grid.SetColumn(options, 2);
+        grid.Children.Add(options);
 
-        card.Child = panel;
-        return card;
+        return grid;
     }
 
-    private FrameworkElement BuildDisplayPageNounRow(int index, CsDisplayPage page)
+    private ComboBox BuildDisplayPageNounCombo(int index, CsDisplayPage page)
     {
-        var combo = new ComboBox { MinWidth = 220 };
+        var combo = DisplayPageCombo(200);
         int sel = -1;
         foreach (var (noun, _) in DisplayPageNouns())
         {
@@ -552,13 +733,14 @@ public sealed partial class ControlSurfacesPanel
             if (!DisplayPageBarAllowed((byte)noun)) next.SetFlag(CsDisplayPageFlags.Bar, false);
             _ = ApplyDisplayPageAsync(index, next);
         };
-        return DisplayRow("Shows", combo);
+        ToolTipService.SetToolTip(combo, "What this page shows.");
+        return combo;
     }
 
-    private FrameworkElement BuildDisplayPageTargetRow(int index, CsDisplayPage page, CsNounDesc nd)
+    private ComboBox BuildDisplayPageTargetCombo(int index, CsDisplayPage page, CsNounDesc nd)
     {
         var groups = CompatibleGroups(nd).ToList();
-        var combo = new ComboBox { MinWidth = 220 };
+        var combo = DisplayPageCombo(160);
         for (int i = 0; i < nd.TargetCount; i++)
             combo.Items.Add(new ComboBoxItem { Content = ChannelLabel(nd.TargetKind, i), Tag = i });
         foreach (int g in groups)
@@ -575,12 +757,14 @@ public sealed partial class ControlSurfacesPanel
             else if (it.Tag is GroupTag g) { next.SetFlag(CsDisplayPageFlags.Group, true); next.Target = (byte)g.Index; }
             _ = ApplyDisplayPageAsync(index, next);
         };
-        return DisplayRow(groups.Count > 0 ? "Target" : "Channel", combo);
+        ToolTipService.SetToolTip(combo,
+            groups.Count > 0 ? "Which channel or group this page shows." : "Which channel this page shows.");
+        return combo;
     }
 
-    private FrameworkElement BuildDisplayPageBandRow(int index, CsDisplayPage page)
+    private ComboBox BuildDisplayPageBandCombo(int index, CsDisplayPage page)
     {
-        var combo = new ComboBox { MinWidth = 180 };
+        var combo = DisplayPageCombo(120);
         var opts = BandOptions(page.Noun).ToList();
         int sel = 0;
         for (int i = 0; i < opts.Count; i++)
@@ -597,17 +781,30 @@ public sealed partial class ControlSurfacesPanel
             next.Index = (byte)band;
             _ = ApplyDisplayPageAsync(index, next);
         };
-        return DisplayRow("Band", combo);
+        ToolTipService.SetToolTip(combo, "Which filter band this page shows.");
+        return combo;
     }
+
+    /// <summary>A picker sized for the page list: a set width so the columns line
+    /// up down the rows, and the compact height the row depends on.</summary>
+    private ComboBox DisplayPageCombo(double width) => new()
+    {
+        Width = width,
+        MinWidth = 0,
+        FontSize = 12,
+        IsEnabled = !DisplayApplying && _vm.IsDeviceConnected,
+    };
 
     private CheckBox DisplayPageFlagToggle(int index, CsDisplayPageFlags flag, string label,
                                            string tip, bool enabled)
     {
         var cb = new CheckBox
         {
-            Content = label,
+            Content = new TextBlock { Text = label, FontSize = 12 },
+            MinWidth = 0,
             IsChecked = (_vm.CsDisplayPages[index].Flags & flag) != 0,
             IsEnabled = enabled && !DisplayApplying,
+            VerticalAlignment = VerticalAlignment.Center,
         };
         void Toggle(bool on)
         {
@@ -697,22 +894,39 @@ public sealed partial class ControlSurfacesPanel
         _displayWrites++;
         try { await Task.Run(() => _vm.SetCsDisplayCfg(cfg)); }
         finally { _displayWrites--; }
-        if (_displayWrites == 0) AfterDisplayWrite();
+        if (_displayWrites > 0) return;
+        // The config's own rows change shape with it; no page row does.
+        PopulateDisplayCfgHost();
+        AfterDisplayWrite();
     }
 
     private async Task ApplyDisplayPageAsync(int index, CsDisplayPage page)
     {
+        bool wasActive = _vm.CsDisplayPages[index].IsActive;
+        byte wasNoun = _vm.CsDisplayPages[index].Noun;
         _displayWrites++;
         try { await Task.Run(() => _vm.SetCsDisplayPage(index, page)); }
         finally { _displayWrites--; }
-        if (_displayWrites == 0) AfterDisplayWrite();
+        if (_displayWrites > 0) return;
+
+        // Repaint the least that restates the truth. A row that appeared or
+        // vanished moves the list; a different item on the same row changes which
+        // pickers it needs; a device that kept something other than what was sent
+        // has to be shown. A flag the device took as sent is already on screen -
+        // rebuilding for it is what made every checkbox in the list flash.
+        var live = _vm.CsDisplayPages[index];
+        if (live.IsActive != wasActive) PopulateDisplayPagesHost();
+        else if (live.Noun != wasNoun || !live.WireEquals(page)) RefreshDisplayPageRow(index);
+        // A page is listed by what it shows, so the home-page picker follows it.
+        RelabelDisplayHomePages();
+        AfterDisplayWrite();
     }
 
-    /// <summary>Restate what the device kept: the rows, the panel's own state, and
-    /// the card's pending pill.</summary>
+    /// <summary>What every live write restates: a refusal, the panel's own state,
+    /// and the card's pending pill.</summary>
     private void AfterDisplayWrite()
     {
-        PopulateDisplayHost();
+        RefreshDisplayWarning();
         RefreshDisplayStateRow();
         RefreshStatusIndicators();
         UpdateDisplayPoll();
@@ -817,10 +1031,10 @@ public sealed partial class ControlSurfacesPanel
         bool alive = await Task.Run(() => _vm.RefreshCsDisplayStatus());
         if (!alive) { StopDisplayPoll(); return; }
         RefreshDisplayStateRow();
-        // Only the marker moves with the page, and redrawing the page list under
-        // an open picker would close it, so the list is only rebuilt when the
-        // panel has actually moved on.
-        if (_vm.CsDisplayStatus.CurrentPage != page) PopulateDisplayHost();
+        // Only the marker moves with the page. Rebuilding the list for it would
+        // close a picker the user had open, and in a cycle mode it would do that
+        // every dwell.
+        if (_vm.CsDisplayStatus.CurrentPage != page) RefreshDisplayPageMarkers();
     }
 
     // ── Wiring helpers ───────────────────────────────────────────────────────

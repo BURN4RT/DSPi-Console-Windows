@@ -50,12 +50,26 @@ public sealed partial class ControlSurfacesPanel : UserControl
     private readonly CsSection _section;
 
     /// <summary>Raised after an edit that another section's cards render — a group
-    /// renamed or cleared, a macro renamed, a binding's slot health changed. The
-    /// panel that made the change passes itself so it doesn't handle its own
+    /// added, renamed or cleared, a macro renamed, a binding's slot health changed.
+    /// The panel that made the change passes itself so it doesn't handle its own
     /// event; the others refresh in place.</summary>
     internal static event Action<ControlSurfacesPanel>? StateChanged;
 
-    private void RaiseStateChanged() => StateChanged?.Invoke(this);
+    // The event only reaches the panels that are mounted to hear it, and the
+    // settings shell shows one page at a time — so the page most likely to care
+    // is usually the detached one. (Add a group on Channel Groups and the target
+    // pickers on Control Surfaces are exactly that.) A generation counter travels
+    // with the event for them: each panel records the count it last refreshed at
+    // and catches up on the way back in.
+    private static int s_stateGeneration;
+    private int _seenStateGeneration;
+
+    private void RaiseStateChanged()
+    {
+        // The panel that made the change is current by definition.
+        _seenStateGeneration = ++s_stateGeneration;
+        StateChanged?.Invoke(this);
+    }
 
     // A panel only listens to ControlSurfacesReloaded while it's mounted, so a
     // revert (or a device push) that lands while you're on another page would
@@ -128,6 +142,7 @@ public sealed partial class ControlSurfacesPanel : UserControl
         InitializeComponent();
         HookReloadCounter(vm);
         _seenGeneration = s_reloadGeneration;
+        _seenStateGeneration = s_stateGeneration;
 
         // Subscriptions live on Loaded/Unloaded, not the constructor: the settings
         // shell caches page instances and detaches them from the visual tree when
@@ -155,10 +170,18 @@ public sealed partial class ControlSurfacesPanel : UserControl
         if (_seenGeneration != s_reloadGeneration)
         {
             _seenGeneration = s_reloadGeneration;
+            _seenStateGeneration = s_stateGeneration;
             SeedDrafts();
             BuildAll();
         }
-        else RefreshStatusIndicators();
+        else
+        {
+            // A whole reload reseeds everything; short of one, a group or macro
+            // edit made elsewhere still has to reach this page's pickers before
+            // it is shown again.
+            if (_seenStateGeneration != s_stateGeneration) RefreshForSiblingState();
+            RefreshStatusIndicators();
+        }
     }
 
     private void OnPanelUnloaded(object sender, RoutedEventArgs e)
@@ -178,10 +201,20 @@ public sealed partial class ControlSurfacesPanel : UserControl
         if (ReferenceEquals(source, this)) return;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (_section == CsSection.Bindings) RefreshGroupedBindingCards();
-            else RefreshGroupMacroIndicators();
+            RefreshForSiblingState();
             RefreshStatusIndicators();
         });
+    }
+
+    /// <summary>Rebuild what this section renders from another one's state: every
+    /// picker that lists groups. Which pickers those are depends on the section —
+    /// binding cards, remote buttons and display pages here, macro steps there.</summary>
+    private void RefreshForSiblingState()
+    {
+        _seenStateGeneration = s_stateGeneration;
+        if (_section == CsSection.Bindings) RefreshGroupedBindingCards();
+        else if (_section == CsSection.Macros) RefreshMacroStepCards();
+        else RefreshGroupMacroIndicators();
     }
 
     /// <summary>A channel was renamed (sidebar edit, preset load, or a device
@@ -307,10 +340,7 @@ public sealed partial class ControlSurfacesPanel : UserControl
             // The display card's own handles go with the cards: a rebuild that no
             // longer draws one would otherwise leave the config sections pointing
             // at a panel that is no longer in the tree.
-            _displaySlot = -1;
-            _displayHost = null;
-            _displayStateLabel = null;
-            _displayStateDetail = null;
+            ClearDisplayHandles();
 
             int shown = 0;
             for (int slot = 0; slot < _vm.CsSlotCount; slot++)
@@ -1670,10 +1700,7 @@ public sealed partial class ControlSurfacesPanel : UserControl
         if (slot == _displaySlot)
         {
             // The display card (which hosts the config and page sections) is gone.
-            _displaySlot = -1;
-            _displayHost = null;
-            _displayStateLabel = null;
-            _displayStateDetail = null;
+            ClearDisplayHandles();
             StopDisplayPoll();
         }
         if (slot == _irSectionSlot)
