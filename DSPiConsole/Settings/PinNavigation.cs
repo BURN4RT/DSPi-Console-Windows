@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -31,10 +32,13 @@ internal interface IPinHighlightPage
 /// The flash itself: a short accent ring around the control that sets the pin
 /// you clicked.
 ///
-/// <para>It pulses the control's own border rather than overlaying anything, so
-/// nothing has to be inserted into a page's visual tree to be highlighted, and
-/// the control is left exactly as it was found when the animation ends. A
-/// control with no border to pulse (a bare panel) blinks its opacity instead.</para>
+/// <para>It pulses the colour of the control's own border rather than overlaying
+/// anything, so nothing has to be inserted into a page's visual tree to be
+/// highlighted, and the control is left exactly as it was found when the
+/// animation ends. Colour only: thickness takes part in layout, so widening a
+/// border to make the ring bolder grows the control and nudges everything below
+/// it down the page, then drops it back when the flash ends. A control with no
+/// border to colour blinks its opacity instead, which is layout-neutral too.</para>
 /// </summary>
 internal static class PinFlash
 {
@@ -45,29 +49,47 @@ internal static class PinFlash
     {
         if (target == null) return;
         target.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = true });
-        if (target is Control control) PulseBorder(control); else PulseOpacity(target);
+        if (target is Control control && HasBorder(control)) PulseBorder(control);
+        else PulseOpacity(target);
     }
 
-    /// <summary>Ring the control in the accent colour and fade it out. The brush
-    /// is this animation's own instance, so animating its opacity cannot disturb
-    /// a brush the theme shares with everything else on the page.</summary>
+    /// <summary>Run the control's own border between its resting colour and the
+    /// accent. The brush is this animation's own instance, so animating it cannot
+    /// disturb one the theme shares with the rest of the page, and it starts and
+    /// ends on the resting colour so the border is never left looking wrong.</summary>
     private static void PulseBorder(Control control)
     {
         var previousBrush = control.BorderBrush;
-        var previousThickness = control.BorderThickness;
-        var flash = new SolidColorBrush(AccentColor());
-
+        var resting = previousBrush is SolidColorBrush solid ? solid.Color : Colors.Transparent;
+        var flash = new SolidColorBrush(resting);
         control.BorderBrush = flash;
-        control.BorderThickness = new Thickness(2);
 
-        var storyboard = Pulse(flash, "Opacity");
-        storyboard.Completed += (_, _) =>
+        var storyboard = new Storyboard();
+        var animation = new ColorAnimationUsingKeyFrames { EnableDependentAnimation = true };
+        var time = TimeSpan.Zero;
+        for (int i = 0; i < Pulses; i++)
         {
-            control.BorderBrush = previousBrush;
-            control.BorderThickness = previousThickness;
-        };
+            animation.KeyFrames.Add(ColorFrame(time, AccentColor()));
+            time += PulseLength / 2;
+            animation.KeyFrames.Add(ColorFrame(time, resting));
+            time += PulseLength / 2;
+        }
+        Storyboard.SetTarget(animation, flash);
+        Storyboard.SetTargetProperty(animation, "Color");
+        storyboard.Children.Add(animation);
+        storyboard.Completed += (_, _) => control.BorderBrush = previousBrush;
         storyboard.Begin();
     }
+
+    /// <summary>True when a control draws a border for the pulse to colour.</summary>
+    private static bool HasBorder(Control control)
+    {
+        var t = control.BorderThickness;
+        return t.Left > 0 || t.Top > 0 || t.Right > 0 || t.Bottom > 0;
+    }
+
+    private static LinearColorKeyFrame ColorFrame(TimeSpan at, Color value) =>
+        new() { KeyTime = KeyTime.FromTimeSpan(at), Value = value };
 
     /// <summary>The fallback for something with no border of its own: blink it.
     /// Restores the opacity it was found at rather than assuming 1.</summary>
@@ -90,26 +112,6 @@ internal static class PinFlash
         storyboard.Children.Add(animation);
         storyboard.Completed += (_, _) => target.Opacity = previous;
         storyboard.Begin();
-    }
-
-    /// <summary>Full, out, full … so the ring arrives immediately rather than
-    /// fading up after the page has already settled.</summary>
-    private static Storyboard Pulse(DependencyObject target, string property)
-    {
-        var storyboard = new Storyboard();
-        var animation = new DoubleAnimationUsingKeyFrames { EnableDependentAnimation = true };
-        var time = TimeSpan.Zero;
-        for (int i = 0; i < Pulses; i++)
-        {
-            animation.KeyFrames.Add(Frame(time, 1));
-            time += PulseLength / 2;
-            animation.KeyFrames.Add(Frame(time, 0));
-            time += PulseLength / 2;
-        }
-        Storyboard.SetTarget(animation, target);
-        Storyboard.SetTargetProperty(animation, property);
-        storyboard.Children.Add(animation);
-        return storyboard;
     }
 
     private static LinearDoubleKeyFrame Frame(TimeSpan at, double value) =>
