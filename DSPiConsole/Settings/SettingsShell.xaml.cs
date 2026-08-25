@@ -97,13 +97,13 @@ public sealed partial class SettingsShell : UserControl
         SyncOutputConfigStaged();
         try
         {
-            // Default landing page is Hardware › Output Assignment — it's the
-            // most-frequently-edited surface (per-output S/PDIF vs I²S +
-            // GPIO mapping) and matches what users open Settings to do most
-            // of the time. Fall back to the first registry-ordered available
-            // page if the output-assignment page isn't registered or isn't
-            // available (e.g. a future build that gates it on platform).
-            const string DefaultPageId = "hardware.output-assignment";
+            // Default landing page is System › Overview — it answers "what is
+            // the device doing with its pins" before you have picked a page,
+            // and every claim on it is a link to the page that sets it, so it
+            // works as a table of contents for the rest of the category.
+            // Fall back to the first registry-ordered available page if the
+            // overview isn't registered (e.g. its XAML failed to parse).
+            const string DefaultPageId = "hardware.overview";
             var landing = SettingsRegistry.Pages.FirstOrDefault(p =>
                               p.Id == DefaultPageId && p.IsAvailable(_vm))
                           ?? SettingsRegistry.Pages.FirstOrDefault(p =>
@@ -147,9 +147,9 @@ public sealed partial class SettingsShell : UserControl
                 Content = MakeNavContent(title, isCategory: true, out var catDot),
                 Icon = new FontIcon { Glyph = glyph },
                 SelectsOnInvoked = false,
-                // Hardware starts expanded — it's the category that holds
-                // the default landing page (Output Assignment, see
-                // OnShellLoaded) and the most-visited group overall, so
+                // System starts expanded — it's the category that holds
+                // the default landing page (Overview, see OnShellLoaded)
+                // and the most-visited group overall, so
                 // collapsing it just makes the user click it open on every
                 // Settings open. Other categories stay collapsed so the
                 // nav tree doesn't fill the sidebar by default.
