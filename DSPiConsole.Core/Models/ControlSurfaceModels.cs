@@ -3,12 +3,15 @@ using System;
 namespace DSPiConsole.Core.Models;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Control Surfaces + IR remote (firmware control_surfaces.h; caps v9, config v2,
+// Control Surfaces + IR remote (firmware control_surfaces.h; caps v13, config v2,
 // IR config v2, group/macro config v1). Physical GPIO controls (buttons, switches,
-// pots, encoders, LEDs, PWM LEDs) and an IR receiver with learned remote commands,
-// each bound to a DSP "noun" (parameter) + "action" (verb). Caps v9 adds target
-// groups (one control drives a named set of channels) and macros (a button fires a
-// short sequence of delayed steps). All wire structs are packed, little-endian.
+// pots, encoders, LEDs, PWM LEDs), an IR receiver with learned remote commands, and
+// an I2C character/OLED display, each bound to a DSP "noun" (parameter) + "action"
+// (verb). Caps v9 adds target groups (one control drives a named set of channels)
+// and macros (a button fires a short sequence of delayed steps); caps v10 adds the
+// display component, grouped IR commands and four nouns; v11 per-line display
+// alignment, v12 a per-LED brightness ceiling, v13 display level bars. All wire
+// structs are packed, little-endian.
 //
 // The whole editor is CAPS-DRIVEN: the firmware serves a capabilities header, a
 // per-type action/pin table, and a per-noun descriptor table over 0x86; the host
@@ -22,10 +25,14 @@ namespace DSPiConsole.Core.Models;
 public enum CsType : byte
 {
     None = 0, Button = 1, Switch = 2, Pot = 3, Encoder = 4,
-    Led = 5, LedPwm = 6, Ir = 7
+    Led = 5, LedPwm = 6, Ir = 7,
+    // caps v10: an I2C character or OLED panel. A container like the IR
+    // receiver — SDA, SCL, a model and an address — with what it shows held in
+    // a separate config record and page table.
+    Display = 8
 }
 
-/// <summary>DSP parameter a control drives or reflects (firmware CsNoun, 0..52).
+/// <summary>DSP parameter a control drives or reflects (firmware CsNoun, 0..56).
 /// The picker reads which nouns are available (and their ranges/units/targets)
 /// live from caps — this enum is for the few places that special-case a noun.</summary>
 public enum CsNoun : byte
@@ -51,7 +58,17 @@ public enum CsNoun : byte
     InputLevelMax = 51,
     // caps v9: an enum of macro slots. SET fires macro `value`; IND_EQUALS lights
     // while it runs. The live read is the running index, or 255 when idle.
-    Macro = 52
+    Macro = 52,
+    // caps v10. CpuLoad is read-only percent; the three display nouns are no-ops
+    // (and read idle) without a live display component, so they are valid to
+    // configure in advance — the same rule as IR commands before a receiver.
+    CpuLoad = 53,
+    DisplayPage = 54,   // enum: which page is on screen (steps skip empty slots)
+    DisplayEdit = 55,   // bool: editing of the shown page is armed
+    // Virtual: resolves whatever the panel is showing at event time and steps
+    // it with that item's own unit, step law and range. Value/step/range must
+    // stay zero, it takes no target, and a macro step may not carry it.
+    PageValue = 56
 }
 
 /// <summary>Verb a control performs (firmware CsAction). Value = bit position;
@@ -150,6 +167,10 @@ public static class CsStatus
     public const byte InvalidGroup = 0x1F;  // v9: group empty, out of range, or kind-mismatched
     public const byte InvalidMacro = 0x20;  // v9: bad macro index or step count
     public const byte InvalidStep = 0x21;   // v9: macro step record invalid
+    public const byte DisplayInUse = 0x22;  // v10: another slot already holds the display
+    public const byte PinNotI2c = 0x23;     // v10: SDA/SCL are not a valid same-instance pair
+    public const byte I2cInUse = 0x24;      // v10: that I2C instance belongs to the control interface
+    public const byte InvalidPage = 0x25;   // v10: display config or page record invalid
 
     /// <summary>Human-readable message for a CS status code.</summary>
     public static string Message(byte code) => code switch
@@ -175,6 +196,10 @@ public static class CsStatus
         InvalidGroup => "Group is empty or doesn't match this parameter's channels",
         InvalidMacro => "Invalid macro",
         InvalidStep => "Invalid macro step",
+        DisplayInUse => "A display is already configured",
+        PinNotI2c => "Those pins aren't an I2C pair — SDA must be an even GPIO",
+        I2cInUse => "That I2C bus belongs to the external control interface",
+        InvalidPage => "Invalid display setting or page",
         _ => $"Error 0x{code:X2}"
     };
 }
@@ -187,6 +212,7 @@ public static class CsLimits
     public const int MaxGroups = 8;        // caps v9
     public const int MaxMacros = 8;        // caps v9
     public const int MaxMacroSteps = 8;    // caps v9
+    public const int MaxDisplayPages = 16; // caps v10
     public const int NameLen = 32;          // per-slot name buffer, NUL-terminated
     public const byte GpioUnused = 0xFF;
     public const ushort CapsAll = 0xFFFF;   // 0x86 wValue selecting the caps header
@@ -194,9 +220,19 @@ public static class CsLimits
     public const byte LastSlotIrFlag = 0x80;// high bit of LastSlot marks an IR sub-slot
     public const byte LastSlotGroupFlag = 0x40; // v9: LastSlot tag for a group SET
     public const byte LastSlotMacroFlag = 0x60; // v9: LastSlot tag for a macro header/step SET
+    /// <summary>v10: LastSlot tag for a display SET — bare for the config,
+    /// 0x50 | page for one page. The config and page 0 therefore share a byte,
+    /// which is only unambiguous while one display write is in flight.</summary>
+    public const byte LastSlotDisplayFlag = 0x50;
     public const byte MacroIdle = 0xFF;     // CsExtStatusPacket.MacroRunning when nothing runs
     public const ushort MacroFireCancel = 0xFFFF; // 0x25 wValue cancelling the running macro
     public const byte NdfDeferred = 0x01;   // CsNounDesc.dflags
+    /// <summary>Highest per-LED brightness ceiling (caps v12). The field is a
+    /// percentage of full duty; 0 means unset, which is also full.</summary>
+    public const byte LedBrightMax = 100;
+    /// <summary>The dwell floor the firmware enforces in either cycle mode
+    /// (0.1 s units), rejected below it rather than clamped.</summary>
+    public const ushort DisplayMinDwell = 10;
 
     /// <summary>Macro step <c>pre_delay</c> is in 10 ms units; the indicator
     /// <c>on_delay</c>/<c>off_delay</c> pair is in 0.1 s units.</summary>
@@ -284,7 +320,7 @@ public static class CsWire
     };
 }
 
-/// <summary>Client-side display metadata for the 53 nouns (the wire format
+/// <summary>Client-side display metadata for the 57 nouns (the wire format
 /// carries no strings). Kept minimal — the picker still reads availability,
 /// ranges, units and targets from caps.</summary>
 public static class CsNounInfo
@@ -308,7 +344,13 @@ public static class CsNounInfo
         // caps v7
         "Loudness Reference SPL", "Loudness Intensity",
         // caps v8 / v9
-        "Input Level (Loudest)", "Macro"
+        "Input Level (Loudest)", "Macro",
+        // caps v10. The three display nouns name what the control does rather
+        // than leaning on a "Display" prefix — a page picker that reads "Show
+        // Page" and an arming button that reads "Allow Editing" each say it
+        // once. "Browse/Adjust" is both halves of PAGE_VALUE: gated behind
+        // arming it moves through pages, armed it moves the shown value.
+        "CPU Load", "Show Page", "Allow Editing", "Browse/Adjust"
     };
 
     // Value labels for the enum-kind nouns. The picker only uses as many entries
@@ -388,8 +430,9 @@ public static class CsNounInfo
         CsNoun.Preset or CsNoun.InputSource or CsNoun.Siggen or CsNoun.DacMuteTest
             or CsNoun.SampleRate or CsNoun.UsbStreaming or CsNoun.AdatActive
             or CsNoun.PresetReload or CsNoun.Macro => "System",
+        CsNoun.DisplayPage or CsNoun.DisplayEdit or CsNoun.PageValue => "Display",
         CsNoun.LgSync or CsNoun.LgPresent or CsNoun.LgMuted or CsNoun.SpdifLock => "LG / S/PDIF",
-        CsNoun.Clip or CsNoun.ClipCh => "Status",
+        CsNoun.Clip or CsNoun.ClipCh or CsNoun.CpuLoad => "Status",
         _ => "Other"
     };
 }
@@ -414,7 +457,13 @@ public sealed class CsBinding
     public byte Event;          // @6  CsEvent (buttons); 0 otherwise
     public byte Target;         // @7  channel address
     public byte Index;          // @8  filter band (DSP_BAND nouns)
-    // @9 reserved
+    /// <summary>@9 caps v12: brightness ceiling as a percentage of full duty
+    /// (1..100; 0 = unset = full), carved from the byte that was reserved. It
+    /// scales the computed duty rather than clipping it, so an IND_LEVEL meter
+    /// keeps its whole sweep and only its top end moves. LedPwm only — the
+    /// firmware rejects a non-zero value on any other type, as a pre-v12 device
+    /// does for any value at all.</summary>
+    public byte BaseBright;
     public short Value;         // @10 SET/MOMENTARY / IND comparand (unit-encoded)
     public short Step;          // @12 STEP/INC/DEC size; 0 = unit default
     public short RangeMin;      // @14 pot/IND_LEVEL span low; both 0 = full range
@@ -444,7 +493,7 @@ public sealed class CsBinding
         b[6] = Event;
         b[7] = Target;
         b[8] = Index;
-        // b[9] reserved
+        b[9] = BaseBright;
         BitConverter.GetBytes(Value).CopyTo(b, 10);
         BitConverter.GetBytes(Step).CopyTo(b, 12);
         BitConverter.GetBytes(RangeMin).CopyTo(b, 14);
@@ -468,6 +517,7 @@ public sealed class CsBinding
             Event = d[6],
             Target = d[7],
             Index = d[8],
+            BaseBright = d[9],
             Value = BitConverter.ToInt16(d, 10),
             Step = BitConverter.ToInt16(d, 12),
             RangeMin = BitConverter.ToInt16(d, 14),
@@ -502,8 +552,8 @@ public sealed class IrCommand
 
     public byte Noun;           // @0  CsNoun
     public byte Action;         // @1  CsAction (button subset: Inc/Dec/Toggle/Set/Trigger/Momentary)
-    public CsFlags Flags;       // @2  Wrap | Repeat only
-    public byte Target;         // @3  channel address
+    public CsFlags Flags;       // @2  Wrap | Repeat, plus Group since caps v10
+    public byte Target;         // @3  channel address, or a group index under Group
     public byte Index;          // @4  filter band
     public CsIrProto Proto;     // @5  0 = empty sub-slot
     public short Value;         // @6  SET/MOMENTARY target (unit-encoded)
@@ -512,6 +562,11 @@ public sealed class IrCommand
     public uint Code;           // @12 learned code, LE; 0 = never learned
 
     public bool IsConfigured => Proto != CsIrProto.None;
+
+    /// <summary>True when <see cref="Target"/> is a group index rather than a
+    /// channel (caps v10). A pre-v10 firmware rejects the record at validation,
+    /// so such a sub-slot simply loads inactive there.</summary>
+    public bool IsGrouped => (Flags & CsFlags.Group) != 0;
 
     public byte[] ToBytes()
     {
@@ -805,6 +860,299 @@ public sealed class CsExtStatusPacket
     }
 }
 
+// -----------------------------------------------------------------------------
+// I2C display (caps v10; control_surfaces_display_spec.md)
+//
+// The panel itself is an ordinary binding of type Display — SDA, SCL, a model
+// and an address. What it shows lives apart from it: one device-global config
+// record and a table of pages, each page a {noun, target} drawn from the same
+// noun table the bindings use, so anything a control can drive a page can show.
+// Both are covered by the same live preview and the same CS Save / Revert.
+// -----------------------------------------------------------------------------
+
+/// <summary>What the panel rests on between changes (firmware CsDisplayCfg.mode).</summary>
+public enum CsDisplayMode : byte
+{
+    Fixed = 0,          // show CsDisplayCfg.HomePage
+    CycleSelected = 1,  // rotate the active pages at Dwell
+    CycleAll = 2        // rotate every displayable noun; no page table needed
+}
+
+/// <summary>CsDisplayCfg.flags. Bits 3:2 and 5:4 are the two 2-bit alignment
+/// fields (caps v11), exposed as <see cref="CsDisplayCfg.LabelAlign"/> and
+/// <see cref="CsDisplayCfg.ValueAlign"/> rather than read as raw bits.</summary>
+[Flags]
+public enum CsDisplayCfgFlags : byte
+{
+    None = 0,
+    OverlayAny = 0x01,      // the pop-up also covers unconfigured changes
+    EditGated = 0x02,       // PageValue adjusts only while editing is armed
+    LabelAlignMask = 0x0C,  // v11
+    ValueAlignMask = 0x30   // v11
+}
+
+/// <summary>One display line's horizontal alignment (caps v11). Encoding 3 is
+/// reserved and rejected.</summary>
+public enum CsDisplayAlign : byte { Left = 0, Centre = 1, Right = 2 }
+
+/// <summary>CsDisplayPage.flags. An all-zero record is an empty slot.</summary>
+[Flags]
+public enum CsDisplayPageFlags : byte
+{
+    None = 0,
+    Active = 0x01,  // slot in use
+    Group = 0x02,   // `Target` is a group index
+    Large = 0x04,   // pixel-doubled value on the graphic OLEDs
+    /// <summary>caps v13: draw a level bar for the value. Continuous nouns only
+    /// — the bar plots the value inside the noun's own range, which a bool or an
+    /// enum has none of, and the firmware rejects the whole page if one carries
+    /// it.</summary>
+    Bar = 0x08
+}
+
+/// <summary>CsDisplayStatus.init_state — how far the panel's driver has got.</summary>
+public enum CsDisplayInitState : byte { Down = 0, Starting = 1, Live = 2, Error = 3 }
+
+/// <summary>CsDisplayStatus.flags.</summary>
+[Flags]
+public enum CsDisplayStatusFlags : byte { None = 0, Overlay = 0x01, EditArmed = 0x02 }
+
+/// <summary>Panel model — CsBinding.Index on a Display slot. Wire and flash
+/// persistent, so these are never renumbered; geometry and bus speed are fixed
+/// per model by the firmware driver.</summary>
+public enum CsDisplayModel : byte
+{
+    None = 0,
+    Lcd1602 = 1,          // HD44780 + PCF8574 backpack, 16x2
+    Lcd2004 = 2,          // HD44780 + PCF8574 backpack, 20x4
+    CharOled16x2 = 3,     // US2066 / RW1063
+    CharOled20x2 = 4,
+    CharOled20x4 = 5,
+    Ssd1306_128x64 = 6,   // graphic: 21x8 small font, 12 large columns
+    Ssd1306_128x32 = 7,
+    Sh1106_128x64 = 8
+}
+
+/// <summary>Client-side names and traits for the panel models (the wire format
+/// carries no strings for them).</summary>
+public static class CsDisplayModels
+{
+    public const int Count = 9;   // including None at 0
+
+    public static string Name(int model) => (CsDisplayModel)model switch
+    {
+        CsDisplayModel.Lcd1602 => "LCD 16x2 (HD44780)",
+        CsDisplayModel.Lcd2004 => "LCD 20x4 (HD44780)",
+        CsDisplayModel.CharOled16x2 => "Character OLED 16x2",
+        CsDisplayModel.CharOled20x2 => "Character OLED 20x2",
+        CsDisplayModel.CharOled20x4 => "Character OLED 20x4",
+        CsDisplayModel.Ssd1306_128x64 => "OLED 128x64 (SSD1306)",
+        CsDisplayModel.Ssd1306_128x32 => "OLED 128x32 (SSD1306)",
+        CsDisplayModel.Sh1106_128x64 => "OLED 128x64 (SH1106)",
+        _ => $"Model {model}",
+    };
+
+    /// <summary>The address a model answers on when the binding stores 0.</summary>
+    public static byte DefaultAddress(int model) =>
+        (CsDisplayModel)model is CsDisplayModel.Lcd1602 or CsDisplayModel.Lcd2004
+            ? (byte)0x27 : (byte)0x3C;
+
+    /// <summary>True for the graphic OLEDs — the only models with a large font to
+    /// render, and the only ones that draw a level bar without spending a row.</summary>
+    public static bool IsGraphic(int model) => model >= (int)CsDisplayModel.Ssd1306_128x64;
+
+    /// <summary>True for the four-row character panels, which have a row to spare
+    /// for a level bar and so keep the value on a line of its own.</summary>
+    public static bool HasSpareRow(int model) =>
+        (CsDisplayModel)model is CsDisplayModel.Lcd2004 or CsDisplayModel.CharOled20x4;
+
+    /// <summary>The addresses worth offering: the two model defaults plus the
+    /// SSD1306 / SH1106 alternates a jumper selects.</summary>
+    public static readonly byte[] CommonAddresses = { 0x27, 0x3C, 0x3D, 0x3E, 0x3F };
+}
+
+/// <summary>The 12-byte CsDisplayCfg wire struct (REQ_SET/GET_CS_DISPLAY_CFG):
+/// what the panel rests on when nothing has just changed, how long a change pops
+/// up for, and how the two lines are placed. Timing fields are in 0.1 s units,
+/// like the indicator delays.</summary>
+public sealed class CsDisplayCfg
+{
+    public const int WireSize = 12;
+    /// <summary>The GET response is a 4-byte limits header then the config.</summary>
+    public const int GetWireSize = 16;
+
+    public CsDisplayMode Mode;          // @0
+    public byte HomePage;               // @1  page shown in Fixed mode
+    public ushort Dwell = 30;           // @2  rotation period, 0.1 s units
+    public ushort OverlayHold = 20;     // @4  pop-up hold, 0.1 s units; 0 = no pop-up
+    public byte Brightness;             // @6  OLED contrast; 0 = the driver default
+    public CsDisplayCfgFlags Flags;     // @7
+    public ushort EditTimeout = 100;    // @8  edit auto-disarm, 0.1 s units; 0 = manual
+    // @10..11 reserved
+
+    /// <summary>Horizontal placement of the label line (caps v11), one of the two
+    /// 2-bit fields packed into <see cref="Flags"/>.</summary>
+    public CsDisplayAlign LabelAlign
+    {
+        get => (CsDisplayAlign)(((byte)Flags & (byte)CsDisplayCfgFlags.LabelAlignMask) >> 2);
+        set => Flags = (CsDisplayCfgFlags)(((byte)Flags & ~(byte)CsDisplayCfgFlags.LabelAlignMask)
+                                           | (((byte)value << 2) & (byte)CsDisplayCfgFlags.LabelAlignMask));
+    }
+
+    /// <summary>Horizontal placement of the value line. Centre is the one setting
+    /// that keeps the value on the same columns armed and unarmed: the edit
+    /// markers claim the outer column of each side either way.</summary>
+    public CsDisplayAlign ValueAlign
+    {
+        get => (CsDisplayAlign)(((byte)Flags & (byte)CsDisplayCfgFlags.ValueAlignMask) >> 4);
+        set => Flags = (CsDisplayCfgFlags)(((byte)Flags & ~(byte)CsDisplayCfgFlags.ValueAlignMask)
+                                           | (((byte)value << 4) & (byte)CsDisplayCfgFlags.ValueAlignMask));
+    }
+
+    public bool HasFlag(CsDisplayCfgFlags f) => (Flags & f) != 0;
+
+    public void SetFlag(CsDisplayCfgFlags f, bool on)
+    {
+        if (on) Flags |= f; else Flags &= ~f;
+    }
+
+    public byte[] ToBytes()
+    {
+        var b = new byte[WireSize];
+        b[0] = (byte)Mode;
+        b[1] = HomePage;
+        BitConverter.GetBytes(Dwell).CopyTo(b, 2);
+        BitConverter.GetBytes(OverlayHold).CopyTo(b, 4);
+        b[6] = Brightness;
+        b[7] = (byte)Flags;
+        BitConverter.GetBytes(EditTimeout).CopyTo(b, 8);
+        return b;
+    }
+
+    /// <summary>Parse the config at <paramref name="offset"/> — 0 in a SET
+    /// payload, 4 in the GET response behind its limits header.</summary>
+    public static CsDisplayCfg? FromBytes(byte[] d, int offset = 0)
+    {
+        if (d == null || d.Length < offset + WireSize) return null;
+        return new CsDisplayCfg
+        {
+            Mode = (CsDisplayMode)d[offset],
+            HomePage = d[offset + 1],
+            Dwell = BitConverter.ToUInt16(d, offset + 2),
+            OverlayHold = BitConverter.ToUInt16(d, offset + 4),
+            Brightness = d[offset + 6],
+            Flags = (CsDisplayCfgFlags)d[offset + 7],
+            EditTimeout = BitConverter.ToUInt16(d, offset + 8),
+        };
+    }
+
+    public CsDisplayCfg Clone() => (CsDisplayCfg)MemberwiseClone();
+
+    public bool WireEquals(CsDisplayCfg other)
+    {
+        if (other == null) return false;
+        var a = ToBytes();
+        var b = other.ToBytes();
+        for (int i = 0; i < WireSize; i++)
+            if (a[i] != b[i]) return false;
+        return true;
+    }
+}
+
+/// <summary>The 4-byte CsDisplayPage wire struct (REQ_SET/GET_CS_DISPLAY_PAGE):
+/// one item the panel can rest on or rotate through. An all-zero record clears
+/// the slot, and the firmware requires an inactive record to be exactly that.</summary>
+public sealed class CsDisplayPage
+{
+    public const int WireSize = 4;
+
+    public byte Noun;                 // @0  CsNoun to show
+    public byte Target;               // @1  channel, or a group index under Group
+    public byte Index;                // @2  filter band for DSP_BAND nouns
+    public CsDisplayPageFlags Flags;  // @3
+
+    public bool IsActive => (Flags & CsDisplayPageFlags.Active) != 0;
+    public bool IsGrouped => (Flags & CsDisplayPageFlags.Group) != 0;
+    public bool IsLarge => (Flags & CsDisplayPageFlags.Large) != 0;
+    public bool HasBar => (Flags & CsDisplayPageFlags.Bar) != 0;
+
+    public void SetFlag(CsDisplayPageFlags f, bool on)
+    {
+        if (on) Flags |= f; else Flags &= ~f;
+    }
+
+    public byte[] ToBytes() => new[] { Noun, Target, Index, (byte)Flags };
+
+    public static CsDisplayPage? FromBytes(byte[] d)
+    {
+        if (d == null || d.Length < WireSize) return null;
+        return new CsDisplayPage
+        {
+            Noun = d[0], Target = d[1], Index = d[2],
+            Flags = (CsDisplayPageFlags)d[3],
+        };
+    }
+
+    public CsDisplayPage Clone() => (CsDisplayPage)MemberwiseClone();
+
+    public bool WireEquals(CsDisplayPage other) =>
+        other != null && Noun == other.Noun && Target == other.Target
+        && Index == other.Index && Flags == other.Flags;
+}
+
+/// <summary>The 8-byte CsDisplayStatus (REQ_GET_CS_DISPLAY_STATUS): live panel
+/// state. <see cref="NakCount"/> is how a miswired or absent module announces
+/// itself — the driver keeps retrying, so the abort count climbs rather than the
+/// feature failing silently.</summary>
+public sealed class CsDisplayStatus
+{
+    public const int WireSize = 8;
+
+    /// <summary>CurrentPage when nothing (or a synthesized pop-up) is showing.</summary>
+    public const byte PageNone = 0xFF;
+
+    public CsDisplayInitState InitState;
+    public byte CurrentPage = PageNone;
+    public CsDisplayStatusFlags Flags;
+    public byte Model;
+    public ushort NakCount;     // saturating count of I2C aborts
+
+    public bool IsLive => InitState == CsDisplayInitState.Live;
+    public bool OverlayShowing => (Flags & CsDisplayStatusFlags.Overlay) != 0;
+    public bool EditArmed => (Flags & CsDisplayStatusFlags.EditArmed) != 0;
+
+    public static CsDisplayStatus? FromBytes(byte[] d)
+    {
+        if (d == null || d.Length < WireSize) return null;
+        return new CsDisplayStatus
+        {
+            InitState = (CsDisplayInitState)d[0],
+            CurrentPage = d[1],
+            Flags = (CsDisplayStatusFlags)d[2],
+            Model = d[3],
+            NakCount = BitConverter.ToUInt16(d, 4),
+        };
+    }
+}
+
+/// <summary>The whole REQ_GET_CS_DISPLAY_CFG response: the device's own page and
+/// model limits, then the config. The limits are served here rather than in the
+/// caps header, so they arrive alongside the config they bound.</summary>
+public sealed class CsDisplayCfgRead
+{
+    public byte MaxPages;
+    public byte ModelCount;
+    public CsDisplayCfg Cfg = new();
+
+    public static CsDisplayCfgRead? FromBytes(byte[] d)
+    {
+        if (d == null || d.Length < CsDisplayCfg.GetWireSize) return null;
+        var cfg = CsDisplayCfg.FromBytes(d, 4);
+        if (cfg == null) return null;
+        return new CsDisplayCfgRead { MaxPages = d[0], ModelCount = d[1], Cfg = cfg };
+    }
+}
+
 /// <summary>One entry in the caps type table (4 bytes; CsTypeDesc).</summary>
 public readonly struct CsTypeDesc
 {
@@ -822,9 +1170,11 @@ public readonly struct CsTypeDesc
 
 /// <summary>The caps header + type table (REQ_GET_CS_CAPS, wValue 0xFFFF). Length
 /// is variable — the v3 tail (<see cref="MaxIrCommands"/>) sits at
-/// <c>4 + 4*TypeCount</c> so a future type-table growth won't move it, and the v9
+/// <c>4 + 4*TypeCount</c> so a type-table growth won't move it, and the v9
 /// group/macro limits follow it in the three bytes a pre-v9 firmware reserved
-/// (they read 0 there). Parse defensively rather than assuming 40 bytes.</summary>
+/// (they read 0 there). Caps v10 exercised exactly that: adding the display type
+/// grew the response from 40 bytes to 44. Parse defensively rather than assuming
+/// either length.</summary>
 public sealed class CsCapsHeader
 {
     public byte CapsVersion;
@@ -842,6 +1192,11 @@ public sealed class CsCapsHeader
     /// <summary>Whether this firmware serves the caps-v9 group and macro
     /// commands (0x20–0x26).</summary>
     public bool HasGroupsAndMacros => MaxGroups > 0 && MaxMacros > 0;
+
+    /// <summary>Whether this firmware offers the I2C display component (caps
+    /// v10). Read from the type table rather than the version, the same
+    /// self-describing rule the rest of the editor follows.</summary>
+    public bool HasDisplay => TypeCount > (int)CsType.Display;
 
     public static CsCapsHeader? FromBytes(byte[] d)
     {

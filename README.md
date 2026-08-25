@@ -238,12 +238,23 @@ device, it exercises the entire output path rather than the host playback stack 
 
 Control surfaces bind physical controls attached to the device's spare GPIO pins to DSP parameters, so that the
 device can be operated without a computer. Supported control types are buttons, switches, potentiometers, rotary
-encoders, plain LEDs, PWM LEDs and infrared receivers. Each binding pairs a control with a parameter and an
-action: absolute adjustment, stepped increment or decrement, toggle, set, follow, momentary, trigger, or one of
-the LED indicator behaviours. Parameters include volume, mute, preset selection, input source, the processing
-blocks, per-output gain and delay, and individual filter parameters. Infrared remotes are handled by a learning
-mode that captures NEC, RC5 and RC6 codes directly from the handset. Channel targets are presented using your own
-channel names. Control surfaces, channel groups and macros are edited under Settings > Control.
+encoders, plain LEDs, PWM LEDs, infrared receivers and I2C character or OLED displays. Each binding pairs a
+control with a parameter and an action: absolute adjustment, stepped increment or decrement, toggle, set, follow,
+momentary, trigger, or one of the LED indicator behaviours. Parameters include volume, mute, preset selection,
+input source, the processing blocks, per-output gain and delay, individual filter parameters, and CPU load. A
+dimmable LED can also carry a brightness limit, which scales its whole range rather than clipping the top of it,
+so a panel of mismatched indicators can be evened out. Infrared remotes are handled by a learning mode that
+captures NEC, RC5 and RC6 codes directly from the handset, and a learned key can drive a channel group as well as
+a single channel. Channel targets are presented using your own channel names. Control surfaces, channel groups
+and macros are edited under Settings > Control.
+
+A display is wired to a pair of I2C pins and shows what the device is doing. Whatever a control can drive, a page
+can show, including channel groups. The panel can rest on one page, cycle a chosen set of them, or cycle
+everything the device has, and whatever it is resting on, a parameter that just changed pops up for a moment
+before it returns. Pages carry the value in large text or behind a level bar on the panels that can draw one, and
+each of the two lines is placed left, centre or right. With a button and an encoder the panel also becomes a
+front-panel editor: one control browses pages, another arms editing, and the first then adjusts whatever is on
+screen until the editing timeout disarms it again.
 
 ### Input sources and hardware configuration
 

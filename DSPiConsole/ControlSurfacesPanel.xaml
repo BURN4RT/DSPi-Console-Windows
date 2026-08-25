@@ -45,7 +45,7 @@
                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
                         <TextBlock Text="No controls yet" FontWeight="SemiBold" FontSize="14"
                                    HorizontalAlignment="Center" Margin="0,6,0,0"/>
-                        <TextBlock Text="Add a button, knob, switch, encoder, LED or IR receiver to get started."
+                        <TextBlock Text="Add a button, knob, switch, encoder, LED, IR receiver or display to get started."
                                    FontSize="12" TextWrapping="Wrap" TextAlignment="Center"
                                    HorizontalAlignment="Center" MaxWidth="320"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>

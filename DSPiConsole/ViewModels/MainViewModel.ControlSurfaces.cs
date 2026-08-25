@@ -8,10 +8,11 @@ namespace DSPiConsole.ViewModels;
 
 /// <summary>
 /// Control Surfaces + IR remote state and device orchestration (firmware
-/// 0x84–0x8F, 0x9D/0x9E, plus 0x20–0x26 for caps-v9 groups and macros). The whole
-/// editor is caps-driven: we probe the caps header + per-noun descriptors once,
-/// then read the 16 binding slots, 16 slot names, up to 16 IR command sub-slots,
-/// and (on caps v9) the 8 target groups and 8 macros — every count from caps.
+/// 0x84–0x8F, 0x9D/0x9E, 0x20–0x26 for caps-v9 groups and macros, and 0x27–0x2B
+/// for the caps-v10 I2C display). The whole editor is caps-driven: we probe the
+/// caps header + per-noun descriptors once, then read the 16 binding slots, 16
+/// slot names, up to 16 IR command sub-slots, the 8 target groups and 8 macros,
+/// and the display config and its page table — every count from the device.
 ///
 /// <para>Three-tier persistence: every SET is a live-only <b>preview</b> that
 /// applies immediately (device <c>Dirty</c>=true) but is RAM-only; <see cref="CsSave"/>
@@ -40,6 +41,15 @@ public partial class MainViewModel
     private CsStatusPacket? _csStatus;
     private CsExtStatusPacket? _csExtStatus;
 
+    // I2C display (caps v10). The panel's component lives in the ordinary binding
+    // table; what it shows is this config plus a page table, both device-global
+    // and under the same preview / Save / Revert as everything else here.
+    private CsDisplayCfg _csDisplayCfg = new();
+    private CsDisplayPage[] _csDisplayPages = NewEmptyDisplayPages();
+    private CsDisplayStatus _csDisplayStatus = new();
+    private byte _csDisplayMaxPages;
+    private byte _csDisplayModelCount;
+
     // Local clean baseline (wire bytes) captured whenever the device reports a
     // non-dirty state — used for net-zero dirty suppression.
     private CsBinding[]? _csCleanBindings;
@@ -47,6 +57,8 @@ public partial class MainViewModel
     private IrCommand[]? _csCleanIrCommands;
     private CsGroup[]? _csCleanGroups;
     private CsMacro[]? _csCleanMacros;
+    private CsDisplayCfg? _csCleanDisplayCfg;
+    private CsDisplayPage[]? _csCleanDisplayPages;
 
     /// <summary>Serializes the deferred CS writes. Individual control transfers are
     /// already locked, but a deferred SET is a <i>sequence</i> — the OUT, then a
@@ -65,6 +77,15 @@ public partial class MainViewModel
     public IReadOnlyList<CsMacro> CsMacros => _csMacros;
     public CsStatusPacket? CsStatus => _csStatus;
     public CsExtStatusPacket? CsExtStatus => _csExtStatus;
+    public CsDisplayCfg CsDisplayCfg => _csDisplayCfg;
+    public IReadOnlyList<CsDisplayPage> CsDisplayPages => _csDisplayPages;
+    public CsDisplayStatus CsDisplayStatus => _csDisplayStatus;
+
+    /// <summary>Outcome of the last display config or page write. Those apply as
+    /// they are edited, with no Apply button to report against, so without this a
+    /// rejection would just make the row snap back with nothing said.</summary>
+    [ObservableProperty]
+    private byte _csDisplayLastStatus = DSPiConsole.Core.Models.CsStatus.Success;
 
     /// <summary>Number of usable binding slots (min of caps + local cap of 16).</summary>
     public int CsSlotCount => Math.Min((int)(_csCaps?.MaxBindings ?? CsLimits.MaxBindings), CsLimits.MaxBindings);
@@ -93,6 +114,56 @@ public partial class MainViewModel
     /// and the firmware advertises IR command slots).</summary>
     public bool CsIrSupported =>
         _csCaps != null && _csCaps.MaxIrCommands > 0 && _csCaps.TypeCount > (int)CsType.Ir;
+
+    /// <summary>Whether this firmware offers the I2C display component (caps v10).
+    /// Read from the caps type table, not the version — the same self-describing
+    /// rule the rest of the editor follows.</summary>
+    public bool CsDisplaySupported => _csCaps?.HasDisplay == true;
+
+    /// <summary>Whether an IR command may address a group (caps v10). Bundled with
+    /// the display component, so the type table answers for it too: a pre-v10
+    /// device rejects a grouped IR record at validation.</summary>
+    public bool CsIrGroupsSupported => CsDisplaySupported && CsGroupsSupported;
+
+    /// <summary>Whether the panel honours the per-line alignment fields (caps
+    /// v11). Nothing about the record changes, so the version is the only signal —
+    /// a v10 device rejects a config carrying either field set.</summary>
+    public bool CsDisplayAlignSupported => CsDisplaySupported && _csCaps?.CapsVersion >= 11;
+
+    /// <summary>Whether a PWM LED may carry a brightness ceiling (caps v12). The
+    /// byte was reserved before, and a pre-v12 device rejects a binding with
+    /// anything in it, so the field stays hidden — and zero — below v12.</summary>
+    public bool CsLedBrightnessSupported => _csCaps?.CapsVersion >= 12;
+
+    /// <summary>Whether a display page may carry a level bar (caps v13), by the
+    /// same reasoning as the alignment fields.</summary>
+    public bool CsDisplayBarSupported => CsDisplaySupported && _csCaps?.CapsVersion >= 13;
+
+    /// <summary>Page slots to show — the device's own count, clamped to what the
+    /// app allocates.</summary>
+    public int CsDisplayPageCount =>
+        _csDisplayMaxPages > 0
+            ? Math.Min((int)_csDisplayMaxPages, CsLimits.MaxDisplayPages)
+            : CsLimits.MaxDisplayPages;
+
+    /// <summary>Panel models the device serves, clamped to the ones this build
+    /// knows names for.</summary>
+    public int CsDisplayModelCount =>
+        _csDisplayModelCount > 0
+            ? Math.Min((int)_csDisplayModelCount, CsDisplayModels.Count)
+            : CsDisplayModels.Count;
+
+    /// <summary>The binding slot holding the display component, or null when none
+    /// is configured. One panel per device, so the first match is the answer.</summary>
+    public int? CsDisplaySlot
+    {
+        get
+        {
+            for (int s = 0; s < CsSlotCount && s < _csBindings.Length; s++)
+                if (_csBindings[s].Type == CsType.Display) return s;
+            return null;
+        }
+    }
 
     /// <summary>Per-noun descriptor, or null if the noun index is out of range /
     /// unavailable on this platform.</summary>
@@ -139,6 +210,13 @@ public partial class MainViewModel
     {
         var a = new CsMacro[CsLimits.MaxMacros];
         for (int i = 0; i < a.Length; i++) a[i] = new CsMacro();
+        return a;
+    }
+
+    private static CsDisplayPage[] NewEmptyDisplayPages()
+    {
+        var a = new CsDisplayPage[CsLimits.MaxDisplayPages];
+        for (int i = 0; i < a.Length; i++) a[i] = new CsDisplayPage();
         return a;
     }
 
@@ -205,6 +283,27 @@ public partial class MainViewModel
             ext = _device.GetCsExtStatus();
         }
 
+        // I2C display (caps v10). The config GET carries the page limit, so it
+        // has to land before the page loop that reads against it.
+        var displayCfg = new CsDisplayCfg();
+        var displayPages = NewEmptyDisplayPages();
+        var displayStatus = new CsDisplayStatus();
+        byte displayMaxPages = 0, displayModelCount = 0;
+        if (caps.HasDisplay)
+        {
+            var read = _device.GetCsDisplayCfg();
+            if (read != null)
+            {
+                displayCfg = read.Cfg;
+                displayMaxPages = read.MaxPages;
+                displayModelCount = read.ModelCount;
+                int pages = Math.Min((int)read.MaxPages, CsLimits.MaxDisplayPages);
+                for (int i = 0; i < pages; i++)
+                    displayPages[i] = _device.GetCsDisplayPage(i) ?? new CsDisplayPage();
+            }
+            displayStatus = _device.GetCsDisplayStatus() ?? displayStatus;
+        }
+
         var status = _device.GetCsStatus();
 
         _csCaps = caps;
@@ -215,6 +314,11 @@ public partial class MainViewModel
         _csGroups = groups;
         _csMacros = macros;
         _csExtStatus = ext;
+        _csDisplayCfg = displayCfg;
+        _csDisplayPages = displayPages;
+        _csDisplayStatus = displayStatus;
+        _csDisplayMaxPages = displayMaxPages;
+        _csDisplayModelCount = displayModelCount;
         _csStatus = status;
         if (status != null && !status.Dirty) CaptureCsCleanBaseline();
 
@@ -223,6 +327,10 @@ public partial class MainViewModel
             ControlSurfacesSupported = true;
             OnPropertyChanged(nameof(CsStatus));
             OnPropertyChanged(nameof(CsExtStatus));
+            OnPropertyChanged(nameof(CsDisplayCfg));
+            OnPropertyChanged(nameof(CsDisplayStatus));
+            // A refusal reported against the last device doesn't describe this one.
+            CsDisplayLastStatus = DSPiConsole.Core.Models.CsStatus.Success;
             OnPropertyChanged(nameof(CsDirty));
             ControlSurfacesReloaded?.Invoke();
         });
@@ -278,6 +386,97 @@ public partial class MainViewModel
             return result;
         }
     }
+
+    /// <summary>Re-read the live panel state (came up / starting / not responding,
+    /// the page on screen, the I2C abort count). False if the device didn't answer,
+    /// so a caller polling the on-screen page can give up rather than keep polling
+    /// a device that has gone.</summary>
+    public bool RefreshCsDisplayStatus()
+    {
+        if (!CsDisplaySupported || !IsDeviceConnected) return false;
+        var st = _device.GetCsDisplayStatus();
+        if (st == null) return false;
+        _csDisplayStatus = st;
+        _dispatcher.TryEnqueue(() => OnPropertyChanged(nameof(CsDisplayStatus)));
+        return true;
+    }
+
+    /// <summary>Re-read the display config, its whole page table and the panel
+    /// state. The firmware seeds a fresh page table (volume, preset, input source,
+    /// sample rate) the first time a display attaches, so what the app holds is out
+    /// of date the moment a display binding is applied — and the panel's state
+    /// moves when one is removed.</summary>
+    public void RefreshCsDisplay()
+    {
+        if (!CsDisplaySupported || !IsDeviceConnected) return;
+        lock (_csWriteLock)
+        {
+            var read = _device.GetCsDisplayCfg();
+            if (read != null)
+            {
+                _csDisplayCfg = read.Cfg;
+                _csDisplayMaxPages = read.MaxPages;
+                _csDisplayModelCount = read.ModelCount;
+            }
+            for (int i = 0; i < CsDisplayPageCount; i++)
+                _csDisplayPages[i] = _device.GetCsDisplayPage(i) ?? new CsDisplayPage();
+            _csDisplayStatus = _device.GetCsDisplayStatus() ?? _csDisplayStatus;
+        }
+        _dispatcher.TryEnqueue(() =>
+        {
+            OnPropertyChanged(nameof(CsDisplayCfg));
+            OnPropertyChanged(nameof(CsDisplayStatus));
+            OnPropertyChanged(nameof(CsDirty));
+        });
+    }
+
+    /// <summary>Stage the display config (live preview) and re-read it. Shares the
+    /// write lock with every other deferred CS write: the firmware tags the config
+    /// bare and pages 0x50 | page, so the config and page 0 report under the same
+    /// byte and only one display write may be in flight at a time.</summary>
+    public byte SetCsDisplayCfg(CsDisplayCfg cfg)
+    {
+        lock (_csWriteLock)
+        {
+            byte result = _device.SetCsDisplayCfg(cfg);
+            var read = _device.GetCsDisplayCfg();
+            if (read != null)
+            {
+                _csDisplayCfg = read.Cfg;
+                _csDisplayMaxPages = read.MaxPages;
+                _csDisplayModelCount = read.ModelCount;
+            }
+            RefreshCsStatus();
+            RefreshCsDisplayStatus();
+            PublishDisplayResult(result);
+            return result;
+        }
+    }
+
+    /// <summary>Stage one display page (live preview); an all-zero record clears
+    /// the slot. Re-reads the page the device actually kept.</summary>
+    public byte SetCsDisplayPage(int index, CsDisplayPage page)
+    {
+        if (index < 0 || index >= _csDisplayPages.Length)
+            return DSPiConsole.Core.Models.CsStatus.InvalidPage;
+        lock (_csWriteLock)
+        {
+            byte result = _device.SetCsDisplayPage(index, page);
+            _csDisplayPages[index] = _device.GetCsDisplayPage(index) ?? new CsDisplayPage();
+            RefreshCsStatus();
+            RefreshCsDisplayStatus();
+            PublishDisplayResult(result);
+            return result;
+        }
+    }
+
+    private void PublishDisplayResult(byte result) =>
+        _dispatcher.TryEnqueue(() =>
+        {
+            CsDisplayLastStatus = result;
+            OnPropertyChanged(nameof(CsDisplayCfg));
+            OnPropertyChanged(nameof(CsDirty));
+        });
 
     /// <summary>Re-read the group/macro status packet (table limits, per-slot
     /// validity, the running macro). False if the device didn't answer — a caller
@@ -407,6 +606,20 @@ public partial class MainViewModel
             for (int m = 0; m < CsMacroMax; m++)
                 _csMacros[m] = _device.GetCsMacro(m) ?? new CsMacro();
             if (CsGroupsSupported) _csExtStatus = _device.GetCsExtStatus() ?? _csExtStatus;
+            // The display config and its pages ride the same revert.
+            if (CsDisplaySupported)
+            {
+                var read = _device.GetCsDisplayCfg();
+                if (read != null)
+                {
+                    _csDisplayCfg = read.Cfg;
+                    _csDisplayMaxPages = read.MaxPages;
+                    _csDisplayModelCount = read.ModelCount;
+                }
+                for (int i = 0; i < CsDisplayPageCount; i++)
+                    _csDisplayPages[i] = _device.GetCsDisplayPage(i) ?? new CsDisplayPage();
+                _csDisplayStatus = _device.GetCsDisplayStatus() ?? _csDisplayStatus;
+            }
 
             var status = _device.GetCsStatus();
             _csStatus = status;
@@ -417,6 +630,9 @@ public partial class MainViewModel
         {
             OnPropertyChanged(nameof(CsStatus));
             OnPropertyChanged(nameof(CsExtStatus));
+            OnPropertyChanged(nameof(CsDisplayCfg));
+            OnPropertyChanged(nameof(CsDisplayStatus));
+            CsDisplayLastStatus = DSPiConsole.Core.Models.CsStatus.Success;
             OnPropertyChanged(nameof(CsDirty));
             ControlSurfacesReloaded?.Invoke();
         });
@@ -455,6 +671,20 @@ public partial class MainViewModel
         if (idx < 0 || idx >= _csMacros.Length) return $"Macro {idx + 1}";
         var name = _csMacros[idx].Name;
         return string.IsNullOrWhiteSpace(name) ? $"Macro {idx + 1}" : name;
+    }
+
+    /// <summary>What one display page shows, in the words the panel itself uses:
+    /// the item's name, prefixed by its channel or group when it has one.</summary>
+    public string CsDisplayPageSummary(CsDisplayPage page)
+    {
+        if (page == null || !page.IsActive) return "Empty";
+        string noun = CsNounInfo.Name(page.Noun);
+        var nd = CsNounDescFor(page.Noun);
+        if (nd == null || !nd.IsTargeted) return noun;
+        string where = page.IsGrouped
+            ? CsGroupLabel(page.Target)
+            : CsTargetLabel(nd.TargetKind, page.Target);
+        return $"{where} {noun}";
     }
 
     /// <summary>Comma-separated member names for a group, e.g. "Front L, Front R".</summary>
@@ -519,6 +749,9 @@ public partial class MainViewModel
         for (int i = 0; i < _csGroups.Length; i++) _csCleanGroups[i] = _csGroups[i].Clone();
         _csCleanMacros = new CsMacro[_csMacros.Length];
         for (int i = 0; i < _csMacros.Length; i++) _csCleanMacros[i] = _csMacros[i].Clone();
+        _csCleanDisplayCfg = _csDisplayCfg.Clone();
+        _csCleanDisplayPages = new CsDisplayPage[_csDisplayPages.Length];
+        for (int i = 0; i < _csDisplayPages.Length; i++) _csCleanDisplayPages[i] = _csDisplayPages[i].Clone();
     }
 
     /// <summary>
@@ -545,7 +778,8 @@ public partial class MainViewModel
         if (!CsDirty) return changes;
 
         if (_csCleanBindings == null || _csCleanNames == null || _csCleanIrCommands == null
-            || _csCleanGroups == null || _csCleanMacros == null)
+            || _csCleanGroups == null || _csCleanMacros == null
+            || _csCleanDisplayCfg == null || _csCleanDisplayPages == null)
         {
             changes.Add(new("cs.all", "Control surfaces", "saved", "edited"));
             return changes;
@@ -582,6 +816,19 @@ public partial class MainViewModel
             var d = Delta(_csCleanMacros[i].IsConfigured, _csMacros[i].IsConfigured);
             changes.Add(new($"cs.macro.{i}", label, d.Old, d.New));
         }
+        // The display's own settings are one item; each page is its own, named by
+        // what it shows so the prompt reads as a list of pages rather than a count.
+        if (!_csDisplayCfg.WireEquals(_csCleanDisplayCfg))
+            changes.Add(new("cs.display.cfg", "Display settings", "saved", "edited"));
+        for (int i = 0; i < _csDisplayPages.Length; i++)
+        {
+            if (_csDisplayPages[i].WireEquals(_csCleanDisplayPages[i])) continue;
+            var page = _csDisplayPages[i].IsActive ? _csDisplayPages[i] : _csCleanDisplayPages[i];
+            string label = page.IsActive
+                ? $"Page {i + 1}: {CsDisplayPageSummary(page)}" : $"Page {i + 1}";
+            var d = Delta(_csCleanDisplayPages[i].IsActive, _csDisplayPages[i].IsActive);
+            changes.Add(new($"cs.display.page.{i}", label, d.Old, d.New));
+        }
         return changes;
 
         // These are whole records, not single fields, so the prompt says what
@@ -595,7 +842,8 @@ public partial class MainViewModel
     private bool MatchesCleanBaseline()
     {
         if (_csCleanBindings == null || _csCleanNames == null || _csCleanIrCommands == null
-            || _csCleanGroups == null || _csCleanMacros == null)
+            || _csCleanGroups == null || _csCleanMacros == null
+            || _csCleanDisplayCfg == null || _csCleanDisplayPages == null)
             return false; // no baseline yet → treat firmware dirty as authoritative
         for (int i = 0; i < _csBindings.Length; i++)
             if (!_csBindings[i].WireEquals(_csCleanBindings[i])) return false;
@@ -607,6 +855,9 @@ public partial class MainViewModel
             if (!_csGroups[i].WireEquals(_csCleanGroups[i])) return false;
         for (int i = 0; i < _csMacros.Length; i++)
             if (!_csMacros[i].WireEquals(_csCleanMacros[i])) return false;
+        if (!_csDisplayCfg.WireEquals(_csCleanDisplayCfg)) return false;
+        for (int i = 0; i < _csDisplayPages.Length; i++)
+            if (!_csDisplayPages[i].WireEquals(_csCleanDisplayPages[i])) return false;
         return true;
     }
 }

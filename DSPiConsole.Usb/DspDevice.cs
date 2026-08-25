@@ -157,6 +157,16 @@ public static class VendorCommands
     public const byte CsMacroFire          = 0x25; // IN 1 ack byte; wValue=macro, 0xFFFF cancels
     public const byte GetCsExtStatus       = 0x26; // IN 24-byte CsExtStatusPacket
 
+    // Control-surface I2C display (caps v10). Same deferred-preview shape, polled
+    // on 0x50 for the config and 0x50|page for a page — so the config and page 0
+    // share a poll key, which is only unambiguous while one display SET is in
+    // flight (the view model's write lock is what guarantees that).
+    public const byte SetCsDisplayCfg      = 0x27; // OUT 12-byte CsDisplayCfg
+    public const byte GetCsDisplayCfg      = 0x28; // IN 16 bytes: limits header + CsDisplayCfg
+    public const byte SetCsDisplayPage     = 0x29; // OUT 4-byte CsDisplayPage, wValue=page (0-15)
+    public const byte GetCsDisplayPage     = 0x2A; // IN 4-byte CsDisplayPage, wValue=page
+    public const byte GetCsDisplayStatus   = 0x2B; // IN 8-byte CsDisplayStatus
+
     // I2S output configuration
     public const byte SetOutputType    = 0xC0;
     public const byte GetOutputType    = 0xC1;
@@ -2905,6 +2915,49 @@ public partial class DspDevice : ObservableObject, IDisposable
     {
         var r = ControlTransferIn(VendorCommands.GetCsExtStatus, 0, CsExtStatusPacket.WireSize);
         return r == null ? null : CsExtStatusPacket.FromBytes(r);
+    }
+
+    // -- Control-surface I2C display (0x27-0x2B, caps v10) --------------------
+
+    /// <summary>Read the display config and the device's own page / model limits
+    /// (0x28). Null on transfer failure or a pre-v10 firmware, which STALLs.</summary>
+    public CsDisplayCfgRead? GetCsDisplayCfg()
+    {
+        var r = ControlTransferIn(VendorCommands.GetCsDisplayCfg, 0, CsDisplayCfg.GetWireSize);
+        return r == null ? null : CsDisplayCfgRead.FromBytes(r);
+    }
+
+    /// <summary>Read one live 4-byte page record (0x2A).</summary>
+    public CsDisplayPage? GetCsDisplayPage(int index)
+    {
+        var r = ControlTransferIn(VendorCommands.GetCsDisplayPage, (ushort)(index & 0xFF), CsDisplayPage.WireSize);
+        return r == null ? null : CsDisplayPage.FromBytes(r);
+    }
+
+    /// <summary>Read the live 8-byte panel state (0x2B): whether it came up, what
+    /// it is showing, and the running I2C abort count.</summary>
+    public CsDisplayStatus? GetCsDisplayStatus()
+    {
+        var r = ControlTransferIn(VendorCommands.GetCsDisplayStatus, 0, CsDisplayStatus.WireSize);
+        return r == null ? null : CsDisplayStatus.FromBytes(r);
+    }
+
+    /// <summary>Stage the display config (0x27 OUT) and wait for the deferred
+    /// apply, which reports under the bare 0x50 tag.</summary>
+    public byte SetCsDisplayCfg(CsDisplayCfg cfg)
+    {
+        if (!ControlTransferOut(VendorCommands.SetCsDisplayCfg, 0, cfg.ToBytes()))
+            return CsStatus.Busy;
+        return PollCsDeferred(CsLimits.LastSlotDisplayFlag);
+    }
+
+    /// <summary>Stage one display page (0x29 OUT; an all-zero record clears it) and
+    /// wait for the apply, reported under 0x50 | page.</summary>
+    public byte SetCsDisplayPage(int index, CsDisplayPage page)
+    {
+        if (!ControlTransferOut(VendorCommands.SetCsDisplayPage, (ushort)(index & 0xFF), page.ToBytes()))
+            return CsStatus.Busy;
+        return PollCsDeferred((byte)(CsLimits.LastSlotDisplayFlag | (index & 0x0F)));
     }
 
     /// <summary>Arm IR learn (0x8F wValue=1). False if the firmware STALLs (no live

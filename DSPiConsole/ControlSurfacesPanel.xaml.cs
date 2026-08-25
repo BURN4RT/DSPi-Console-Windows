@@ -28,9 +28,11 @@ public enum CsSection { Bindings, Groups, Macros }
 
 /// <summary>
 /// Control Surfaces + IR remote editor. A caps-driven editor that binds physical
-/// GPIO controls (buttons, switches, pots, encoders, LEDs, PWM LEDs) and an IR
-/// receiver to DSP parameters. Every edit previews live on the device; Save
-/// persists to flash, Revert discards. Mirrors the macOS reference app.
+/// GPIO controls (buttons, switches, pots, encoders, LEDs, PWM LEDs), an IR
+/// receiver and an I2C display to DSP parameters. Every edit previews live on the
+/// device; Save persists to flash, Revert discards. Mirrors the macOS reference
+/// app. The display component's own card lives in
+/// <c>ControlSurfacesPanel.Display.cs</c>.
 ///
 /// <para>
 /// Hosted by three Settings pages rather than its own window. All three sections
@@ -162,6 +164,7 @@ public sealed partial class ControlSurfacesPanel : UserControl
     private void OnPanelUnloaded(object sender, RoutedEventArgs e)
     {
         StopMacroPoll();
+        StopDisplayPoll();
         _vm.PropertyChanged -= OnVmPropertyChanged;
         _vm.ControlSurfacesReloaded -= OnReloaded;
         _vm.ChannelNameChanged -= OnChannelNameChanged;
@@ -200,6 +203,10 @@ public sealed partial class ControlSurfacesPanel : UserControl
             || e.PropertyName == nameof(MainViewModel.CsDirty))
         {
             DispatcherQueue.TryEnqueue(RefreshStatusIndicators);
+        }
+        else if (e.PropertyName == nameof(MainViewModel.CsDisplayStatus))
+        {
+            DispatcherQueue.TryEnqueue(RefreshDisplayStateRow);
         }
     }
 
@@ -269,6 +276,8 @@ public sealed partial class ControlSurfacesPanel : UserControl
             if ((int)t >= caps.TypeCount) continue;
             // One IR receiver max — hide once configured.
             if (t == CsType.Ir && (!_vm.CsIrSupported || AnyIrReceiver())) continue;
+            // One display per device, likewise (CS_STATUS_DISPLAY_IN_USE).
+            if (t == CsType.Display && (!_vm.CsDisplaySupported || AnyDisplay())) continue;
             var item = new MenuFlyoutItem
             {
                 Text = TypeName(t),
@@ -295,6 +304,13 @@ public sealed partial class ControlSurfacesPanel : UserControl
             _slotCards.Clear();
             _pinRefreshers.Clear();
             _channelRelabel.Clear();
+            // The display card's own handles go with the cards: a rebuild that no
+            // longer draws one would otherwise leave the config sections pointing
+            // at a panel that is no longer in the tree.
+            _displaySlot = -1;
+            _displayHost = null;
+            _displayStateLabel = null;
+            _displayStateDetail = null;
 
             int shown = 0;
             for (int slot = 0; slot < _vm.CsSlotCount; slot++)
@@ -320,8 +336,13 @@ public sealed partial class ControlSurfacesPanel : UserControl
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             IsExpanded = _expanded.Contains(slot),
         };
-        expander.Expanding += (_, _) => { _expanded.Add(slot); FrameExpandedCard(expander); };
-        expander.Collapsed += (_, _) => _expanded.Remove(slot);
+        expander.Expanding += (_, _) =>
+        {
+            _expanded.Add(slot);
+            FrameExpandedCard(expander);
+            UpdateDisplayPoll();
+        };
+        expander.Collapsed += (_, _) => { _expanded.Remove(slot); UpdateDisplayPoll(); };
 
         expander.Header = BuildCardHeader(slot);
         expander.Content = BuildCardBody(slot);
@@ -478,6 +499,12 @@ public sealed partial class ControlSurfacesPanel : UserControl
                 panel.Children.Add(BuildApplyRow(slot));
                 panel.Children.Add(BuildIrCommandsSection(slot));
             }
+            else if (draft.Type == CsType.Display)
+            {
+                // Also a container: the panel's wiring and identity, then what it
+                // shows (config + pages), which apply as they are edited.
+                PopulateDisplayBody(slot, panel);
+            }
             else
             {
                 var nd = _vm.CsNounDescFor(draft.Noun);
@@ -494,7 +521,13 @@ public sealed partial class ControlSurfacesPanel : UserControl
                     if (operand != null) panel.Children.Add(operand);
                     if (SupportsIndicatorDelay(draft))
                         panel.Children.Add(BuildIndicatorDelayRows(slot));
+                    // The ceiling scales whatever duty the action worked out, so
+                    // it belongs to the LED rather than to any one action.
+                    if (_vm.CsLedBrightnessSupported && draft.Type == CsType.LedPwm)
+                        panel.Children.Add(BuildBrightnessCeilingRow(slot));
                     panel.Children.Add(BuildFlagRows(slot, nd));
+                    var note = DisplayNounNote(draft);
+                    if (note != null) panel.Children.Add(note);
                 }
                 panel.Children.Add(BuildApplyRow(slot));
             }
@@ -558,7 +591,7 @@ public sealed partial class ControlSurfacesPanel : UserControl
         int sel = -1;
         for (int i = 0; i < actions.Count; i++)
         {
-            combo.Items.Add(new ComboBoxItem { Content = ActionName(actions[i]), Tag = actions[i] });
+            combo.Items.Add(new ComboBoxItem { Content = ActionName(actions[i], draft.Noun), Tag = actions[i] });
             if ((byte)actions[i] == draft.Action) sel = i;
         }
         if (sel < 0) sel = 0;
@@ -715,6 +748,11 @@ public sealed partial class ControlSurfacesPanel : UserControl
     {
         var draft = _drafts[slot];
         var action = (CsAction)draft.Action;
+
+        // Browse/Adjust takes its unit, step law and range from whatever page is
+        // on screen when the event fires, so there is nothing to set here — and
+        // the firmware rejects the binding if anything is.
+        if (draft.Noun == (byte)CsNoun.PageValue) return null;
 
         // Span (pot ADJUST / PWM IND_LEVEL): rangeMin/rangeMax over the noun range.
         if (action is CsAction.Adjust or CsAction.IndLevel && nd.Kind == CsKind.Continuous)
@@ -889,6 +927,112 @@ public sealed partial class ControlSurfacesPanel : UserControl
 
     private static ushort EncodeIndicatorDelay(double seconds) =>
         (ushort)Math.Clamp(Math.Round(seconds / CsLimits.IndicatorDelayUnitSeconds), 0, ushort.MaxValue);
+
+    /// <summary>Per-LED brightness ceiling (caps v12). The duty is scaled, not
+    /// clipped, so a meter keeps its whole sweep and only its top end moves —
+    /// which is how a panel of mismatched LEDs is evened out, and how the lot is
+    /// dimmed for a dark room. The wire field's 0 means "unset", identical in
+    /// effect to 100, so the box shows 100 for it and only ever writes a real
+    /// percentage back.</summary>
+    private FrameworkElement BuildBrightnessCeilingRow(int slot)
+    {
+        var draft = _drafts[slot];
+        TextBox box = null!;
+        box = NumberField(draft.BaseBright == 0 ? CsLimits.LedBrightMax : draft.BaseBright, CsUnit.None, v =>
+        {
+            byte pct = (byte)Math.Clamp(Math.Round(v), 1, CsLimits.LedBrightMax);
+            _drafts[slot].BaseBright = pct;
+            if (Math.Abs(pct - v) > 0.005) box.Text = FormatNumber(pct);
+            RefreshStatusIndicators();
+        });
+        ToolTipService.SetToolTip(box,
+            "Cap on how bright this LED gets, as a share of full. Everything below the cap scales with it.");
+        return Row("Brightness limit (%)", box);
+    }
+
+    /// <summary>A line under the editor for the two nouns whose behaviour depends
+    /// on the panel rather than on the binding: what the control will actually do
+    /// is a function of the display's own arming gate, which is edited on another
+    /// card entirely.</summary>
+    private FrameworkElement? DisplayNounNote(CsBinding b)
+    {
+        string? text = (CsNoun)b.Noun switch
+        {
+            CsNoun.PageValue => PageValueNote(b),
+            CsNoun.DisplayPage => DisplayPageNote(b),
+            CsNoun.DisplayEdit => (CsAction)b.Action is CsAction.IndEquals or CsAction.IndAbove
+                ? "Lights while editing is armed."
+                : "Arms editing of the page on screen. The panel disarms itself again after the "
+                  + "editing timeout.",
+            _ => null,
+        };
+        if (text == null) return null;
+        return new TextBlock
+        {
+            Text = text,
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 0),
+            Foreground = SecondaryBrush,
+        };
+    }
+
+    /// <summary>Browse/Adjust does two jobs, and which one a control gets depends
+    /// on the panel's own gate: with "Arm before editing" off it only ever
+    /// adjusts, so a note promising page browsing would describe another config.</summary>
+    private string? PageValueNote(CsBinding b)
+    {
+        bool gated = _vm.CsDisplayCfg.HasFlag(CsDisplayCfgFlags.EditGated);
+        string press = PressWord(b);
+        return (CsAction)b.Action switch
+        {
+            CsAction.Step => gated
+                ? "Turn to move through pages, or to adjust the shown value once editing is armed."
+                : "Turn to adjust the shown value.",
+            CsAction.Inc => gated
+                ? $"{press} for the next page, or to raise the shown value once editing is armed."
+                : $"{press} to raise the shown value.",
+            CsAction.Dec => gated
+                ? $"{press} for the previous page, or to lower the shown value once editing is armed."
+                : $"{press} to lower the shown value.",
+            // Toggle is the one action here the device cannot validate up front:
+            // the page it lands on isn't known until the press, and the firmware
+            // silently no-ops it on anything but an on/off item.
+            CsAction.Toggle => gated
+                ? $"{press} to toggle the shown value, once editing is armed. Only acts on a page "
+                  + "showing an on/off setting."
+                : $"{press} to toggle the shown value. Only acts on a page showing an on/off setting.",
+            _ => null,
+        };
+    }
+
+    /// <summary>The page noun names the panel, not a position in a list: the
+    /// generic enum wording ("select the next Show Page") reads as nonsense once
+    /// the noun itself says "show".</summary>
+    private string? DisplayPageNote(CsBinding b)
+    {
+        string press = PressWord(b);
+        return (CsAction)b.Action switch
+        {
+            CsAction.Step => "Turn to move through the pages on screen.",
+            CsAction.Inc => $"{press} to show the next page.",
+            CsAction.Dec => $"{press} to show the previous page.",
+            CsAction.Set => $"{press} to show a set page.",
+            CsAction.IndEquals => "Lights while a set page is on screen.",
+            _ => null,
+        };
+    }
+
+    /// <summary>"Press" / "Long-press" / "Double-press" for a button binding's
+    /// gesture; anything else is simply pressed.</summary>
+    private static string PressWord(CsBinding b) =>
+        b.Type != CsType.Button ? "Press"
+        : (CsEvent)b.Event switch
+        {
+            CsEvent.Long => "Long-press",
+            CsEvent.Double => "Double-press",
+            _ => "Press",
+        };
 
     private CheckBox FlagToggle(int slot, CsFlags flag, string label)
     {
@@ -1204,6 +1348,11 @@ public sealed partial class ControlSurfacesPanel : UserControl
                 var nd = _vm.CsNounDescFor(noun);
                 var acts = nd != null ? ValidIrActions(nd) : new List<CsAction>();
                 _irDrafts[sub].Action = acts.Count > 0 ? (byte)acts[0] : (byte)0;
+                // Operands and the target belong to the noun that had them.
+                _irDrafts[sub].Value = 0; _irDrafts[sub].Step = 0;
+                _irDrafts[sub].Target = 0; _irDrafts[sub].Index = 0;
+                _irDrafts[sub].Flags &= ~(CsFlags.Group | CsFlags.Wrap);
+                SanitizeIrDraft(sub);
                 RefreshIrCommandCard(sub);
             }
         };
@@ -1217,7 +1366,7 @@ public sealed partial class ControlSurfacesPanel : UserControl
         int sel = 0;
         for (int i = 0; i < actions.Count; i++)
         {
-            combo.Items.Add(new ComboBoxItem { Content = ActionName(actions[i]), Tag = actions[i] });
+            combo.Items.Add(new ComboBoxItem { Content = ActionName(actions[i], draft.Noun), Tag = actions[i] });
             if ((byte)actions[i] == draft.Action) sel = i;
         }
         combo.SelectedIndex = sel;
@@ -1225,7 +1374,11 @@ public sealed partial class ControlSurfacesPanel : UserControl
         {
             if (_building) return;
             if (combo.SelectedItem is ComboBoxItem it && it.Tag is CsAction a)
-            { _irDrafts[sub].Action = (byte)a; RefreshIrCommandCard(sub); }
+            {
+                _irDrafts[sub].Action = (byte)a;
+                SanitizeIrDraft(sub);
+                RefreshIrCommandCard(sub);
+            }
         };
         return Row("Action", combo);
     }
@@ -1234,18 +1387,35 @@ public sealed partial class ControlSurfacesPanel : UserControl
     {
         var draft = _irDrafts[sub];
         var panel = new StackPanel { Spacing = 8 };
+        // A remote key may address a group since caps v10, which closed the gap
+        // where grouped volume from a remote needed a macro fired per press.
+        var groups = _vm.CsIrGroupsSupported ? CompatibleGroups(nd).ToList() : new List<int>();
         var chCombo = new ComboBox { MinWidth = 160 };
         for (int i = 0; i < nd.TargetCount; i++)
             chCombo.Items.Add(new ComboBoxItem { Content = ChannelLabel(nd.TargetKind, i), Tag = i });
+        foreach (int g in groups)
+            chCombo.Items.Add(new ComboBoxItem { Content = $"Group: {_vm.CsGroupLabel(g)}", Tag = new GroupTag(g) });
         _irChannelRelabel[sub] = () => Relabel(chCombo, nd.TargetKind);
-        chCombo.SelectedIndex = draft.Target < nd.TargetCount ? draft.Target : 0;
+        chCombo.SelectedIndex = draft.IsGrouped
+            ? (groups.IndexOf(draft.Target) is var gi && gi >= 0 ? nd.TargetCount + gi : -1)
+            : (draft.Target < nd.TargetCount ? draft.Target : 0);
         chCombo.SelectionChanged += (_, _) =>
         {
             if (_building) return;
-            if (chCombo.SelectedItem is ComboBoxItem it && it.Tag is int ch)
-            { _irDrafts[sub].Target = (byte)ch; UpdateIrTitle(sub); }
+            if (chCombo.SelectedItem is not ComboBoxItem it) return;
+            if (it.Tag is int ch)
+            {
+                _irDrafts[sub].Flags &= ~CsFlags.Group;
+                _irDrafts[sub].Target = (byte)ch;
+            }
+            else if (it.Tag is GroupTag g)
+            {
+                _irDrafts[sub].Flags |= CsFlags.Group;
+                _irDrafts[sub].Target = (byte)g.Index;
+            }
+            UpdateIrTitle(sub);
         };
-        panel.Children.Add(Row("Channel", chCombo));
+        panel.Children.Add(Row(groups.Count > 0 ? "Target" : "Channel", chCombo));
 
         if (nd.HasBand)
         {
@@ -1273,6 +1443,10 @@ public sealed partial class ControlSurfacesPanel : UserControl
     {
         var draft = _irDrafts[sub];
         var action = (CsAction)draft.Action;
+
+        // Browse/Adjust resolves its item at event time (see BuildOperandRows);
+        // the firmware requires its value and step to stay zero.
+        if (draft.Noun == (byte)CsNoun.PageValue) return null;
         if (action is CsAction.Inc or CsAction.Dec)
         {
             string label = nd.Unit is CsUnit.Hz or CsUnit.Q ? "Step (octaves)"
@@ -1375,14 +1549,26 @@ public sealed partial class ControlSurfacesPanel : UserControl
 
     /// <summary>Drop draft fields the firmware would now reject: a group reference
     /// the new noun can't address, the two group-only flag modifiers outside the
-    /// action they belong to, and indicator delays on anything but an LED
-    /// condition. All three are strict, all-or-nothing checks in <c>cs_validate</c>,
-    /// so an edit that changes the noun or action has to clear them.</summary>
+    /// action they belong to, indicator delays on anything but an LED condition,
+    /// a brightness ceiling on anything but a PWM LED, and any operand at all on
+    /// Browse/Adjust. All of them are strict, all-or-nothing checks in
+    /// <c>cs_validate</c>, so an edit that changes the noun or action has to clear
+    /// them.</summary>
     private void SanitizeDraft(int slot)
     {
         var b = _drafts[slot];
         var nd = _vm.CsNounDescFor(b.Noun);
         var action = (CsAction)b.Action;
+
+        // Browse/Adjust resolves its item at event time, so it has no static
+        // operands to carry and takes no target. It reads as a one-value enum,
+        // which would otherwise pick up a step of 1.
+        if (b.Noun == (byte)CsNoun.PageValue)
+        {
+            b.Value = 0; b.Step = 0; b.RangeMin = 0; b.RangeMax = 0;
+            b.Target = 0; b.Index = 0;
+            b.Flags &= ~(CsFlags.Group | CsFlags.LinkAbs | CsFlags.GroupAll);
+        }
 
         if (b.IsGrouped && (nd == null || GroupKindFor(nd) == null || !CompatibleGroups(nd).Contains(b.Target)))
         {
@@ -1399,6 +1585,32 @@ public sealed partial class ControlSurfacesPanel : UserControl
             if (action is not (CsAction.IndEquals or CsAction.IndAbove)) b.Flags &= ~CsFlags.GroupAll;
         }
         if (!SupportsIndicatorDelay(b)) { b.OnDelay = 0; b.OffDelay = 0; }
+        // The ceiling byte was reserved before caps v12 and is rejected on every
+        // component but a PWM LED, so it has to go with the type it belonged to.
+        if (b.Type != CsType.LedPwm || !_vm.CsLedBrightnessSupported) b.BaseBright = 0;
+    }
+
+    /// <summary>The IR-command counterpart of <see cref="SanitizeDraft"/>: a
+    /// remote key carries a smaller record, but Browse/Adjust is just as strict
+    /// about it, and a group reference has to survive the same checks.</summary>
+    private void SanitizeIrDraft(int sub)
+    {
+        var c = _irDrafts[sub];
+        var nd = _vm.CsNounDescFor(c.Noun);
+
+        if (c.Noun == (byte)CsNoun.PageValue)
+        {
+            c.Value = 0; c.Step = 0; c.Target = 0; c.Index = 0;
+            c.Flags &= ~(CsFlags.Group | CsFlags.Wrap);
+            return;
+        }
+        if (c.IsGrouped
+            && (nd == null || !_vm.CsIrGroupsSupported || GroupKindFor(nd) == null
+                || !CompatibleGroups(nd).Contains(c.Target)))
+        {
+            c.Flags &= ~CsFlags.Group;
+            c.Target = 0;
+        }
     }
 
     /// <summary>Whether this binding may carry <c>on_delay</c>/<c>off_delay</c>:
@@ -1419,6 +1631,7 @@ public sealed partial class ControlSurfacesPanel : UserControl
             BuildAddMenu();
             return;
         }
+        bool wasDisplay = _vm.CsBindings[slot].Type == CsType.Display;
         _drafts[slot] = CsBinding.Cleared();
         _nameEdits[slot] = "";
         RemoveSlotCard(slot);
@@ -1426,6 +1639,9 @@ public sealed partial class ControlSurfacesPanel : UserControl
         {
             _vm.SetCsBinding(slot, CsBinding.Cleared());
             if (!string.IsNullOrEmpty(_vm.CsNames[slot])) _vm.SetCsName(slot, "");
+            // The panel is detached now; its config and pages stay, but its live
+            // state has moved.
+            if (wasDisplay) _vm.RefreshCsDisplay();
         });
         HardwarePins.RaisePinAssignmentsChanged();
         SeedDraftFrom(slot);
@@ -1451,6 +1667,15 @@ public sealed partial class ControlSurfacesPanel : UserControl
         _pinRefreshers.Remove(slot);
         _channelRelabel.Remove(slot);
         _expanded.Remove(slot);
+        if (slot == _displaySlot)
+        {
+            // The display card (which hosts the config and page sections) is gone.
+            _displaySlot = -1;
+            _displayHost = null;
+            _displayStateLabel = null;
+            _displayStateDetail = null;
+            StopDisplayPoll();
+        }
         if (slot == _irSectionSlot)
         {
             // The IR receiver card (which hosts the remote-button section) is gone.
@@ -1498,11 +1723,19 @@ public sealed partial class ControlSurfacesPanel : UserControl
         {
             if (bindingChanged) status = _vm.SetCsBinding(slot, binding);
             if (status == CsStatus.Success && nameChanged) status = _vm.SetCsName(slot, name);
+            // The firmware seeds a display's page table the first time one
+            // attaches, so a panel that just came up already has pages the app
+            // has never read.
+            if (binding.Type == CsType.Display && status == CsStatus.Success) _vm.RefreshCsDisplay();
         });
 
         _applyingSlot = null;
         HardwarePins.RaisePinAssignmentsChanged();
-        SeedDraftFrom(slot);
+        // Only a success re-seeds from the device. A binding the firmware refused
+        // reads back as an empty slot, which would blank the card and take the
+        // message explaining the refusal with it — the display is the first
+        // component strict enough to hit that often. A rejected draft stays put.
+        if (status == CsStatus.Success) SeedDraftFrom(slot);
         // Fully refresh only the applied card. Applying makes this slot live, so it now
         // claims its GPIO(s) — the other cards just need their pin lists refreshed in
         // place (not their whole bodies, which would flash their Apply buttons).
@@ -1727,6 +1960,16 @@ public sealed partial class ControlSurfacesPanel : UserControl
         return false;
     }
 
+    /// <summary>Whether a display is already staged or live. Counting drafts keeps
+    /// a second one from being added before the first is applied — the device
+    /// would refuse it with CS_STATUS_DISPLAY_IN_USE.</summary>
+    private bool AnyDisplay()
+    {
+        for (int i = 0; i < _vm.CsSlotCount; i++)
+            if (_drafts[i].Type == CsType.Display) return true;
+        return false;
+    }
+
     /// <summary>GPIOs not claimed by any other feature (or another CS slot).</summary>
     private IEnumerable<byte> FreePins(int slot, bool adcOnly)
     {
@@ -1832,6 +2075,20 @@ public sealed partial class ControlSurfacesPanel : UserControl
         var typeDesc = caps.DescFor(type);
         bool adcOnly = typeDesc?.PinClass == CsPinClass.Adc;
         bool twoPins = typeDesc?.PinCount == 2;
+
+        // The display is a container: SDA, SCL, a model in `index` and an address
+        // in `value`, every other field 0. SDA must be an even GPIO and SCL the
+        // odd one above it (the pin mux pairs them), so the pins are seeded as a
+        // legal pair rather than the next two free numbers.
+        if (type == CsType.Display)
+        {
+            var (sda, scl) = FreeI2cPair(slot);
+            b.Gpio0 = sda;
+            b.Gpio1 = scl;
+            b.Index = (byte)CsDisplayModel.Ssd1306_128x64;
+            b.Value = 0;   // 0 means the model's conventional address
+            return b;
+        }
 
         // Pins.
         var free = FreePins(slot, adcOnly).ToList();
@@ -1939,11 +2196,12 @@ public sealed partial class ControlSurfacesPanel : UserControl
         var nd = _vm.CsNounDescFor(d.Noun);
         if (nd == null) return "Remote button";
         string s = CsNounInfo.Name(d.Noun);
-        // IR commands never carry the GROUP flag (caps v9): a remote key reaches a
-        // group by firing a macro whose steps use it.
-        if (nd.IsTargeted) s += $" ({ChannelLabel(nd.TargetKind, d.Target)})";
+        if (nd.IsTargeted)
+            s += d.IsGrouped
+                ? $" ({_vm.CsGroupLabel(d.Target)})"
+                : $" ({ChannelLabel(nd.TargetKind, d.Target)})";
         else if (d.Noun == (byte)CsNoun.Macro) s += $" ({_vm.CsMacroLabel(d.Value)})";
-        return $"{s} · {ActionName((CsAction)d.Action)}";
+        return $"{s} · {ActionName((CsAction)d.Action, d.Noun)}";
     }
 
     private void UpdateIrTitle(int sub)
@@ -1970,6 +2228,11 @@ public sealed partial class ControlSurfacesPanel : UserControl
             int n = ConfiguredIrCount();
             parts.Add(n == 1 ? "1 remote button" : $"{n} remote buttons");
         }
+        else if (d.Type == CsType.Display)
+        {
+            parts.Add(CsDisplayModels.Name(d.Index));
+            parts.Add($"0x{DisplayAddress(d):X2}");
+        }
         else
         {
             var nd = _vm.CsNounDescFor(d.Noun);
@@ -1995,6 +2258,7 @@ public sealed partial class ControlSurfacesPanel : UserControl
         CsType.Led => "",      // lightbulb
         CsType.LedPwm => "",   // brightness
         CsType.Ir => "",       // remote
+        CsType.Display => "",  // monitor
         _ => "",
     };
 
@@ -2008,6 +2272,7 @@ public sealed partial class ControlSurfacesPanel : UserControl
         CsType.Led => Color.FromArgb(255, 0x85, 0xC6, 0x62),     // green
         CsType.LedPwm => Color.FromArgb(255, 0x52, 0xB9, 0xD8),  // cyan
         CsType.Ir => Color.FromArgb(255, 0xF5, 0x73, 0x73),      // coral
+        CsType.Display => Color.FromArgb(255, 0x04, 0x85, 0x6F),  // teal
         _ => Color.FromArgb(255, 0x90, 0x90, 0x90),
     };
 
@@ -2020,8 +2285,17 @@ public sealed partial class ControlSurfacesPanel : UserControl
         CsType.Led => "LED",
         CsType.LedPwm => "LED (dimmable)",
         CsType.Ir => "IR Remote",
+        CsType.Display => "Display",
         _ => "None",
     };
+
+    /// <summary>Browse/Adjust is not stepping a list: unarmed it moves a page,
+    /// armed it moves the shown value (and on an on/off page the firmware reads up
+    /// as on, down as off). A direction is the only honest label for that.</summary>
+    private static string ActionName(CsAction a, byte noun) =>
+        noun == (byte)CsNoun.PageValue && a is CsAction.Inc or CsAction.Dec
+            ? (a == CsAction.Inc ? "Up" : "Down")
+            : ActionName(a);
 
     private static string ActionName(CsAction a) => a switch
     {

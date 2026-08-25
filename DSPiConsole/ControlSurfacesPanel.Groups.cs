@@ -503,10 +503,10 @@ public sealed partial class ControlSurfacesPanel
             ? Color.FromArgb(255, 100, 200, 140)
             : Color.FromArgb(255, 240, 180, 90);
 
-    /// <summary>Re-populate the body of every binding card that targets a group, so
-    /// a group rename, re-scope or removal is reflected in its picker and summary.
-    /// Returns the names of the controls whose group reference no longer resolves
-    /// and was therefore dropped back to a plain channel.</summary>
+    /// <summary>Re-populate the body of every binding card and remote button that
+    /// targets a group, so a group rename, re-scope or removal is reflected in its
+    /// picker and summary. Returns the names of the controls whose group reference
+    /// no longer resolves and was therefore dropped back to a plain channel.</summary>
     private List<string> RefreshGroupedBindingCards()
     {
         var orphaned = new List<string>();
@@ -520,6 +520,16 @@ public sealed partial class ControlSurfacesPanel
             SanitizeDraft(slot);
             if (!_drafts[slot].IsGrouped) orphaned.Add(SlotTitle(slot));
             PopulateSlotBody(slot);
+        }
+        // A remote key can carry a group too since caps v10, and a group edit
+        // strands one exactly as it strands a control.
+        for (int sub = 0; sub < _vm.CsIrMax; sub++)
+        {
+            if (!_irDrafts[sub].IsGrouped) continue;
+            string title = IrCommandTitle(sub);
+            SanitizeIrDraft(sub);
+            if (!_irDrafts[sub].IsGrouped) orphaned.Add(title);
+            if (_irBodies.ContainsKey(sub)) RefreshIrCommandCard(sub);
         }
         return orphaned;
     }
@@ -1237,12 +1247,15 @@ public sealed partial class ControlSurfacesPanel
     };
 
     /// <summary>Nouns a macro step may drive: everything accepting one of the step
-    /// actions, minus the macro noun itself (steps may not fire macros).</summary>
+    /// actions, minus the macro noun itself (steps may not fire macros) and
+    /// Browse/Adjust (a stored sequence that edits whatever happens to be on the
+    /// display's screen is non-deterministic, and the firmware rejects it at step
+    /// validation for exactly that reason).</summary>
     private IEnumerable<(int noun, CsNounDesc nd)> MacroStepNouns()
     {
         for (int n = 0; n < _vm.CsNounDescs.Count; n++)
         {
-            if (n == (int)CsNoun.Macro) continue;
+            if (n is (int)CsNoun.Macro or (int)CsNoun.PageValue) continue;
             var nd = _vm.CsNounDescs[n];
             if (nd == null || !nd.IsAvailable) continue;
             if (MacroStepActions(nd).Count == 0) continue;
