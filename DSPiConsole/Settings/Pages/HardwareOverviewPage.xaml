@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<settings:SettingsModule
+    x:Class="DSPiConsole.Settings.Pages.HardwareOverviewPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:DSPiConsole.Settings">
+
+    <!--
+        System › Overview. A read-only map of every GPIO the device is holding.
+
+        The pin pickers scattered across the other System pages each answer "is
+        this one free?" a pin at a time; nothing answered "what does the whole
+        header look like right now". Everything here comes from
+        HardwarePins.BuildAssignmentMap, the same authority those pickers ask,
+        so this page cannot claim a pin is free that a picker will refuse.
+
+        The map and the role sections are built in code-behind: their shape
+        follows what the device is holding, which is not known until it answers.
+    -->
+    <StackPanel Spacing="12">
+
+        <!-- Pin assignments live on the device, so there is nothing to show
+             without one. Collapsed rather than merely hidden, so the enclosing
+             StackPanel's Spacing doesn't reserve a gap for it. -->
+        <Border x:Name="DisconnectedHint" Visibility="Collapsed"
+                Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                CornerRadius="8" Padding="24,32">
+            <StackPanel Spacing="6" HorizontalAlignment="Center">
+                <FontIcon Glyph="&#xE8CD;" FontSize="28" HorizontalAlignment="Center"
+                          Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                <TextBlock Text="No device connected" FontWeight="SemiBold" FontSize="14"
+                           HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                <TextBlock Text="Pin assignments live on the device. Connect a DSPi to see which GPIOs are in use."
+                           FontSize="12" TextWrapping="Wrap" TextAlignment="Center"
+                           HorizontalAlignment="Center" MaxWidth="340"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+            </StackPanel>
+        </Border>
+
+        <StackPanel x:Name="BodyPanel" Spacing="12">
+
+            <!-- The whole header at a glance. A bare count of free pins answers
+                 "how many are left" but not "where", and where is what matters:
+                 the clock pairs claim pin and pin+1 together, so two free GPIOs
+                 only help them if they are adjacent. Pin order shows that. -->
+            <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                    CornerRadius="8" Padding="16,14">
+                <StackPanel Spacing="12">
+                    <Grid ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Grid.Column="0" Glyph="&#xE964;" FontSize="15"
+                                  VerticalAlignment="Center"
+                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                        <TextBlock x:Name="UsageText" Grid.Column="1" FontSize="14"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock x:Name="FreeText" Grid.Column="2" FontSize="12"
+                                   VerticalAlignment="Center"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </Grid>
+
+                    <Grid x:Name="MapGrid" ColumnSpacing="6" RowSpacing="6" HorizontalAlignment="Center"/>
+
+                    <!-- The role sections below are the full legend; this row is
+                         the same key beside the colours it explains, so the map
+                         reads without scrolling to reach them. -->
+                    <StackPanel x:Name="LegendPanel" Orientation="Horizontal" Spacing="14"/>
+                </StackPanel>
+            </Border>
+
+            <TextBlock x:Name="EmptyHint" Visibility="Collapsed"
+                       Text="No GPIOs are currently claimed."
+                       FontSize="12" TextAlignment="Center" Margin="0,16,0,16"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+
+            <!-- One section per role in use, each listing its pins and owners. -->
+            <StackPanel x:Name="GroupsPanel" Spacing="26"/>
+        </StackPanel>
+    </StackPanel>
+</settings:SettingsModule>

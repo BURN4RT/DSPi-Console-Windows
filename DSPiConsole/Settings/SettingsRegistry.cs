@@ -48,6 +48,7 @@ internal static class SettingsRegistry
         TryAdd<GraphingGridLabelsPage>(pages);
 
         // ── System ─────────────────────────────────────────────────
+        TryAdd<HardwareOverviewPage>(pages);
         TryAdd<HardwareOutputAssignmentPage>(pages);
         TryAdd<HardwareMasterClockPage>(pages);
         TryAdd<HardwareAdatPage>(pages);
