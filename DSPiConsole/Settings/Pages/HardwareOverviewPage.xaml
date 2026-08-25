@@ -64,7 +64,7 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                     </Grid>
 
-                    <Grid x:Name="MapGrid" ColumnSpacing="6" RowSpacing="6" HorizontalAlignment="Center"/>
+                    <Grid x:Name="MapGrid" HorizontalAlignment="Center"/>
 
                     <!-- The role sections below are the full legend; this row is
                          the same key beside the colours it explains, so the map
@@ -79,7 +79,7 @@
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
 
             <!-- One section per role in use, each listing its pins and owners. -->
-            <StackPanel x:Name="GroupsPanel" Spacing="26"/>
+            <StackPanel x:Name="GroupsPanel" Spacing="12"/>
         </StackPanel>
     </StackPanel>
 </settings:SettingsModule>

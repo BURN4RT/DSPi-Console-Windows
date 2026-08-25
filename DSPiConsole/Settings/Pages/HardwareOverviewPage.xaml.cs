@@ -44,18 +44,22 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
     /// needs, which reads as a table of something rather than a pin header.</summary>
     private const double MapCellWidth = 64;
 
-    /// <summary>Columns in the breakdown.</summary>
-    private const int BreakdownColumns = 3;
+    /// <summary>Gap between map cells, set from here rather than in the XAML so
+    /// that <see cref="MapWidth"/> cannot drift from what is actually drawn.</summary>
+    private const double MapCellSpacing = 6;
 
-    /// <summary>Column width in the breakdown. Set, not starred, for the two
-    /// reasons starring fails here: a grid left-aligned to its content sizes to
-    /// that content, which turns starred columns into Auto ones and clumps the
-    /// entries together, while a stretched grid capped by MaxWidth is centred in
-    /// what is left over and drifts away from the heading above it. A width says
-    /// what it means and stays under the heading. Three of these plus their gaps
-    /// come to roughly 750px, which the settings pane has room for; a name too
-    /// long for one ellipsizes rather than widening the column.</summary>
-    private const double BreakdownColumnWidth = 240;
+    /// <summary>How wide the map comes out. The breakdown below spans the same,
+    /// so the two blocks share their left and right edges.</summary>
+    private static double MapWidth => MapColumns * MapCellWidth + (MapColumns - 1) * MapCellSpacing;
+
+    /// <summary>Columns in the breakdown.</summary>
+    private const int BreakdownColumns = 4;
+
+    /// <summary>How wide a feature's name may get before it ellipsizes. The
+    /// columns divide <see cref="MapWidth"/> between them, so this is sized to
+    /// what is left of one after the chip and its gap — a name that ran past it
+    /// would push the block wider than the map and out over its card's edge.</summary>
+    private const double BreakdownLabelMaxWidth = 90;
 
     /// <summary>One hue per role, from the macOS build so a chip means the same
     /// thing on both, except Other. Chosen by construction rather than by eye:
@@ -164,6 +168,8 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
         MapGrid.Children.Clear();
         MapGrid.ColumnDefinitions.Clear();
         MapGrid.RowDefinitions.Clear();
+        MapGrid.ColumnSpacing = MapCellSpacing;
+        MapGrid.RowSpacing = MapCellSpacing;
 
         var pins = HardwarePins.ValidPins;
         int rowCount = (pins.Length + MapColumns - 1) / MapColumns;
@@ -232,8 +238,8 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
 
     // ── The breakdown ────────────────────────────────────────────────────────
 
-    /// <summary>One section per role in use, each a two-column list of pins and
-    /// the features holding them.</summary>
+    /// <summary>One card per role in use, each listing its pins and the features
+    /// holding them.</summary>
     private void BuildGroups(IReadOnlyList<PinAssignment> rows)
     {
         GroupsPanel.Children.Clear();
@@ -248,36 +254,53 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
                 Foreground = SecondaryBrush,
             });
 
+            // Always the full column count, even for a role holding one pin: the
+            // block's width is the map's, so a fixed count puts every column on
+            // the same edge down the whole page rather than re-centring per card.
+            int columns = BreakdownColumns;
+
             // A fixed column count, like the map's: the pane is a known width,
             // and a count that re-decides itself settles a frame late.
             var grid = new Grid
             {
                 ColumnSpacing = 16,
                 RowSpacing = 12,
-                HorizontalAlignment = HorizontalAlignment.Left,
+                Width = MapWidth,
+                HorizontalAlignment = HorizontalAlignment.Center,
             };
-            for (int c = 0; c < BreakdownColumns; c++)
-                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(BreakdownColumnWidth) });
-            int rowCount = (group.Rows.Count + BreakdownColumns - 1) / BreakdownColumns;
+            for (int c = 0; c < columns; c++)
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            int rowCount = (group.Rows.Count + columns - 1) / columns;
             for (int r = 0; r < rowCount; r++)
                 grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             for (int i = 0; i < group.Rows.Count; i++)
             {
                 var cell = BuildAssignmentCell(group.Rows[i]);
-                Grid.SetColumn(cell, i % BreakdownColumns);
-                Grid.SetRow(cell, i / BreakdownColumns);
+                Grid.SetColumn(cell, i % columns);
+                Grid.SetRow(cell, i / columns);
                 grid.Children.Add(cell);
             }
             section.Children.Add(grid);
-            GroupsPanel.Children.Add(section);
+
+            // Its own card, matching the map's above it.
+            GroupsPanel.Children.Add(new Border
+            {
+                Background = CardBackground,
+                BorderBrush = CardStroke,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(16, 14, 16, 14),
+                Child = section,
+            });
         }
     }
 
     /// <summary>One pin: a role-tinted GPIO chip and the feature holding it. The
-    /// chip is a fixed width so the names line up down every column. No role
-    /// glyph — the section names the role and the chip is already coloured by
-    /// it, so a third indicator would only cost width.</summary>
+    /// chip is a fixed width so the names line up down every column, and the
+    /// column itself sizes to the widest name in it. No role glyph — the card
+    /// names the role and the chip is already coloured by it, so a third
+    /// indicator would only cost width.</summary>
     private static FrameworkElement BuildAssignmentCell(PinAssignment row)
     {
         var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
@@ -304,6 +327,7 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
             FontSize = 12,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = BreakdownLabelMaxWidth,
         };
         ToolTipService.SetToolTip(label, row.Label);
         panel.Children.Add(label);
@@ -325,6 +349,14 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
     // ── Shared brushes ───────────────────────────────────────────────────────
 
     private static FontFamily MonoFont => new("Consolas");
+
+    private static Brush CardBackground =>
+        Application.Current.Resources.TryGetValue("CardBackgroundFillColorSecondaryBrush", out var b) && b is Brush br
+            ? br : new SolidColorBrush(Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF));
+
+    private static Brush CardStroke =>
+        Application.Current.Resources.TryGetValue("CardStrokeColorDefaultBrush", out var b) && b is Brush br
+            ? br : new SolidColorBrush(Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF));
 
     private static Brush SecondaryBrush =>
         Application.Current.Resources.TryGetValue("TextFillColorSecondaryBrush", out var b) && b is Brush br
