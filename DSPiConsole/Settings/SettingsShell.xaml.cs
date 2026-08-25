@@ -66,11 +66,13 @@ public sealed partial class SettingsShell : UserControl
             _vm.OutputConfigStateChanged += OnOutputConfigStateChanged;
 
             Loaded += OnShellLoaded;
+            PinNavigationRequested += OnPinNavigationRequested;
             Unloaded += (_, _) =>
             {
                 _tracker.Changed -= OnTrackerChanged;
                 _vm.PropertyChanged -= OnVmPropertyChanged;
                 _vm.OutputConfigStateChanged -= OnOutputConfigStateChanged;
+                PinNavigationRequested -= OnPinNavigationRequested;
             };
 
             // The Control Interfaces page gates on a device probe (0xF9) that
@@ -529,6 +531,44 @@ public sealed partial class SettingsShell : UserControl
     {
         if (PageHost.Content is SettingsModule mod)
             mod.RefreshFromShell();
+    }
+
+    /// <summary>Raised when something asks to be shown where a GPIO is set —
+    /// the Overview's map, which is read-only and so has nowhere to send a click
+    /// except the page that owns the pin. Static because the settings window is
+    /// single-instance, the same reason <see cref="HardwarePins"/> broadcasts its
+    /// pin changes that way.</summary>
+    internal static event Action<string, byte>? PinNavigationRequested;
+
+    /// <summary>Ask the open settings window to show where <paramref name="pin"/>
+    /// is set. Does nothing if no shell is listening.</summary>
+    internal static void RequestPin(string pageId, byte pin) =>
+        PinNavigationRequested?.Invoke(pageId, pin);
+
+    private void OnPinNavigationRequested(string pageId, byte pin) =>
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (FindMenuItem(pageId) is not { } item) return;
+            // Selecting the item builds (or reuses) the page through the same
+            // path a click down the sidebar takes.
+            Nav.SelectedItem = item;
+            HighlightWhenReady(pin, attempts: 8);
+        });
+
+    /// <summary>Flash the control that sets the pin, once the page has one to
+    /// flash. A page that was just built has not laid out yet, and one that
+    /// fills itself from the device — Control Surfaces — is not merely late but
+    /// waiting on a read, so this retries briefly rather than asking once and
+    /// giving up on the answer it was always going to get.</summary>
+    private void HighlightWhenReady(byte pin, int attempts)
+    {
+        if (PageHost.Content is IPinHighlightPage page && page.HighlightPin(pin)) return;
+        if (attempts <= 0) return;
+        var retry = DispatcherQueue.CreateTimer();
+        retry.Interval = TimeSpan.FromMilliseconds(150);
+        retry.IsRepeating = false;
+        retry.Tick += (_, _) => HighlightWhenReady(pin, attempts - 1);
+        retry.Start();
     }
 
     private NavigationViewItem? FindMenuItem(string pageId)

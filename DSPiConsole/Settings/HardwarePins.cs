@@ -47,10 +47,16 @@ internal enum PinRole
     Utility,  // everything else the board holds, e.g. the DAC mute line
 }
 
-/// <summary>One GPIO and the feature holding it. <see cref="Label"/> is the
-/// same owner name the pin pickers have always shown in their conflict
-/// messages, so the Overview and a picker cannot disagree about a pin.</summary>
-internal readonly record struct PinAssignment(byte Pin, string Label, PinRole Role);
+/// <summary>One GPIO, the feature holding it, and the page that feature is set
+/// on. <see cref="Label"/> is the same owner name the pin pickers have always
+/// shown in their conflict messages, so the Overview and a picker cannot
+/// disagree about a pin.
+///
+/// <para><see cref="PageId"/> is carried here rather than worked out again by
+/// whoever wants to navigate: the code that knows a pin is BCK is the same code
+/// that knows BCK is set on the I2S page, and a second table mapping one to the
+/// other would be free to drift from this one.</para></summary>
+internal readonly record struct PinAssignment(byte Pin, string Label, PinRole Role, string PageId);
 
 internal static class HardwarePins
 {
@@ -88,6 +94,18 @@ internal static class HardwarePins
         platform == "RP2350"
             ? new byte[] { 13, 15, 21 }
             : new byte[] { 21 };
+
+    // The pages that own a GPIO, by the id each registers with the settings
+    // registry. Named here so a claim above reads as "who holds it and where you
+    // change it" on one line.
+    private const string PageOutputs = "hardware.output-assignment";
+    private const string PageMasterClock = "hardware.master-clock";
+    private const string PageI2s = "hardware.i2s";
+    private const string PageAdat = "hardware.adat";
+    private const string PageSpdif = "hardware.spdif-input";
+    private const string PageControlInterfaces = "hardware.control-interfaces";
+    private const string PageDacMute = "hardware.dac-mute";
+    private const string PageControlSurfaces = "control.surfaces";
 
     /// <summary>Raised when any Hardware page commits a pin change.
     /// Subscribers (other Hardware pages) call <see cref="BuildOwnerMap"/>
@@ -164,8 +182,8 @@ internal static class HardwarePins
         var owners = new Dictionary<byte, PinAssignment>();
         // Later claims overwrite earlier ones on the same pin, which is how the
         // ADAT input's deliberate sharing of the output pin is reported.
-        void Claim(byte pin, string label, PinRole role) =>
-            owners[pin] = new PinAssignment(pin, label, role);
+        void Claim(byte pin, string label, PinRole role, string pageId) =>
+            owners[pin] = new PinAssignment(pin, label, role, pageId);
 
         // Output GPIO pins. Output id 0..3 map to S/PDIF L of each pair
         // (or I²S DOUT); id 4 (RP2350) / id 2 (RP2040) is PDM. The
@@ -182,22 +200,22 @@ internal static class HardwarePins
         foreach (var o in outputs)
         {
             if (o.Id == excludeOutputId) continue;
-            Claim(vm.GetOutputPinValue(o.Id), o.Detail, PinRole.Output);
+            Claim(vm.GetOutputPinValue(o.Id), o.Detail, PinRole.Output, PageOutputs);
         }
 
         // I²S clock pins: BCK reserves both pin and pin+1 (LRCK).
-        Claim(vm.I2SBckPin, "BCK", PinRole.Clock);
-        Claim((byte)(vm.I2SBckPin + 1), "LRCK", PinRole.Clock);
+        Claim(vm.I2SBckPin, "BCK", PinRole.Clock, PageI2s);
+        Claim((byte)(vm.I2SBckPin + 1), "LRCK", PinRole.Clock, PageI2s);
 
         // Slave-pair BCK/LRCK — reserved only in SPLIT clock-pin mode.
         if (vm.I2sClockSplit && !excludeI2sBckSlaveSelf)
         {
-            Claim(vm.I2sBckPinSlave, "Slave BCK", PinRole.Clock);
-            Claim((byte)(vm.I2sBckPinSlave + 1), "Slave LRCK", PinRole.Clock);
+            Claim(vm.I2sBckPinSlave, "Slave BCK", PinRole.Clock, PageI2s);
+            Claim((byte)(vm.I2sBckPinSlave + 1), "Slave LRCK", PinRole.Clock, PageI2s);
         }
 
         if (vm.MckEnabled && !excludeMckSelf)
-            Claim(vm.MckPin, "MCK", PinRole.Clock);
+            Claim(vm.MckPin, "MCK", PinRole.Clock, PageMasterClock);
 
         // S/PDIF RX input pins. With multiple selectable inputs, only the
         // ENABLED inputs actually claim a GPIO (a disabled input's pin is just a
@@ -211,12 +229,12 @@ internal static class HardwarePins
                     if (i == excludeSpdifRxIndex) continue;
                     if (excludeSpdifRxSelf && i == 0) continue;
                     if (!vm.SpdifInputEnabled(i)) continue;
-                    Claim(vm.SpdifRxPinAt(i), $"SPDIF {i + 1}", PinRole.Input);
+                    Claim(vm.SpdifRxPinAt(i), $"SPDIF {i + 1}", PinRole.Input, PageSpdif);
                 }
             }
             else if (!excludeSpdifRxSelf)
             {
-                Claim(vm.SpdifRxPin, "SPDIF RX", PinRole.Input);
+                Claim(vm.SpdifRxPin, "SPDIF RX", PinRole.Input, PageSpdif);
             }
         }
 
@@ -229,7 +247,7 @@ internal static class HardwarePins
             {
                 if (p == excludeI2sRxPair) continue;
                 if (excludeI2sRxSelf && p == 0) continue;
-                Claim(vm.I2sRxPinAt(p), pairs > 1 ? $"I2S RX {p + 1}" : "I2S RX", PinRole.Input);
+                Claim(vm.I2sRxPinAt(p), pairs > 1 ? $"I2S RX {p + 1}" : "I2S RX", PinRole.Input, PageI2s);
             }
         }
 
@@ -239,14 +257,14 @@ internal static class HardwarePins
         // "ADAT Out" rather than "ADAT" so the conflict label pairs with "ADAT In"
         // — both directions live on one page now and either can own a GPIO.
         if (vm.AdatSupported && vm.AdatEnabled && !excludeAdatSelf)
-            Claim(vm.AdatPin, "ADAT Out", PinRole.Output);
+            Claim(vm.AdatPin, "ADAT Out", PinRole.Output, PageAdat);
 
         // ADAT optical input pin (V24+, RP2350): claims a GPIO only while enabled.
         // May legitimately share the ADAT-output pin (one-directional loopback), so
         // it's claimed last — its own combo passes excludeAdatInputSelf.
         if (vm.AdatInputSupported && vm.AdatInputEnabled && !excludeAdatInputSelf
             && vm.AdatInputPin != MainViewModel.AdatInputPinUnset)
-            Claim(vm.AdatInputPin, "ADAT In", PinRole.Input);
+            Claim(vm.AdatInputPin, "ADAT In", PinRole.Input, PageAdat);
 
         // Control-surface GPIOs: only LIVE bindings (CsStatus.IsSlotActive) actually
         // hold a pin. Encoders claim both gpio0 and gpio1; single-pin types leave
@@ -263,8 +281,8 @@ internal static class HardwarePins
                 string label = !string.IsNullOrWhiteSpace(vm.CsNames[s])
                     ? vm.CsNames[s]
                     : $"Ctrl {s + 1}";
-                Claim(b.Gpio0, label, PinRole.Control);
-                if (b.Gpio1 != CsLimits.GpioUnused) Claim(b.Gpio1, label, PinRole.Control);
+                Claim(b.Gpio0, label, PinRole.Control, PageControlSurfaces);
+                if (b.Gpio1 != CsLimits.GpioUnused) Claim(b.Gpio1, label, PinRole.Control, PageControlSurfaces);
             }
         }
 
@@ -275,13 +293,13 @@ internal static class HardwarePins
         {
             if (ci.UartLive && !excludeUartSelf)
             {
-                Claim(vm.UartCtrlConfig.TxPin, "UART TX", PinRole.Control);
-                Claim(vm.UartCtrlConfig.RxPin, "UART RX", PinRole.Control);
+                Claim(vm.UartCtrlConfig.TxPin, "UART TX", PinRole.Control, PageControlInterfaces);
+                Claim(vm.UartCtrlConfig.RxPin, "UART RX", PinRole.Control, PageControlInterfaces);
             }
             if (ci.I2cLive && !excludeI2cSelf)
             {
-                Claim(vm.I2cCtrlConfig.SdaPin, "I2C SDA", PinRole.Control);
-                Claim(vm.I2cCtrlConfig.SclPin, "I2C SCL", PinRole.Control);
+                Claim(vm.I2cCtrlConfig.SdaPin, "I2C SDA", PinRole.Control, PageControlInterfaces);
+                Claim(vm.I2cCtrlConfig.SclPin, "I2C SCL", PinRole.Control, PageControlInterfaces);
             }
         }
 
@@ -291,7 +309,7 @@ internal static class HardwarePins
         if (vm.DacHwMuteSupported
             && !excludeDacMuteSelf
             && vm.DacHwMute.Pin != DacHwMuteConfig.PinNone)
-            Claim(vm.DacHwMute.Pin, "DAC Mute", PinRole.Utility);
+            Claim(vm.DacHwMute.Pin, "DAC Mute", PinRole.Utility, PageDacMute);
 
         return owners;
     }

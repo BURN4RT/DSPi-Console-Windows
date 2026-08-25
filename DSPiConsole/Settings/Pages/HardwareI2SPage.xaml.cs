@@ -141,6 +141,28 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         }
     }
 
+    /// <summary>Where a pin the Overview linked here is set. Worked out from live
+    /// state rather than registered as the cards are built: LRCK has no control of
+    /// its own (it rides BCK + 1), and which of the input pickers is live follows
+    /// the active pair count.</summary>
+    public override bool HighlightPin(byte pin)
+    {
+        if (Vm == null) return false;
+        if (pin == Vm.I2SBckPin || pin == Vm.I2SBckPin + 1) { PinFlash.Play(BckPinCard); return true; }
+        if (Vm.I2sClockSplit && (pin == Vm.I2sBckPinSlave || pin == Vm.I2sBckPinSlave + 1))
+        {
+            PinFlash.Play(SlaveBckCard);
+            return true;
+        }
+        for (int pair = 0; pair < Vm.I2sActivePairs && pair < _rxCombos.Length; pair++)
+        {
+            if (Vm.I2sRxPinAt(pair) != pin) continue;
+            PinFlash.Play(_rxCombos[pair]);
+            return true;
+        }
+        return false;
+    }
+
     protected override void Refresh()
     {
         if (Vm == null) return;

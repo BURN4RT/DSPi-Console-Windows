@@ -44,8 +44,34 @@ public enum CsSection { Bindings, Groups, Macros }
 /// hasn't applied yet.
 /// </para>
 /// </summary>
-public sealed partial class ControlSurfacesPanel : UserControl
+public sealed partial class ControlSurfacesPanel : UserControl, IPinHighlightPage
 {
+    /// <summary>Where a GPIO the Overview linked here is set: the card for the
+    /// control holding it, expanded so its pin picker is actually on screen. Only
+    /// live bindings hold a pin, which is the same rule that put it on the map.
+    ///
+    /// <para>False while the panel has yet to draw that card — the settings shell
+    /// retries, because this page fills itself from a device read and is usually
+    /// still waiting on one when a click first lands here.</para></summary>
+    public bool HighlightPin(byte pin)
+    {
+        if (_section != CsSection.Bindings) return false;
+        for (int slot = 0; slot < _vm.CsSlotCount && slot < _drafts.Length; slot++)
+        {
+            var binding = _vm.CsBindings[slot];
+            if (!binding.IsConfigured) continue;
+            bool holds = binding.Gpio0 == pin
+                         || (binding.Gpio1 != CsLimits.GpioUnused && binding.Gpio1 == pin);
+            if (!holds) continue;
+            if (!_slotCards.TryGetValue(slot, out var card)) return false;
+            _expanded.Add(slot);
+            if (card is Expander expander) expander.IsExpanded = true;
+            PinFlash.Play(card);
+            return true;
+        }
+        return false;
+    }
+
     private readonly MainViewModel _vm;
     private readonly CsSection _section;
 

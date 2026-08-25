@@ -91,6 +91,22 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
         }
     }
 
+    /// <summary>Where a pin the Overview linked here is set — the picker for the
+    /// input holding it. Only the enabled inputs claim a GPIO, which is the rule
+    /// the map follows too, so an unclaimed pin never arrives here.</summary>
+    public override bool HighlightPin(byte pin)
+    {
+        if (Vm == null) return false;
+        var cards = new[] { RxPinCard0, RxPinCard1, RxPinCard2, RxPinCard3 };
+        for (int i = 0; i < cards.Length && i < Vm.SpdifInputCount; i++)
+        {
+            if (Vm.SpdifRxPinAt(i) != pin) continue;
+            PinFlash.Play(cards[i]);
+            return true;
+        }
+        return false;
+    }
+
     protected override void Refresh()
     {
         if (Vm == null) return;

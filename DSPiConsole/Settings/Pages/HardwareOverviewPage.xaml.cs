@@ -202,7 +202,8 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
                         : SecondaryBrush,
                 },
             };
-            ToolTipService.SetToolTip(chip, held ? $"GPIO {pin} — {claim.Label}" : $"GPIO {pin} — available");
+            if (held) MakeClickable(chip, claim);
+            else ToolTipService.SetToolTip(chip, $"GPIO {pin} — available");
             Grid.SetColumn(chip, i % MapColumns);
             Grid.SetRow(chip, i / MapColumns);
             MapGrid.Children.Add(chip);
@@ -303,7 +304,13 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
     /// indicator would only cost width.</summary>
     private static FrameworkElement BuildAssignmentCell(PinAssignment row)
     {
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        var panel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 10,
+            // Hit-testable across the whole cell, not just where a glyph lands.
+            Background = new SolidColorBrush(Colors.Transparent),
+        };
         panel.Children.Add(new Border
         {
             Width = 43,
@@ -329,9 +336,29 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxWidth = BreakdownLabelMaxWidth,
         };
-        ToolTipService.SetToolTip(label, row.Label);
         panel.Children.Add(label);
+        MakeClickable(panel, row);
         return panel;
+    }
+
+    /// <summary>Make a claimed pin's chip take you to the page that sets it. The
+    /// map is a read-only summary, so a click has nowhere else useful to go, and
+    /// landing on the page without saying which of its dozen cards you came for
+    /// would only move the search — the shell flashes the control on arrival.
+    ///
+    /// <para>A free pin is left inert: there is no page that sets nothing.</para></summary>
+    private static void MakeClickable(FrameworkElement element, PinAssignment claim)
+    {
+        ToolTipService.SetToolTip(element, $"GPIO {claim.Pin} — {claim.Label} · click to show where it is set");
+        element.Tapped += (_, e) =>
+        {
+            e.Handled = true;
+            SettingsShell.RequestPin(claim.PageId, claim.Pin);
+        };
+        // Enough of a hover to say it is a target, without a button's chrome
+        // covering the colour that makes the map readable.
+        element.PointerEntered += (_, _) => element.Opacity = 0.75;
+        element.PointerExited += (_, _) => element.Opacity = 1;
     }
 
     /// <summary>Claimed pins bucketed by role, empty roles dropped, each list in

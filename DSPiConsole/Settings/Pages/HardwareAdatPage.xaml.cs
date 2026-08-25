@@ -130,6 +130,15 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
         RefreshConflicts();
         RefreshLockPill();
         RefreshFreeRunWarning();
+
+        // Where each direction's pin is set, for a click on it in the Overview's
+        // map. Each claims its GPIO only while enabled, which is the same rule
+        // the map itself follows.
+        ClearPinTargets();
+        if (Vm.AdatSupported && Vm.AdatEnabled) RegisterPinTarget(Vm.AdatPin, OutPinCard);
+        if (Vm.AdatInputSupported && Vm.AdatInputEnabled
+            && Vm.AdatInputPin != MainViewModel.AdatInputPinUnset)
+            RegisterPinTarget(Vm.AdatInputPin, InPinCard);
     }
 
     /// <summary>Show the receiver's lock state beside the clock picker. Only

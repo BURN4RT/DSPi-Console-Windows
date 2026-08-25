@@ -136,6 +136,19 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
         }
     }
 
+    /// <summary>Where a pin the Overview linked here is set. An interface holds
+    /// its pins only while it is live, which is what put the pin on the map in the
+    /// first place, so both halves are checked rather than the stored config.</summary>
+    public override bool HighlightPin(byte pin)
+    {
+        if (Vm == null) return false;
+        if (Vm.UartCtrlConfig.TxPin == pin) { PinFlash.Play(UartTxCombo); return true; }
+        if (Vm.UartCtrlConfig.RxPin == pin) { PinFlash.Play(UartRxCombo); return true; }
+        if (Vm.I2cCtrlConfig.SdaPin == pin) { PinFlash.Play(I2cSdaCombo); return true; }
+        if (Vm.I2cCtrlConfig.SclPin == pin) { PinFlash.Play(I2cSclCombo); return true; }
+        return false;
+    }
+
     protected override void Refresh()
     {
         if (Vm == null) return;

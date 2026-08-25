@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using DSPiConsole.ViewModels;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
 namespace DSPiConsole.Settings;
@@ -26,8 +28,35 @@ namespace DSPiConsole.Settings;
 /// not per-control, so the choice lives in the page's handler logic.
 /// </para>
 /// </summary>
-public partial class SettingsModule : UserControl
+public partial class SettingsModule : UserControl, IPinHighlightPage
 {
+    /// <summary>Which control on this page sets which GPIO. Populated by the
+    /// page as it builds or refreshes its pin controls — at that point it
+    /// already knows the pin, so registering is a line rather than a lookup —
+    /// and read by <see cref="HighlightPin"/> when the Overview sends someone
+    /// here after clicking that pin.</summary>
+    private readonly Dictionary<byte, FrameworkElement> _pinTargets = new();
+
+    /// <summary>Note that <paramref name="element"/> is where <paramref name="pin"/>
+    /// is set. Call from wherever the page fills that control in; re-registering
+    /// the same pin replaces the previous element.</summary>
+    protected void RegisterPinTarget(byte pin, FrameworkElement? element)
+    {
+        if (element != null) _pinTargets[pin] = element;
+    }
+
+    /// <summary>Forget the page's pin controls, for a refresh that rebuilds
+    /// them. A page whose controls are fixed in XAML never needs this.</summary>
+    protected void ClearPinTargets() => _pinTargets.Clear();
+
+    /// <inheritdoc/>
+    public virtual bool HighlightPin(byte pin)
+    {
+        if (!_pinTargets.TryGetValue(pin, out var target) || target.XamlRoot == null) return false;
+        PinFlash.Play(target);
+        return true;
+    }
+
     /// <summary>The application ViewModel, set by <see cref="Attach"/>.
     /// Concrete pages read/write VM state through this reference. Null
     /// before <see cref="Attach"/> runs — guard if your event handlers

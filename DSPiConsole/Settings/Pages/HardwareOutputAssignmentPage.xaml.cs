@@ -126,6 +126,21 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
             DispatcherQueue.TryEnqueue(Refresh);
     }
 
+    /// <summary>Where a pin the Overview linked here is set. The rows are rebuilt
+    /// from a device read, so this asks the rows as they stand rather than relying
+    /// on a registration that a refresh in flight may not have redone yet.</summary>
+    public override bool HighlightPin(byte pin)
+    {
+        if (Vm == null) return false;
+        foreach (var (output, _, gpioPicker, _) in _rows)
+        {
+            if (Vm.GetOutputPinValue(output.Id) != pin) continue;
+            PinFlash.Play(gpioPicker);
+            return true;
+        }
+        return false;
+    }
+
     protected override void Refresh()
     {
         if (Vm == null) return;

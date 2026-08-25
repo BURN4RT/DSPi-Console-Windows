@@ -115,6 +115,12 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
         // even if some other feature owns it on this map.
         RebuildPinCombo(cfg.Pin);
         UpdateTestButtonEnablement();
+
+        // Where the mute pin is set, for a click on it in the Overview's map.
+        // The picker rather than a card: this page has no card of its own around
+        // it, and the picker is the thing you came to change.
+        ClearPinTargets();
+        if (cfg.Enabled && cfg.Pin != DacHwMuteConfig.PinNone) RegisterPinTarget(cfg.Pin, PinCombo);
     }
 
     private void SelectPinInCombo(byte pin)
