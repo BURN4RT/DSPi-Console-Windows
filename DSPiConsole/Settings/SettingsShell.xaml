@@ -67,11 +67,17 @@
         <StaticResource x:Key="NavigationViewItemForegroundDisabled"       ResourceKey="TextFillColorDisabledBrush"/>
     </UserControl.Resources>
 
+    <!--
+        No pane toggle: the pane is the whole navigation and there is nowhere
+        useful to go with it collapsed, so the hamburger only offered to hide
+        the thing you opened this window to use.
+    -->
     <NavigationView x:Name="Nav"
                     PaneDisplayMode="Left"
                     IsSettingsVisible="False"
                     IsBackEnabled="False"
                     IsBackButtonVisible="Collapsed"
+                    IsPaneToggleButtonVisible="False"
                     OpenPaneLength="240"
                     CompactPaneLength="48"
                     ExpandedModeThresholdWidth="640"
