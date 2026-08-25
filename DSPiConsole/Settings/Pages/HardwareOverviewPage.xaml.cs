@@ -202,8 +202,8 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
                         : SecondaryBrush,
                 },
             };
+            ToolTipService.SetToolTip(chip, held ? $"GPIO {pin} — {claim.Label}" : $"GPIO {pin} — available");
             if (held) MakeClickable(chip, claim);
-            else ToolTipService.SetToolTip(chip, $"GPIO {pin} — available");
             Grid.SetColumn(chip, i % MapColumns);
             Grid.SetRow(chip, i / MapColumns);
             MapGrid.Children.Add(chip);
@@ -336,6 +336,7 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxWidth = BreakdownLabelMaxWidth,
         };
+        ToolTipService.SetToolTip(label, row.Label);
         panel.Children.Add(label);
         MakeClickable(panel, row);
         return panel;
@@ -346,10 +347,13 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
     /// landing on the page without saying which of its dozen cards you came for
     /// would only move the search — the shell flashes the control on arrival.
     ///
+    /// <para>Leaves the tooltip to the caller: the hover state already says the
+    /// chip is a target, so saying so again in the tooltip only buries what the
+    /// tooltip is there for — what holds the pin.</para>
+    ///
     /// <para>A free pin is left inert: there is no page that sets nothing.</para></summary>
     private static void MakeClickable(FrameworkElement element, PinAssignment claim)
     {
-        ToolTipService.SetToolTip(element, $"GPIO {claim.Pin} — {claim.Label} · click to show where it is set");
         element.Tapped += (_, e) =>
         {
             e.Handled = true;
