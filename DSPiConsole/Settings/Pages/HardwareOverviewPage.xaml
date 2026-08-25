@@ -48,23 +48,27 @@
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
                     CornerRadius="8" Padding="16,14">
                 <StackPanel Spacing="12">
+                    <!-- The tally reads as one line: how many are taken at the
+                         left, how many are left at the right, in the same quiet
+                         type. Neither is a heading, and the map under them is
+                         what the card is actually for. -->
                     <Grid ColumnSpacing="10">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <FontIcon Grid.Column="0" Glyph="&#xE964;" FontSize="15"
-                                  VerticalAlignment="Center"
-                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
-                        <TextBlock x:Name="UsageText" Grid.Column="1" FontSize="14"
-                                   VerticalAlignment="Center"/>
-                        <TextBlock x:Name="FreeText" Grid.Column="2" FontSize="12"
+                        <TextBlock x:Name="UsageText" Grid.Column="0" FontSize="12"
+                                   VerticalAlignment="Center"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock x:Name="FreeText" Grid.Column="1" FontSize="12"
                                    VerticalAlignment="Center"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                     </Grid>
 
-                    <Grid x:Name="MapGrid" HorizontalAlignment="Center"/>
+                    <!-- Stretched, and capped at the map width in code: a set width cannot
+                         shrink, and this page has no sideways scroll to reach what
+                         would then hang over the card's edge. -->
+                    <Grid x:Name="MapGrid"/>
 
                     <!-- The role sections below are the full legend; this row is
                          the same key beside the colours it explains, so the map

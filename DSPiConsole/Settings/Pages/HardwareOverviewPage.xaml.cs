@@ -39,17 +39,27 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
     /// the width offered settles a frame late.</summary>
     private const int MapColumns = 9;
 
-    /// <summary>Cell width in the map. Set, not starred: stretched across the
-    /// pane a one- or two-digit number sits in a chip four times wider than it
-    /// needs, which reads as a table of something rather than a pin header.</summary>
+    /// <summary>Cell width in the map at full size. The columns are starred and
+    /// the grid capped at <see cref="MapWidth"/>, so this is what a cell settles
+    /// at whenever the pane has room and what it shrinks from when it has not —
+    /// rather than a hard width that keeps its size by spilling over the card.
+    /// Bounded because a one- or two-digit number stretched across the pane sits
+    /// in a chip four times wider than it needs, reading as a table of something
+    /// rather than a pin header.</summary>
     private const double MapCellWidth = 64;
 
     /// <summary>Gap between map cells, set from here rather than in the XAML so
     /// that <see cref="MapWidth"/> cannot drift from what is actually drawn.</summary>
     private const double MapCellSpacing = 6;
 
-    /// <summary>How wide the map comes out. The breakdown below spans the same,
-    /// so the two blocks share their left and right edges.</summary>
+    /// <summary>How wide the map comes out where there is room for it. Both this
+    /// and the breakdown below are capped at it rather than set to it, and both
+    /// stretch, so they stay exactly this wide and exactly aligned while the pane
+    /// allows and shrink together when it does not.
+    ///
+    /// <para>Set widths clipped instead: the page cannot scroll sideways and the
+    /// settings window has no minimum size, so a block wider than the pane was
+    /// cut off at both edges with no way to reach it.</para></summary>
     private static double MapWidth => MapColumns * MapCellWidth + (MapColumns - 1) * MapCellSpacing;
 
     /// <summary>Columns in the breakdown.</summary>
@@ -170,11 +180,12 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
         MapGrid.RowDefinitions.Clear();
         MapGrid.ColumnSpacing = MapCellSpacing;
         MapGrid.RowSpacing = MapCellSpacing;
+        MapGrid.MaxWidth = MapWidth;
 
         var pins = HardwarePins.ValidPins;
         int rowCount = (pins.Length + MapColumns - 1) / MapColumns;
         for (int c = 0; c < MapColumns; c++)
-            MapGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(MapCellWidth) });
+            MapGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         for (int r = 0; r < rowCount; r++)
             MapGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
@@ -266,8 +277,8 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
             {
                 ColumnSpacing = 16,
                 RowSpacing = 12,
-                Width = MapWidth,
-                HorizontalAlignment = HorizontalAlignment.Center,
+                MaxWidth = MapWidth,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
             };
             for (int c = 0; c < columns; c++)
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
