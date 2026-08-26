@@ -543,7 +543,9 @@ public sealed partial class ControlSurfacesPanel : UserControl, IPinHighlightPag
             var draft = _drafts[slot];
 
             panel.Children.Add(BuildIdentityRows(slot));
-            panel.Children.Add(Divider());
+            // The display card opens with a ruled section heading of its own, so
+            // the divider here would sit right on top of it as a double line.
+            if (draft.Type != CsType.Display) panel.Children.Add(Divider());
 
             if (draft.Type == CsType.Ir)
             {

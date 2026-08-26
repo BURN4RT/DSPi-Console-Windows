@@ -39,6 +39,7 @@ public sealed partial class ControlSurfacesPanel
     private StackPanel? _displayHost;
     private TextBlock? _displayStateLabel;
     private TextBlock? _displayStateDetail;
+    private Ellipse? _displayStateDot;
 
     // The live half is split so an edit repaints only what it changed. The config
     // rows change shape with the config (a cycle mode swaps the page picker for a
@@ -80,6 +81,7 @@ public sealed partial class ControlSurfacesPanel
         _displayHomePageCombo = null;
         _displayStateLabel = null;
         _displayStateDetail = null;
+        _displayStateDot = null;
         _displayPageRows.Clear();
         _displayPageMarkers.Clear();
     }
@@ -155,30 +157,32 @@ public sealed partial class ControlSurfacesPanel
             _displayHomePageCombo = null;
             var cfg = _vm.CsDisplayCfg;
 
-            host.Children.Add(SectionHeading("Behavior"));
-            host.Children.Add(BuildDisplayModeRow(cfg));
-            if (cfg.Mode == CsDisplayMode.Fixed) host.Children.Add(BuildDisplayHomePageRow(cfg));
+            var behavior = new StackPanel { Spacing = 8 };
+            behavior.Children.Add(SectionHeading("Behavior"));
+            behavior.Children.Add(BuildDisplayModeRow(cfg));
+            if (cfg.Mode == CsDisplayMode.Fixed) behavior.Children.Add(BuildDisplayHomePageRow(cfg));
             else
-                host.Children.Add(BuildDisplaySecondsRow(
+                behavior.Children.Add(BuildDisplaySecondsRow(
                     "Cycle Every (s)", "How long each page stays up.",
                     cfg.Dwell, CsLimits.DisplayMinDwell,
                     (c, v) => c.Dwell = v));
-            host.Children.Add(BuildDisplaySecondsRow(
+            behavior.Children.Add(BuildDisplaySecondsRow(
                 "Pop-Up Hold (s)",
                 "Duration for which a change remains on-screen. Zero turns pop-ups off.",
                 cfg.OverlayHold, 0, (c, v) => c.OverlayHold = v));
             if (cfg.OverlayHold > 0)
-                host.Children.Add(BuildDisplayFlagToggle(
+                behavior.Children.Add(BuildDisplayFlagToggle(
                     CsDisplayCfgFlags.OverlayAny, "All changes pop up",
                     "Show changes made by a knob, button or remote key even if the parameter "
                     + "doesn't correspond to a dashboard page."));
 
-            host.Children.Add(SectionHeading("Editing"));
-            host.Children.Add(BuildDisplaySecondsRow(
+            var editing = new StackPanel { Spacing = 8 };
+            editing.Children.Add(SectionHeading("Editing"));
+            editing.Children.Add(BuildDisplaySecondsRow(
                 "Editing Times Out (s)",
                 "Disarm editing after this long untouched. Zero leaves it armed until switched off.",
                 cfg.EditTimeout, 0, (c, v) => c.EditTimeout = v));
-            host.Children.Add(BuildDisplayFlagToggle(
+            editing.Children.Add(BuildDisplayFlagToggle(
                 CsDisplayCfgFlags.EditGated, "Arm before editing",
                 "When enabled, an encoder or button browses pages unless Allow Editing is "
                 + "toggled. When disabled, an encoder or button will always adjust the "
@@ -187,21 +191,38 @@ public sealed partial class ControlSurfacesPanel
             // refuse — both halves are valid on their own, and the control just
             // browses forever. Only said once a control actually depends on it.
             if (DisplayEditingUnreachable())
-                host.Children.Add(WarningLine(
+                editing.Children.Add(WarningLine(
                     "Nothing can arm editing, so a Browse/Adjust control can only browse pages. "
                     + "Bind a button or remote key to Allow Editing."));
 
-            host.Children.Add(SectionHeading("Appearance"));
-            host.Children.Add(BuildDisplayBrightnessRow(cfg));
+            var appearance = new StackPanel { Spacing = 8 };
+            appearance.Children.Add(SectionHeading("Appearance"));
+            appearance.Children.Add(BuildDisplayBrightnessRow(cfg));
             if (_vm.CsDisplayAlignSupported)
             {
-                host.Children.Add(BuildDisplayAlignRow(
+                appearance.Children.Add(BuildDisplayAlignRow(
                     "Name Alignment", "Horizontal placement of the current page's name.",
                     cfg.LabelAlign, (c, a) => c.LabelAlign = a));
-                host.Children.Add(BuildDisplayAlignRow(
+                appearance.Children.Add(BuildDisplayAlignRow(
                     "Value Alignment", "Horizontal placement of the current page's value.",
                     cfg.ValueAlign, (c, a) => c.ValueAlign = a));
             }
+
+            // Side by side rather than stacked: each section is a handful of
+            // narrow rows, and one atop the other left the card tall and empty
+            // down its right half. Behavior runs the deepest, so it takes a
+            // column alone; the two short sections share the other.
+            var columns = new Grid { ColumnSpacing = 28 };
+            columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var right = new StackPanel();
+            right.Children.Add(editing);
+            right.Children.Add(appearance);
+            Grid.SetColumn(behavior, 0);
+            columns.Children.Add(behavior);
+            Grid.SetColumn(right, 1);
+            columns.Children.Add(right);
+            host.Children.Add(columns);
         }
         finally { _building = wasBuilding; }
     }
@@ -221,7 +242,8 @@ public sealed partial class ControlSurfacesPanel
             _displayPageRows.Clear();
             _displayPageMarkers.Clear();
 
-            host.Children.Add(SectionHeading("Dashboard Pages"));
+            host.Children.Add(SectionHeading("Dashboard Pages",
+                $"{ActiveDisplayPages().Count()} of {_vm.CsDisplayPageCount}"));
             // On the same rhythm as the rows above: a list of pickers has no
             // business being denser than the pickers it follows.
             var pages = new StackPanel { Spacing = 8 };
@@ -326,7 +348,7 @@ public sealed partial class ControlSurfacesPanel
     /// a second picker could only build pairs the device refuses.</summary>
     private FrameworkElement BuildDisplayPinRow(int slot)
     {
-        var combo = new ComboBox { MinWidth = 180 };
+        var combo = new ComboBox { MinWidth = 220 };
 
         void Populate()
         {
@@ -369,7 +391,7 @@ public sealed partial class ControlSurfacesPanel
     private FrameworkElement BuildDisplayAddressRow(int slot)
     {
         byte modelDefault = CsDisplayModels.DefaultAddress(_drafts[slot].Index);
-        var combo = new ComboBox { MinWidth = 180 };
+        var combo = new ComboBox { MinWidth = 220 };
         combo.Items.Add(new ComboBoxItem
         {
             Content = $"Default (0x{modelDefault:X2})",
@@ -400,14 +422,27 @@ public sealed partial class ControlSurfacesPanel
     private FrameworkElement BuildDisplayStateRow()
     {
         var stack = new StackPanel { Spacing = 1 };
-        _displayStateLabel = new TextBlock { FontSize = 12 };
+        _displayStateDot = new Ellipse
+        {
+            Width = 8,
+            Height = 8,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        _displayStateLabel = new TextBlock
+        {
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
+        head.Children.Add(_displayStateDot);
+        head.Children.Add(_displayStateLabel);
         _displayStateDetail = new TextBlock
         {
             FontSize = 11,
             TextWrapping = TextWrapping.Wrap,
             Foreground = SecondaryBrush,
         };
-        stack.Children.Add(_displayStateLabel);
+        stack.Children.Add(head);
         stack.Children.Add(_displayStateDetail);
         RefreshDisplayStateRow();
         return Row("Panel State", stack);
@@ -415,8 +450,11 @@ public sealed partial class ControlSurfacesPanel
 
     private void RefreshDisplayStateRow()
     {
-        if (_displayStateLabel == null || _displayStateDetail == null) return;
+        if (_displayStateLabel == null || _displayStateDetail == null || _displayStateDot == null) return;
         var st = _vm.CsDisplayStatus;
+        // The dot carries the colour - the same language as the on-screen page
+        // marker down in the page list - and the words stay in the text colour,
+        // which reads as a status rather than a stray line of tinted text.
         var (text, colour) = st.InitState switch
         {
             CsDisplayInitState.Live => ("Running", Color.FromArgb(255, 100, 200, 140)),
@@ -424,8 +462,8 @@ public sealed partial class ControlSurfacesPanel
             CsDisplayInitState.Error => ("Not responding", Color.FromArgb(255, 240, 180, 90)),
             _ => ("Not started", Color.FromArgb(255, 150, 150, 150)),
         };
+        _displayStateDot.Fill = new SolidColorBrush(colour);
         _displayStateLabel.Text = text;
-        _displayStateLabel.Foreground = new SolidColorBrush(colour);
         _displayStateDetail.Text = st.NakCount > 0
             ? "Check wiring, pull-up resistors, and the address."
             : "Reported by the device.";
@@ -458,7 +496,7 @@ public sealed partial class ControlSurfacesPanel
 
     private FrameworkElement BuildDisplayHomePageRow(CsDisplayCfg cfg)
     {
-        var combo = new ComboBox { MinWidth = 260 };
+        var combo = new ComboBox { MinWidth = 220 };
         for (int i = 0; i < _vm.CsDisplayPageCount; i++)
             combo.Items.Add(new ComboBoxItem { Content = DisplayPageMenuLabel(i), Tag = i });
         combo.SelectedIndex = Math.Clamp((int)cfg.HomePage, 0, Math.Max(0, combo.Items.Count - 1));
@@ -535,7 +573,7 @@ public sealed partial class ControlSurfacesPanel
     private FrameworkElement BuildDisplayAlignRow(string label, string tip, CsDisplayAlign current,
                                                   Action<CsDisplayCfg, CsDisplayAlign> set)
     {
-        var combo = new ComboBox { MinWidth = 140 };
+        var combo = new ComboBox { MinWidth = 220 };
         combo.Items.Add(new ComboBoxItem { Content = "Left", Tag = CsDisplayAlign.Left });
         combo.Items.Add(new ComboBoxItem { Content = "Centre", Tag = CsDisplayAlign.Centre });
         combo.Items.Add(new ComboBoxItem { Content = "Right", Tag = CsDisplayAlign.Right });
@@ -1081,16 +1119,49 @@ public sealed partial class ControlSurfacesPanel
 
     // ── Small view helpers ───────────────────────────────────────────────────
 
-    /// <summary>A small-caps heading grouping the rows under it, so the display
-    /// card reads as four short sections rather than one long list.</summary>
-    private static TextBlock SectionHeading(string title) => new()
+    /// <summary>A small-caps heading with a hairline rule running out to the
+    /// card's edge, so the display card reads as short chapters rather than one
+    /// long list - a bare label was too faint to hold a section together.
+    /// <paramref name="trailing"/> sits at the rule's far end: the page count,
+    /// on the one list with a fixed number of slots.</summary>
+    private static FrameworkElement SectionHeading(string title, string? trailing = null)
     {
-        Text = title.ToUpperInvariant(),
-        FontSize = 10,
-        FontWeight = FontWeights.SemiBold,
-        Foreground = SecondaryBrush,
-        Margin = new Thickness(0, 8, 0, 0),
-    };
+        var grid = new Grid { ColumnSpacing = 10, Margin = new Thickness(0, 10, 0, 2) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var text = new TextBlock
+        {
+            Text = title.ToUpperInvariant(),
+            FontSize = 10,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = SecondaryBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        grid.Children.Add(text);
+        var rule = new Border
+        {
+            Height = 1,
+            VerticalAlignment = VerticalAlignment.Center,
+            Background = Application.Current.Resources.TryGetValue("DividerStrokeColorDefaultBrush", out var b)
+                         && b is Brush brush ? brush : SecondaryBrush,
+        };
+        Grid.SetColumn(rule, 1);
+        grid.Children.Add(rule);
+        if (trailing != null)
+        {
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var tail = new TextBlock
+            {
+                Text = trailing,
+                FontSize = 10,
+                Foreground = SecondaryBrush,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(tail, 2);
+            grid.Children.Add(tail);
+        }
+        return grid;
+    }
 
     /// <summary>A label/control row whose control is disabled while a live display
     /// write is in flight.</summary>
