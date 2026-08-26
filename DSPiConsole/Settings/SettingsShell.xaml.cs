@@ -600,7 +600,21 @@ public sealed partial class SettingsShell : UserControl
 
             HeaderIcon.Glyph = page.IconGlyph;
             HeaderTitle.Text = page.Title;
+            // The old page may still have a reveal steering the shared
+            // scroller; whatever it was bringing into view is not on the page
+            // the user just asked for.
+            Reveal.Cancel(PageScroll);
             PageHost.Content = content;
+            // Every page shares this one scroller, so a page opens wherever the
+            // last one was left unless it is sent back to the top. The layout is
+            // flushed first: the swap only invalidates it, and scroll requests
+            // are queued for the pass that runs it — resetting before that pass
+            // let the old page's last request land after the reset, which is how
+            // the Overview kept turning up scrolled. Instant, not animated: an
+            // animation here would be the new page sliding up from an offset
+            // that was never its own.
+            PageScroll.UpdateLayout();
+            PageScroll.ChangeView(null, 0, null, disableAnimation: true);
         }
         catch (Exception ex)
         {

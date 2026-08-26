@@ -115,7 +115,7 @@
                  length to the Microsoft-recommended ~960 px settings layout.
                  Bottom padding leaves room so the sliding save overlay doesn't
                  cover the last row of content when it's up. -->
-            <ScrollViewer Grid.Row="1"
+            <ScrollViewer x:Name="PageScroll" Grid.Row="1"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
                           Padding="24,0,24,24">

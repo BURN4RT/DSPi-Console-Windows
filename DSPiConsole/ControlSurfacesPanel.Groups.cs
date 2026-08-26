@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using DSPiConsole.Core.Models;
+using DSPiConsole.Settings;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Text;
@@ -211,7 +212,7 @@ public sealed partial class ControlSurfacesPanel
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             IsExpanded = _groupExpanded.Contains(idx),
         };
-        expander.Expanding += (_, _) => { _groupExpanded.Add(idx); FrameExpandedCard(expander); };
+        expander.Expanding += (_, _) => { _groupExpanded.Add(idx); Reveal.Bring(expander); };
         expander.Collapsed += (_, _) => _groupExpanded.Remove(idx);
 
         expander.Header = BuildRecordHeader(
@@ -417,7 +418,7 @@ public sealed partial class ControlSurfacesPanel
         _groupExpanded.Add(idx);
         // Insert just the new card; the existing ones stay as they are.
         InsertGroupCard(idx);
-        if (_groupCards.TryGetValue(idx, out var card)) FrameExpandedCard(card);
+        if (_groupCards.TryGetValue(idx, out var card)) Reveal.Bring(card);
     }
 
     private async void RemoveGroup(int idx)
@@ -636,7 +637,7 @@ public sealed partial class ControlSurfacesPanel
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             IsExpanded = _macroExpanded.Contains(idx),
         };
-        expander.Expanding += (_, _) => { _macroExpanded.Add(idx); FrameExpandedCard(expander); };
+        expander.Expanding += (_, _) => { _macroExpanded.Add(idx); Reveal.Bring(expander); };
         expander.Collapsed += (_, _) => _macroExpanded.Remove(idx);
 
         expander.Header = BuildMacroHeader(idx);
@@ -1102,7 +1103,7 @@ public sealed partial class ControlSurfacesPanel
         _macroAdded.Add(idx);
         _macroExpanded.Add(idx);
         InsertMacroCard(idx);
-        if (_macroCards.TryGetValue(idx, out var card)) FrameExpandedCard(card);
+        if (_macroCards.TryGetValue(idx, out var card)) Reveal.Bring(card);
     }
 
     private async void RemoveMacro(int idx)

@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
+using Windows.Foundation;
 using Windows.UI;
 
 namespace DSPiConsole.Settings;
@@ -31,6 +32,213 @@ internal interface IPinHighlightPage
 }
 
 /// <summary>
+/// Scrolling something into view while the layout around it is still moving.
+///
+/// <para>One StartBringIntoView is enough for a page that is standing still and
+/// wrong for every case here. A card is asked for while its expander is still
+/// animating open; a page is asked for while it is still being built from a
+/// device read; reaching one pin closes a dozen sibling cards, all shrinking at
+/// once. Scrolling during that is aiming at offsets that are stale before the
+/// animation reaches them — and re-aiming on every layout tick is no better,
+/// because each restart begins a fresh easing curve at zero velocity, and a
+/// scroll restarted sixty times a second crawls.</para>
+///
+/// <para>So this waits the layout out, then scrolls once. The target's offset
+/// within the scrolled content, its height, and the content's height are
+/// watched — content-relative on purpose, so the scroll this call starts is not
+/// mistaken for the layout shifting under it. When they hold still, one scroll
+/// is aimed, and the caller's continuation runs when the target actually
+/// arrives in the viewport, not before: a ring played somewhere off screen is a
+/// flash nobody sees. A page that will not hold still, or a scroll that never
+/// arrives, is jumped to instead — late, the answer still has to appear.</para>
+/// </summary>
+internal static class Reveal
+{
+    /// <summary>How long the layout must hold still before it is worth aiming a
+    /// scroll at anything inside it.</summary>
+    private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(150);
+
+    /// <summary>How long an aimed scroll gets to arrive before the animation is
+    /// given up on and the target jumped to instead. Covers an aim the scroller
+    /// swallowed whole — one that produced no view change to observe.</summary>
+    private static readonly TimeSpan Glide = TimeSpan.FromMilliseconds(1200);
+
+    /// <summary>The overall backstop, for a page that never stops moving: jump
+    /// straight to the target and finish, so whatever was waiting on the
+    /// arrival — the ring — still happens, on screen.</summary>
+    private static readonly TimeSpan Limit = TimeSpan.FromSeconds(3);
+
+    /// <summary>Bring <paramref name="target"/> into view once the layout
+    /// around it settles, then run <paramref name="onArrival"/> when it is
+    /// actually visible.</summary>
+    public static void Bring(FrameworkElement target, Action? onArrival = null)
+    {
+        if (target == null) return;
+
+        // Nothing can be measured, let alone scrolled to, before the element is
+        // in the tree — and it usually isn't, because the click asking for it is
+        // what built the page it lives on.
+        if (!target.IsLoaded)
+        {
+            void Ready(object sender, RoutedEventArgs e)
+            {
+                target.Loaded -= Ready;
+                Bring(target, onArrival);
+            }
+            target.Loaded += Ready;
+            return;
+        }
+
+        var host = ScrollHost(target);
+        if (host?.Content is not FrameworkElement content)
+        {
+            // Nothing scrolls here, so there is nothing to wait for.
+            target.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = true });
+            onArrival?.Invoke();
+            return;
+        }
+
+        // A later request replaces the one in flight rather than racing it. Two
+        // live requests on one scroller take turns undoing each other, and the
+        // later one is what the user actually asked for: opening a card to reach
+        // a picker inside it raises both, the card first and then the picker.
+        var session = _sessions.GetOrCreateValue(host);
+        session.Abandon?.Invoke();
+
+        var queue = target.DispatcherQueue;
+        var settle = queue.CreateTimer();
+        settle.Interval = Settle;
+        settle.IsRepeating = false;
+        var glide = queue.CreateTimer();
+        glide.Interval = Glide;
+        glide.IsRepeating = false;
+        var deadline = queue.CreateTimer();
+        deadline.Interval = Limit;
+        deadline.IsRepeating = false;
+
+        bool done = false;
+        bool aimed = false;
+        var last = Measure(target, content);
+
+        void Detach()
+        {
+            done = true;
+            target.LayoutUpdated -= OnLayout;
+            host.ViewChanged -= OnView;
+            settle.Stop();
+            glide.Stop();
+            deadline.Stop();
+        }
+
+        void Arrive()
+        {
+            if (done) return;
+            Detach();
+            onArrival?.Invoke();
+        }
+
+        // The whole target inside the viewport, with a little slack for the
+        // rounding that layout and the scroller disagree on.
+        bool Visible()
+        {
+            if (target.ActualHeight <= 0) return false;
+            double top;
+            try { top = target.TransformToVisual(host).TransformPoint(new Point(0, 0)).Y; }
+            catch { return false; }
+            return top >= -1 && top + target.ActualHeight <= host.ViewportHeight + 1;
+        }
+
+        void Jump()
+        {
+            target.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+            Arrive();
+        }
+
+        // The layout has held still: the offsets are finally worth something.
+        void OnSettle()
+        {
+            if (done) return;
+            if (Visible()) { Arrive(); return; }
+            aimed = true;
+            target.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = true });
+            glide.Start();
+        }
+
+        // The aimed scroll under way. Arrival is the target on screen, not the
+        // scroll ending, so the ring can start while the last of the glide
+        // plays out. A scroll that ends without arriving went as far as the
+        // scroller could take it, which is as visible as the target gets.
+        void OnView(object? sender, ScrollViewerViewChangedEventArgs e)
+        {
+            if (done || !aimed) return;
+            if (Visible() || !e.IsIntermediate) Arrive();
+        }
+
+        void OnLayout(object? sender, object e)
+        {
+            if (done) return;
+            var now = Measure(target, content);
+            // Unmeasurable, or exactly where it was: nothing has moved. The
+            // aimed scroll itself lands here too, and must not count — which is
+            // why the measures are content-relative.
+            if (double.IsNaN(now.Top) || now == last) return;
+            last = now;
+            // Still moving: any aim already taken was at offsets now stale.
+            aimed = false;
+            glide.Stop();
+            settle.Stop();
+            settle.Start();
+        }
+
+        session.Abandon = () => { if (!done) Detach(); };
+        settle.Tick += (_, _) => OnSettle();
+        glide.Tick += (_, _) => { if (!done) Jump(); };
+        deadline.Tick += (_, _) => { if (!done) Jump(); };
+        target.LayoutUpdated += OnLayout;
+        host.ViewChanged += OnView;
+        settle.Start();
+        deadline.Start();
+    }
+
+    /// <summary>Drop whatever request is in flight on <paramref name="host"/>.
+    /// For the moment its content is swapped out from under it: the old page's
+    /// chase must not go on steering the scroller once a new page owns it.</summary>
+    public static void Cancel(ScrollViewer? host)
+    {
+        if (host != null && _sessions.TryGetValue(host, out var session))
+            session.Abandon?.Invoke();
+    }
+
+    /// <summary>Where the target sits inside the scrolled content, how tall it
+    /// is, and how tall the content is. The last matters on its own: a target
+    /// near the end of a page that is still growing cannot be framed against an
+    /// extent that hasn't caught up, even though the target itself has not
+    /// moved.</summary>
+    private static (double Top, double Height, double Extent) Measure(
+        FrameworkElement target, FrameworkElement content)
+    {
+        double top;
+        try { top = target.TransformToVisual(content).TransformPoint(new Point(0, 0)).Y; }
+        catch { top = double.NaN; }   // not in the same tree (yet)
+        return (top, target.ActualHeight, content.ActualHeight);
+    }
+
+    private static ScrollViewer? ScrollHost(DependencyObject node)
+    {
+        for (var p = VisualTreeHelper.GetParent(node); p != null; p = VisualTreeHelper.GetParent(p))
+            if (p is ScrollViewer scroller) return scroller;
+        return null;
+    }
+
+    private sealed class Handle { public Action? Abandon; }
+
+    /// <summary>The request currently in flight per scroller. Keyed weakly so a
+    /// closed window's scroller isn't held alive by a record of what it was last
+    /// asked to show.</summary>
+    private static readonly ConditionalWeakTable<ScrollViewer, Handle> _sessions = new();
+}
+
+/// <summary>
 /// The flash itself: a short accent ring around the control that sets the pin
 /// you clicked.
 ///
@@ -47,27 +255,22 @@ internal static class PinFlash
     private static readonly TimeSpan PulseLength = TimeSpan.FromMilliseconds(320);
     private const int Pulses = 3;
 
+    /// <summary>Bring the control into view, and ring it once it has arrived.
+    ///
+    /// <para>Waiting for the target to arrive also puts the ring after the control
+    /// has been realised, which it has to be: a control whose template has not
+    /// been applied yet still reports the property default for BorderThickness,
+    /// so asking then sends a perfectly ordinary picker down the border-less
+    /// path - which is why the first ring on a freshly built page blinked where
+    /// every one after it outlined.</para></summary>
     public static void Play(FrameworkElement target)
     {
         if (target == null) return;
+        Reveal.Bring(target, () => Ring(target));
+    }
 
-        // A control that has not been realised yet still reports the property
-        // default for BorderThickness, because the style that sets it is applied
-        // with the template. Asking now would send a perfectly ordinary picker to
-        // the border-less fallback - which is why the first flash on a freshly
-        // built page blinked and every one after it outlined.
-        if (!target.IsLoaded)
-        {
-            void Ready(object sender, RoutedEventArgs e)
-            {
-                target.Loaded -= Ready;
-                Play(target);
-            }
-            target.Loaded += Ready;
-            return;
-        }
-
-        target.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = true });
+    private static void Ring(FrameworkElement target)
+    {
         if (target is Control control && HasBorder(control)) PulseBorder(control);
         else PulseOpacity(target);
     }

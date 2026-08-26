@@ -64,11 +64,25 @@ public sealed partial class ControlSurfacesPanel : UserControl, IPinHighlightPag
                          || (binding.Gpio1 != CsLimits.GpioUnused && binding.Gpio1 == pin);
             if (!holds) continue;
             if (!_slotCards.TryGetValue(slot, out var card)) return false;
-            // Open the card first: a picker inside a collapsed one has nothing to
-            // show for being rung.
+
+            // Everything else closes. This list runs to sixteen cards and the
+            // one being asked for is usually not the first, so leaving the rest
+            // open means arriving on a page of near-identical cards with a ring
+            // somewhere below the fold - which is the hunt the click was meant
+            // to save. Closed, the whole list fits and the answer is the only
+            // thing open on it. Each card's Collapsed handler updates
+            // _expanded, so the state this leaves behind is the real one.
+            foreach (var other in _slotCards.ToList())
+                if (other.Key != slot && other.Value is Expander shut)
+                    shut.IsExpanded = false;
+
+            // Then open the card that has the answer: a picker inside a closed
+            // one has nothing to show for being rung.
             _expanded.Add(slot);
             if (card is Expander expander) expander.IsExpanded = true;
             bool second = binding.Gpio0 != pin;
+            // The ring goes on the picker itself where there is one, and it is
+            // raised after the expander, so its scroll supersedes the card's.
             PinFlash.Play(_slotPinCombos.TryGetValue((slot, second), out var combo) ? combo : card);
             return true;
         }
@@ -405,7 +419,7 @@ public sealed partial class ControlSurfacesPanel : UserControl, IPinHighlightPag
         expander.Expanding += (_, _) =>
         {
             _expanded.Add(slot);
-            FrameExpandedCard(expander);
+            Reveal.Bring(expander);
             UpdateDisplayPoll();
         };
         expander.Collapsed += (_, _) => { _expanded.Remove(slot); UpdateDisplayPoll(); };
@@ -414,34 +428,6 @@ public sealed partial class ControlSurfacesPanel : UserControl, IPinHighlightPag
         expander.Content = BuildCardBody(slot);
         _slotCards[slot] = expander;
         return expander;
-    }
-
-    /// <summary>Smoothly scroll just enough to keep a card fully in view once it
-    /// expands (or is newly added). The expander animates open, so its final height
-    /// lands several frames after Expanding fires — track size changes for the whole
-    /// animation, nudging the card into view as it grows, and stop once the size has
-    /// settled. A no-op when the card is already fully visible.</summary>
-    private void FrameExpandedCard(FrameworkElement card)
-    {
-        void Bring() => card.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = true });
-
-        var settle = DispatcherQueue.CreateTimer();
-        settle.Interval = TimeSpan.FromMilliseconds(150);
-        SizeChangedEventHandler onSize = (_, _) =>
-        {
-            Bring();
-            settle.Stop();
-            settle.Start(); // restart the settle window on every size tick
-        };
-        settle.Tick += (_, _) =>
-        {
-            // No size change for one settle window: final layout — frame it and stop.
-            settle.Stop();
-            card.SizeChanged -= onSize;
-            Bring();
-        };
-        card.SizeChanged += onSize;
-        settle.Start();
     }
 
     private FrameworkElement BuildCardHeader(int slot)
@@ -1276,7 +1262,7 @@ public sealed partial class ControlSurfacesPanel : UserControl, IPinHighlightPag
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             IsExpanded = _irExpanded.Contains(sub),
         };
-        expander.Expanding += (_, _) => { _irExpanded.Add(sub); FrameExpandedCard(expander); };
+        expander.Expanding += (_, _) => { _irExpanded.Add(sub); Reveal.Bring(expander); };
         expander.Collapsed += (_, _) => _irExpanded.Remove(sub);
 
         // Header: binding summary + learned-code chip + delete.
@@ -1572,7 +1558,7 @@ public sealed partial class ControlSurfacesPanel : UserControl, IPinHighlightPag
         // Insert just the new card instead of rebuilding the panel, so existing
         // cards don't reload.
         InsertSlotCard(slot);
-        if (_slotCards.TryGetValue(slot, out var card)) FrameExpandedCard(card);
+        if (_slotCards.TryGetValue(slot, out var card)) Reveal.Bring(card);
         BuildAddMenu();
         // A freshly-added control is seeded valid — apply immediately.
         await ApplySlotAsync(slot);
@@ -1852,7 +1838,7 @@ public sealed partial class ControlSurfacesPanel : UserControl, IPinHighlightPag
         _irExpanded.Add(sub);
         // Insert just the new remote-button card; siblings stay put.
         InsertIrCommandCard(sub);
-        if (_irCommandCards.TryGetValue(sub, out var card)) FrameExpandedCard(card);
+        if (_irCommandCards.TryGetValue(sub, out var card)) Reveal.Bring(card);
         UpdateIrCount();
         UpdateAddRemoteButtonState();
     }
