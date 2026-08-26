@@ -119,9 +119,12 @@ public sealed partial class HardwareDacMutePage : SettingsModule, ISettingsPage
         // Where the mute pin is set, for a click on it in the Overview's map. The
         // picker, as everywhere: the flash rings the control you came to change,
         // which every page hands it so that arriving looks the same wherever you
-        // arrive. A card reports no border of its own to ring.
+        // arrive. Registered on the same condition the map claims the pin -
+        // configured, enabled or not, since a disabled mute still holds its
+        // GPIO. Gating this on Enabled too left the map offering a click that
+        // arrived here with nothing registered to ring.
         ClearPinTargets();
-        if (cfg.Enabled && cfg.Pin != DacHwMuteConfig.PinNone) RegisterPinTarget(cfg.Pin, PinCombo);
+        if (cfg.Pin != DacHwMuteConfig.PinNone) RegisterPinTarget(cfg.Pin, PinCombo);
     }
 
     private void SelectPinInCombo(byte pin)
