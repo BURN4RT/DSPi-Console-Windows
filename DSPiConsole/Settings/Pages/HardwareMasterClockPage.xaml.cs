@@ -288,10 +288,15 @@ public sealed partial class HardwareMasterClockPage : SettingsModule, ISettingsP
         SelectPinInCombo(MckPinCombo, Vm.MckPin);
         _suppress = false;
 
+        if (status == PinConfigResult.PinInUse)
+        {
+            ShowPinConflict(StatusText, StatusPinButton, HardwarePins.BuildAssignmentMap(Vm, excludeMckSelf: true),
+                $"GPIO {newPin} is already in use", newPin);
+            return;
+        }
         ShowStatus(status switch
         {
             PinConfigResult.OutputActive => "Disable MCK before changing its pin",
-            PinConfigResult.PinInUse     => $"GPIO {newPin} is already in use",
             // Filter-on-populate already keeps non-GPOUT pins out of the combo, so
             // this branch is defensive — a stale combo or a firmware mismatch.
             PinConfigResult.InvalidPin   => $"GPIO {newPin} can't drive MCK on this platform. "
@@ -359,6 +364,9 @@ public sealed partial class HardwareMasterClockPage : SettingsModule, ISettingsP
 
     private void ShowStatus(string msg, bool isError)
     {
+        // Any message that isn't a pin conflict takes the eye away, so one is
+        // never left pointing at the destination of the message before it.
+        PinConflict.Disarm(StatusPinButton);
         StatusText.Text = msg;
         StatusText.Foreground = new SolidColorBrush(isError
             ? Color.FromArgb(255, 240, 100, 100)
@@ -366,7 +374,11 @@ public sealed partial class HardwareMasterClockPage : SettingsModule, ISettingsP
         StatusText.Visibility = Visibility.Visible;
     }
 
-    private void ClearStatus() => StatusText.Visibility = Visibility.Collapsed;
+    private void ClearStatus()
+    {
+        PinConflict.Disarm(StatusPinButton);
+        StatusText.Visibility = Visibility.Collapsed;
+    }
 
     // ── ISettingsPage ──────────────────────────────────────────────────────
     public string Id => "hardware.master-clock";

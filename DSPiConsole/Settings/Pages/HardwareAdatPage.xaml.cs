@@ -259,13 +259,69 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
         _suppress = true;
         OutEnableToggle.IsOn = Vm.AdatEnabled;
         _suppress = false;
+        if (status == PinConfigResult.PinInUse)
+        {
+            await PromptForOutPinAsync();
+            return;
+        }
         ShowStatus(status switch
         {
-            PinConfigResult.PinInUse => "The transmit pin is already assigned — pick a free GPIO first.",
             PinConfigResult.InvalidPin => "The transmit pin isn't valid — pick a different GPIO.",
             PinConfigResult.InvalidOutput => "ADAT output isn't supported on this device.",
             _ => $"Failed to change ADAT output (0x{status:X2})"
         }, true);
+    }
+
+    /// <summary>Enabling the output landed on a pin something else holds. Offer a
+    /// free one and switch the output on with it, rather than reporting the clash
+    /// and leaving the user to go and sort it out themselves.</summary>
+    private async Task PromptForOutPinAsync()
+    {
+        if (Vm == null) return;
+        var claims = HardwarePins.BuildAssignmentMap(Vm, excludeAdatSelf: true);
+        if (!claims.TryGetValue(Vm.AdatPin, out var owner))
+        {
+            // Refused for something the map cannot account for: fall back to
+            // naming it on the status line, which is all we can honestly do.
+            ShowPinConflict(StatusText, StatusPinButton, claims,
+                "The transmit pin is already assigned — pick a free GPIO first.", Vm.AdatPin);
+            return;
+        }
+
+        await PinConflictPrompt.ShowAsync(XamlRoot, "the ADAT output", owner, claims,
+            HardwarePins.ValidPins, async pin =>
+            {
+                if (await Task.Run(() => Vm.SetAdatPin(pin)) != PinConfigResult.Success) return false;
+                if (await Task.Run(() => Vm.SetAdatEnable(true)) != PinConfigResult.Success) return false;
+                HardwarePins.RaisePinAssignmentsChanged();
+                ShowStatus($"ADAT output enabled on GPIO {pin}", false);
+                return true;
+            });
+        Refresh();
+    }
+
+    /// <summary>The same for the input's receive pin.</summary>
+    private async Task PromptForInPinAsync()
+    {
+        if (Vm == null) return;
+        var claims = HardwarePins.BuildAssignmentMap(Vm, excludeAdatInputSelf: true);
+        if (!claims.TryGetValue(Vm.AdatInputPin, out var owner))
+        {
+            ShowPinConflict(StatusText, StatusPinButton, claims,
+                "The receive pin is already claimed — pick a free GPIO.", Vm.AdatInputPin);
+            return;
+        }
+
+        await PinConflictPrompt.ShowAsync(XamlRoot, "the ADAT input", owner, claims,
+            HardwarePins.ValidPins, async pin =>
+            {
+                if (await Task.Run(() => Vm.SetAdatInputPin(pin)) != PinConfigResult.Success) return false;
+                if (await Task.Run(() => Vm.SetAdatInputEnable(true)) != PinConfigResult.Success) return false;
+                HardwarePins.RaisePinAssignmentsChanged();
+                ShowStatus($"ADAT input enabled on GPIO {pin}", false);
+                return true;
+            });
+        Refresh();
     }
 
     private async void OnOutPinChanged(object sender, SelectionChangedEventArgs e)
@@ -285,9 +341,14 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
         _suppress = true;
         SelectPinInCombo(OutPinCombo, Vm.AdatPin);
         _suppress = false;
+        if (status == PinConfigResult.PinInUse)
+        {
+            ShowPinConflict(StatusText, StatusPinButton, HardwarePins.BuildAssignmentMap(Vm, excludeAdatSelf: true),
+                $"GPIO {newPin} is already assigned to another output", newPin);
+            return;
+        }
         ShowStatus(status switch
         {
-            PinConfigResult.PinInUse => $"GPIO {newPin} is already assigned to another output",
             PinConfigResult.InvalidPin => $"GPIO {newPin} can't drive the ADAT output",
             _ => $"Failed to set the ADAT transmit pin (0x{status:X2})"
         }, true);
@@ -310,11 +371,15 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
         _suppress = true;
         InEnableToggle.IsOn = Vm.AdatInputEnabled;
         _suppress = false;
+        if (status == PinConfigResult.PinInUse)
+        {
+            await PromptForInPinAsync();
+            return;
+        }
         ShowStatus(status switch
         {
             PinConfigResult.InvalidPin => "Set a valid receive pin before enabling the ADAT input.",
             PinConfigResult.InvalidOutput => "ADAT input isn't supported on this device.",
-            PinConfigResult.PinInUse => "The receive pin is already claimed — pick a free GPIO.",
             _ => $"Failed to change ADAT input (0x{status:X2})."
         }, true);
     }
@@ -355,9 +420,13 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
             ShowStatus("ADAT output enabled.", false);
             return;
         }
+        if (status == PinConfigResult.PinInUse)
+        {
+            await PromptForOutPinAsync();
+            return;
+        }
         ShowStatus(status switch
         {
-            PinConfigResult.PinInUse => "The ADAT transmit pin is already claimed — free it in the Output section.",
             PinConfigResult.InvalidPin => "Pick a valid ADAT transmit pin in the Output section first.",
             _ => $"Failed to enable the ADAT output (0x{status:X2})."
         }, true);
@@ -379,9 +448,14 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
         _suppress = true;
         SelectPinInCombo(InPinCombo, Vm.AdatInputPin);
         _suppress = false;
+        if (status == PinConfigResult.PinInUse)
+        {
+            ShowPinConflict(StatusText, StatusPinButton, HardwarePins.BuildAssignmentMap(Vm, excludeAdatInputSelf: true),
+                $"GPIO {newPin} is already assigned to another peripheral.", newPin);
+            return;
+        }
         ShowStatus(status switch
         {
-            PinConfigResult.PinInUse => $"GPIO {newPin} is already assigned to another peripheral.",
             PinConfigResult.InvalidPin => $"GPIO {newPin} can't receive the ADAT input.",
             _ => $"Failed to set the ADAT receive pin (0x{status:X2})."
         }, true);
@@ -417,6 +491,9 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
 
     private void ShowStatus(string msg, bool isError)
     {
+        // Any message that isn't a pin conflict takes the eye away, so one is
+        // never left pointing at the destination of the message before it.
+        PinConflict.Disarm(StatusPinButton);
         StatusText.Text = msg;
         StatusText.Foreground = new SolidColorBrush(isError
             ? Color.FromArgb(255, 240, 100, 100)
@@ -424,7 +501,11 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
         StatusText.Visibility = Visibility.Visible;
     }
 
-    private void ClearStatus() => StatusText.Visibility = Visibility.Collapsed;
+    private void ClearStatus()
+    {
+        PinConflict.Disarm(StatusPinButton);
+        StatusText.Visibility = Visibility.Collapsed;
+    }
 
     // ── ISettingsPage ──────────────────────────────────────────────────────
     public string Id => "hardware.adat";

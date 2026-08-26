@@ -56,8 +56,18 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock x:Name="UartStatusText" FontSize="11" TextWrapping="Wrap"
-                       VerticalAlignment="Center" Visibility="Collapsed"/>
+            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                <TextBlock x:Name="UartStatusText" FontSize="11" TextWrapping="Wrap"
+                           VerticalAlignment="Center" Visibility="Collapsed"/>
+                <!-- Shown only for a pin conflict, by ShowPinConflict: an eye
+                 that takes you to the control already holding the pin. -->
+            <Button x:Name="UartPinButton" Visibility="Collapsed"
+                    Background="Transparent" BorderThickness="0"
+                    Padding="4,0,4,0" MinWidth="0" MinHeight="0"
+                    VerticalAlignment="Center">
+                <FontIcon Glyph="&#xE7B3;" FontSize="13"/>
+            </Button>
+            </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
                 <Button x:Name="UartRevertButton" Content="Revert" Click="OnUartRevert" MinWidth="80"/>
                 <Button x:Name="UartApplyButton" Content="Apply" Click="OnUartApply"
@@ -108,8 +118,18 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock x:Name="I2cStatusText" FontSize="11" TextWrapping="Wrap"
-                       VerticalAlignment="Center" Visibility="Collapsed"/>
+            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                <TextBlock x:Name="I2cStatusText" FontSize="11" TextWrapping="Wrap"
+                           VerticalAlignment="Center" Visibility="Collapsed"/>
+                <!-- Shown only for a pin conflict, by ShowPinConflict: an eye
+                 that takes you to the control already holding the pin. -->
+            <Button x:Name="I2cPinButton" Visibility="Collapsed"
+                    Background="Transparent" BorderThickness="0"
+                    Padding="4,0,4,0" MinWidth="0" MinHeight="0"
+                    VerticalAlignment="Center">
+                <FontIcon Glyph="&#xE7B3;" FontSize="13"/>
+            </Button>
+            </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
                 <Button x:Name="I2cRevertButton" Content="Revert" Click="OnI2cRevert" MinWidth="80"/>
                 <Button x:Name="I2cApplyButton" Content="Apply" Click="OnI2cApply"

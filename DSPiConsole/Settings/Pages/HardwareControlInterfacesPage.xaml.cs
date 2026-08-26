@@ -314,7 +314,11 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
         HardwarePins.RaisePinAssignmentsChanged();
         RefreshConflicts();
         RefreshPillsAndButtons();
-        ShowStatus(UartStatusText, StatusMessage("UART", status, isUart: true), status != PinConfigResult.Success);
+        if (status == PinConfigResult.PinInUse)
+            ShowPinConflict(UartStatusText, UartPinButton, HardwarePins.BuildAssignmentMap(Vm, excludeUartSelf: true),
+                StatusMessage("UART", status, isUart: true), cfg.TxPin, cfg.RxPin);
+        else
+            ShowStatus(UartStatusText, UartPinButton, StatusMessage("UART", status, isUart: true), status != PinConfigResult.Success);
     }
 
     private async void OnI2cApply(object sender, RoutedEventArgs e)
@@ -331,7 +335,11 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
         HardwarePins.RaisePinAssignmentsChanged();
         RefreshConflicts();
         RefreshPillsAndButtons();
-        ShowStatus(I2cStatusText, StatusMessage("I2C", status, isUart: false), status != PinConfigResult.Success);
+        if (status == PinConfigResult.PinInUse)
+            ShowPinConflict(I2cStatusText, I2cPinButton, HardwarePins.BuildAssignmentMap(Vm, excludeI2cSelf: true),
+                StatusMessage("I2C", status, isUart: false), cfg.SdaPin, cfg.SclPin);
+        else
+            ShowStatus(I2cStatusText, I2cPinButton, StatusMessage("I2C", status, isUart: false), status != PinConfigResult.Success);
     }
 
     private void OnUartRevert(object sender, RoutedEventArgs e)
@@ -367,8 +375,10 @@ public sealed partial class HardwareControlInterfacesPage : SettingsModule, ISet
         _ => $"Failed to apply {iface} configuration (0x{status:X2})."
     };
 
-    private static void ShowStatus(TextBlock text, string msg, bool isError)
+    private static void ShowStatus(TextBlock text, Button link, string msg, bool isError)
     {
+        // As on the other pages: a message that names no pin takes the eye away.
+        PinConflict.Disarm(link);
         text.Text = msg;
         text.Foreground = isError ? Red : Green;
         text.Visibility = Visibility.Visible;

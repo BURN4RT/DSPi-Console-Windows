@@ -381,6 +381,16 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
         _suppress = true;
         combo.SelectedIndex = Vm.GetOutputSlotType(output.SlotIndex) == OutputSlotType.I2S ? 1 : 0;
         _suppress = false;
+        if (status == PinConfigResult.PinInUse)
+        {
+            // Going to I2S brings the shared clock pair in alongside the slot's
+            // own data pin, so any of the three may be what is already held.
+            ShowPinConflict(StatusText, StatusPinButton,
+                HardwarePins.BuildAssignmentMap(Vm, excludeOutputId: output.Id),
+                I2SError(status, output.Name),
+                Vm.I2SBckPin, (byte)(Vm.I2SBckPin + 1), Vm.GetOutputPinValue(output.Id));
+            return;
+        }
         ShowStatus(I2SError(status, output.Name), isError: true);
     }
 
@@ -430,6 +440,13 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
         }
 
         RevertGpioCombo(output);
+        if (status == PinConfigResult.PinInUse && Vm != null)
+        {
+            ShowPinConflict(StatusText, StatusPinButton,
+                HardwarePins.BuildAssignmentMap(Vm, excludeOutputId: output.Id),
+                GpioError(status, output.Name), newPin);
+            return;
+        }
         ShowStatus(GpioError(status, output.Name), isError: true);
     }
 
@@ -605,6 +622,9 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
 
     private void ShowStatus(string msg, bool isError)
     {
+        // Any message that isn't a pin conflict takes the eye away, so one is
+        // never left pointing at the destination of the message before it.
+        PinConflict.Disarm(StatusPinButton);
         StatusText.Text = msg;
         StatusText.Foreground = new SolidColorBrush(isError
             ? Color.FromArgb(255, 240, 100, 100)
@@ -612,7 +632,11 @@ public sealed partial class HardwareOutputAssignmentPage : SettingsModule, ISett
         StatusText.Visibility = Visibility.Visible;
     }
 
-    private void ClearStatus() => StatusText.Visibility = Visibility.Collapsed;
+    private void ClearStatus()
+    {
+        PinConflict.Disarm(StatusPinButton);
+        StatusText.Visibility = Visibility.Collapsed;
+    }
 
     private static string GpioError(byte status, string outputName) => status switch
     {

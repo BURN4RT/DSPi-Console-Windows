@@ -189,10 +189,48 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
         HardwarePins.RaisePinAssignmentsChanged();
         if (status == PinConfigResult.Success)
             ShowStatus($"{target} S/PDIF input{(target == 1 ? "" : "s")} active", false);
+        else if (status == PinConfigResult.PinInUse)
+        {
+            await PromptForInputPinAsync(target);
+        }
         else
-            ShowStatus(status == PinConfigResult.PinInUse
-                ? "A pin conflict blocked enabling an input — assign different GPIOs."
-                : $"Failed to change instance count (0x{status:X2})", true);
+            ShowStatus($"Failed to change instance count (0x{status:X2})", true);
+        DispatcherQueue.TryEnqueue(Refresh);
+    }
+
+    /// <summary>Raising the count switches on the inputs above the current one,
+    /// and one of their pins is taken. Work out which input it is, offer a free
+    /// pin for that one, and raise the count once it has moved.</summary>
+    private async Task PromptForInputPinAsync(int target)
+    {
+        if (Vm == null) return;
+        var claims = HardwarePins.BuildAssignmentMap(Vm);
+
+        int blocked = -1;
+        PinAssignment owner = default;
+        for (int i = Vm.SpdifInputCount; i < target; i++)
+        {
+            if (!claims.TryGetValue(Vm.SpdifRxPinAt(i), out owner)) continue;
+            blocked = i;
+            break;
+        }
+        if (blocked < 0)
+        {
+            // Refused for something the map cannot account for.
+            ShowStatus("A pin conflict blocked enabling an input — assign different GPIOs.", true);
+            return;
+        }
+
+        await PinConflictPrompt.ShowAsync(XamlRoot, InputLabel(blocked), owner, claims,
+            HardwarePins.ValidPins, async pin =>
+            {
+                if (await Task.Run(() => Vm.SetSpdifRxPin(pin, blocked)) != PinConfigResult.Success) return false;
+                if (await Task.Run(() => Vm.SetSpdifInputCount(target)) != PinConfigResult.Success) return false;
+                HardwarePins.RaisePinAssignmentsChanged();
+                ShowStatus($"{target} S/PDIF input{(target == 1 ? "" : "s")} active, "
+                           + $"{InputLabel(blocked)} on GPIO {pin}", false);
+                return true;
+            });
         DispatcherQueue.TryEnqueue(Refresh);
     }
 
@@ -216,12 +254,14 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
         SelectPinInCombo(combo, Vm.SpdifRxPinAt(index));
         _suppress = false;
 
-        var msg = status switch
+        if (status == PinConfigResult.PinInUse)
         {
-            PinConfigResult.PinInUse => $"GPIO {newPin} is already in use",
-            _ => $"Failed to set RX pin (0x{status:X2})"
-        };
-        ShowStatus(msg, true);
+            ShowPinConflict(StatusText, StatusPinButton,
+                HardwarePins.BuildAssignmentMap(Vm, excludeSpdifRxIndex: index),
+                $"GPIO {newPin} is already in use", newPin);
+            return;
+        }
+        ShowStatus($"Failed to set RX pin (0x{status:X2})", true);
     }
 
     private string InputLabel(int index) =>
@@ -245,6 +285,9 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
 
     private void ShowStatus(string msg, bool isError)
     {
+        // Any message that isn't a pin conflict takes the eye away, so one is
+        // never left pointing at the destination of the message before it.
+        PinConflict.Disarm(StatusPinButton);
         StatusText.Text = msg;
         StatusText.Foreground = new SolidColorBrush(isError
             ? Color.FromArgb(255, 240, 100, 100)
@@ -252,7 +295,11 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
         StatusText.Visibility = Visibility.Visible;
     }
 
-    private void ClearStatus() => StatusText.Visibility = Visibility.Collapsed;
+    private void ClearStatus()
+    {
+        PinConflict.Disarm(StatusPinButton);
+        StatusText.Visibility = Visibility.Collapsed;
+    }
 
     // ── ISettingsPage ──────────────────────────────────────────────────
     public string Id => "hardware.spdif-input";

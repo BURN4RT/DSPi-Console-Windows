@@ -418,13 +418,20 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         SelectPinInCombo(BckPinCombo, Vm.I2SBckPin);
         _suppress = false;
 
-        var msg = status switch
+        if (status == PinConfigResult.PinInUse)
         {
-            PinConfigResult.OutputActive => "All outputs must be S/PDIF before changing BCK pin",
-            PinConfigResult.PinInUse     => $"GPIO {newPin} or {newPin + 1} is already in use",
-            _ => $"Failed to set BCK pin (0x{status:X2})"
-        };
-        ShowStatus(msg, true);
+            ShowPinConflict(StatusText, StatusPinButton, HardwarePins.BuildAssignmentMap(Vm),
+                $"GPIO {newPin} or {newPin + 1} is already in use",
+                newPin, (byte)(newPin + 1));
+        }
+        else
+        {
+            ShowStatus(status switch
+            {
+                PinConfigResult.OutputActive => "All outputs must be S/PDIF before changing BCK pin",
+                _ => $"Failed to set BCK pin (0x{status:X2})"
+            }, true);
+        }
     }
 
     /// <summary>Select the combo entry whose byte Tag matches
@@ -500,9 +507,17 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         _suppress = true;
         SelectByStringTag(ClockPinsCombo, Vm.I2sClockPinMode);
         _suppress = false;
+        if (status == PinConfigResult.PinInUse)
+        {
+            ShowPinConflict(StatusText, StatusPinButton,
+                HardwarePins.BuildAssignmentMap(Vm, excludeI2sBckSlaveSelf: true),
+                "The slave clock pair overlaps another pin — free it first.",
+                Vm.I2sBckPinSlave, (byte)(Vm.I2sBckPinSlave + 1));
+            DispatcherQueue.TryEnqueue(Refresh);
+            return;
+        }
         ShowStatus(status switch
         {
-            PinConfigResult.PinInUse => "The slave clock pair overlaps another pin — free it first.",
             PinConfigResult.OutputActive => "Can't change clock pins while an I2S output is active.",
             _ => $"Failed to change clock pins (0x{status:X2})."
         }, true);
@@ -525,9 +540,16 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         _suppress = true;
         SelectPinInCombo(SlaveBckCombo, Vm.I2sBckPinSlave);
         _suppress = false;
+        if (status == PinConfigResult.PinInUse)
+        {
+            ShowPinConflict(StatusText, StatusPinButton,
+                HardwarePins.BuildAssignmentMap(Vm, excludeI2sBckSlaveSelf: true),
+                $"GPIO {newPin} or {newPin + 1} is already in use",
+                newPin, (byte)(newPin + 1));
+            return;
+        }
         ShowStatus(status switch
         {
-            PinConfigResult.PinInUse => $"GPIO {newPin} or {newPin + 1} is already in use",
             _ => $"Failed to set slave BCK pin (0x{status:X2})"
         }, true);
     }
@@ -548,15 +570,56 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
             HardwarePins.RaisePinAssignmentsChanged();
             ShowStatus($"{count} channels ({count / 2} pair{(count / 2 == 1 ? "" : "s")})", false);
         }
+        else if (status == PinConfigResult.PinInUse)
+        {
+            await PromptForPairPinAsync(count);
+        }
         else
         {
             ShowStatus(status switch
             {
                 PinConfigResult.InvalidOutput => "Multichannel I2S isn't supported on this device",
-                PinConfigResult.PinInUse => "A pair's data pin conflicts — assign different GPIOs first",
                 _ => $"Failed to set channel count (0x{status:X2})"
             }, true);
         }
+        DispatcherQueue.TryEnqueue(Refresh);
+    }
+
+    /// <summary>Raising the channel count activates the pairs above the current
+    /// one, and one of their data pins is taken. Work out which pair, offer a free
+    /// pin for it, and raise the count once it has moved.</summary>
+    private async Task PromptForPairPinAsync(int count)
+    {
+        if (Vm == null) return;
+        // No self-exclusion: we are looking for whatever blocks a pair that is
+        // not on yet, so every pair currently holding a pin has to be visible.
+        // excludeI2sRxSelf hides pair 0 — pass it here and pair 0's GPIO reads as
+        // free and gets offered as the fix for a clash with pair 0.
+        var claims = HardwarePins.BuildAssignmentMap(Vm);
+
+        int blocked = -1;
+        PinAssignment owner = default;
+        for (int pair = Vm.I2sActivePairs; pair < count / 2; pair++)
+        {
+            if (!claims.TryGetValue(Vm.I2sRxPinAt(pair), out owner)) continue;
+            blocked = pair;
+            break;
+        }
+        if (blocked < 0)
+        {
+            ShowStatus("A pair's data pin conflicts — assign different GPIOs first", true);
+            return;
+        }
+
+        await PinConflictPrompt.ShowAsync(XamlRoot, PairLabel(blocked), owner, claims,
+            HardwarePins.ValidPins, async pin =>
+            {
+                if (await Task.Run(() => Vm.SetI2sRxPin(pin, blocked)) != PinConfigResult.Success) return false;
+                if (await Task.Run(() => Vm.SetI2sInputChannels(count)) != PinConfigResult.Success) return false;
+                HardwarePins.RaisePinAssignmentsChanged();
+                ShowStatus($"{count} channels, {PairLabel(blocked)} on GPIO {pin}", false);
+                return true;
+            });
         DispatcherQueue.TryEnqueue(Refresh);
     }
 
@@ -580,16 +643,28 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         SelectPinInCombo(combo, Vm.I2sRxPinAt(pair));
         _suppress = false;
 
-        ShowStatus(status switch
+        if (status == PinConfigResult.PinInUse)
         {
-            PinConfigResult.PinInUse => $"GPIO {newPin} is already in use",
-            PinConfigResult.InvalidPin => $"GPIO {newPin} is not a valid pin",
-            _ => $"Failed to set I2S RX pin (0x{status:X2})"
-        }, true);
+            ShowPinConflict(StatusText, StatusPinButton,
+                HardwarePins.BuildAssignmentMap(Vm, excludeI2sRxPair: pair),
+                $"GPIO {newPin} is already in use", newPin);
+        }
+        else
+        {
+            ShowStatus(status switch
+            {
+                PinConfigResult.InvalidPin => $"GPIO {newPin} is not a valid pin",
+                _ => $"Failed to set I2S RX pin (0x{status:X2})"
+            }, true);
+        }
     }
 
+    /// <summary>Numbered wherever the part has more than one pair, rather than
+    /// wherever more than one is currently on: a label that only gains its number
+    /// once a second pair is up is unnumbered during the very operation that adds
+    /// one, which is when telling them apart matters most.</summary>
     private string PairLabel(int pair) =>
-        Vm != null && Vm.I2sActivePairs > 1 ? $"Serial Data {pair + 1}" : "I2S RX data";
+        Vm != null && Vm.I2sMaxPairs > 1 ? $"Serial Data {pair + 1}" : "I2S RX data";
 
     private void SelectChannelCount(int count)
     {
@@ -619,6 +694,9 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
 
     private void ShowStatus(string msg, bool isError)
     {
+        // Any message that isn't a pin conflict takes the eye away, so one is
+        // never left pointing at the destination of the message before it.
+        PinConflict.Disarm(StatusPinButton);
         StatusText.Text = msg;
         StatusText.Foreground = new SolidColorBrush(isError
             ? Color.FromArgb(255, 240, 100, 100)
@@ -626,7 +704,11 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         StatusText.Visibility = Visibility.Visible;
     }
 
-    private void ClearStatus() => StatusText.Visibility = Visibility.Collapsed;
+    private void ClearStatus()
+    {
+        PinConflict.Disarm(StatusPinButton);
+        StatusText.Visibility = Visibility.Collapsed;
+    }
 
     // ── ISettingsPage ──────────────────────────────────────────────────
     public string Id => "hardware.i2s";

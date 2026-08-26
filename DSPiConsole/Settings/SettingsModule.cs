@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using DSPiConsole.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Windows.UI;
 
 namespace DSPiConsole.Settings;
 
@@ -48,6 +50,31 @@ public partial class SettingsModule : UserControl, IPinHighlightPage
     /// <summary>Forget the page's pin controls, for a refresh that rebuilds
     /// them. A page whose controls are fixed in XAML never needs this.</summary>
     protected void ClearPinTargets() => _pinTargets.Clear();
+
+    /// <summary>Report a pin change the device refused by naming what already
+    /// holds the pin and linking to the page that sets it, which is what the user
+    /// needs in order to act. Falls back to <paramref name="fallback"/> when none
+    /// of <paramref name="pins"/> turns out to be claimed — the device can refuse
+    /// for reasons the host's map cannot see, and a wrong specific answer would be
+    /// worse than a vague true one.
+    ///
+    /// <para>Build <paramref name="claims"/> with whatever self-exclusion the page
+    /// uses for its own pickers, so a feature is never reported as blocking
+    /// itself.</para></summary>
+    private protected static void ShowPinConflict(TextBlock status, Button link,
+                                                 IReadOnlyDictionary<byte, PinAssignment> claims,
+                                                 string fallback, params byte[] pins)
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(255, 240, 100, 100));
+        if (PinConflict.Describe(status, link, PinConflict.FirstHeld(claims, pins), brush)) return;
+
+        // Nothing identified: say the generic thing, and take the eye away rather
+        // than leave one pointing at whatever the last conflict was.
+        PinConflict.Disarm(link);
+        status.Text = fallback;
+        status.Foreground = brush;
+        status.Visibility = Visibility.Visible;
+    }
 
     /// <inheritdoc/>
     public virtual bool HighlightPin(byte pin)

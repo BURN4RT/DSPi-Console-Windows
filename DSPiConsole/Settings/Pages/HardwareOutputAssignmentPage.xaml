@@ -52,9 +52,20 @@
         </Grid>
 
         <!-- Inline status text. Visible only while a status is current. -->
-        <TextBlock x:Name="StatusText"
-                   FontSize="11"
-                   TextWrapping="Wrap"
-                   Visibility="Collapsed"/>
+        <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock x:Name="StatusText"
+                       FontSize="11"
+                       TextWrapping="Wrap"
+                       VerticalAlignment="Center"
+                       Visibility="Collapsed"/>
+            <!-- Shown only for a pin conflict, by ShowPinConflict: an eye
+                 that takes you to the control already holding the pin. -->
+            <Button x:Name="StatusPinButton" Visibility="Collapsed"
+                    Background="Transparent" BorderThickness="0"
+                    Padding="4,0,4,0" MinWidth="0" MinHeight="0"
+                    VerticalAlignment="Center">
+                <FontIcon Glyph="&#xE7B3;" FontSize="13"/>
+            </Button>
+        </StackPanel>
     </StackPanel>
 </settings:SettingsModule>

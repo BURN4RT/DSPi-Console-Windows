@@ -243,11 +243,16 @@ internal static class HardwarePins
         if (vm.InputI2sSupported)
         {
             int pairs = vm.I2sActivePairs;
+            // Numbered on a part that has more than one pair, whether or not the
+            // rest are switched on yet. Numbering by the active count instead read
+            // as a bare "I2S RX" for pair 1 right up until a second pair came up —
+            // which is exactly when a conflict names it and the number matters.
+            bool numbered = vm.I2sMaxPairs > 1;
             for (int p = 0; p < pairs; p++)
             {
                 if (p == excludeI2sRxPair) continue;
                 if (excludeI2sRxSelf && p == 0) continue;
-                Claim(vm.I2sRxPinAt(p), pairs > 1 ? $"I2S RX {p + 1}" : "I2S RX", PinRole.Input, PageI2s);
+                Claim(vm.I2sRxPinAt(p), numbered ? $"I2S RX {p + 1}" : "I2S RX", PinRole.Input, PageI2s);
             }
         }
 
