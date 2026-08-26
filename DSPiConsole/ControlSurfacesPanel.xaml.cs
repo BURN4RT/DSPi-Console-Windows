@@ -1752,7 +1752,10 @@ public sealed partial class ControlSurfacesPanel : UserControl, IPinHighlightPag
     private void CommitName(int slot, string text)
     {
         _nameEdits[slot] = text ?? "";
-        RefreshStatusIndicators();
+        // The display card has no Apply button - the whole card applies as it
+        // is edited - so a committed name goes to the device from here.
+        if (_drafts[slot].Type == CsType.Display && SlotDirty(slot)) ApplyDisplayWiring(slot);
+        else RefreshStatusIndicators();
     }
 
     private void RevertSlot(int slot)

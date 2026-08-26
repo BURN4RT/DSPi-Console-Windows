@@ -23,10 +23,11 @@ namespace DSPiConsole;
 /// same noun table the bindings use.
 ///
 /// <para>
-/// The wiring half is a draft behind this card's Apply, like every other
-/// component. The config and page halves apply as they are edited: they are small
-/// records with no dependent fields, and the panel shows the result the moment it
-/// lands. Save and Revert still govern whether any of it sticks, through the
+/// The whole card applies as it is edited. The wiring fields are each valid
+/// alone - any model, pair and address make a lawful binding - so there is no
+/// batch for an Apply button to hold together, and the config and page halves
+/// were live already. A refused edit stays on the card with the reason stated,
+/// and Save and Revert still govern whether any of it sticks, through the
 /// settings window's pending-changes prompt.
 /// </para>
 /// </summary>
@@ -101,7 +102,6 @@ public sealed partial class ControlSurfacesPanel
         panel.Children.Add(BuildDisplayPinRow(slot));
         panel.Children.Add(BuildDisplayAddressRow(slot));
         panel.Children.Add(BuildDisplayStateRow());
-        panel.Children.Add(BuildApplyRow(slot));
 
         // Everything below is device-global and applies live, so it is hosted in
         // its own panel that a write can refill on its own.
@@ -176,13 +176,11 @@ public sealed partial class ControlSurfacesPanel
                     "Show changes made by a knob, button or remote key even if the parameter "
                     + "doesn't correspond to a dashboard page."));
 
-            var editing = new StackPanel { Spacing = 8 };
-            editing.Children.Add(SectionHeading("Editing"));
-            editing.Children.Add(BuildDisplaySecondsRow(
+            behavior.Children.Add(BuildDisplaySecondsRow(
                 "Editing Times Out (s)",
                 "Disarm editing after this long untouched. Zero leaves it armed until switched off.",
                 cfg.EditTimeout, 0, (c, v) => c.EditTimeout = v));
-            editing.Children.Add(BuildDisplayFlagToggle(
+            behavior.Children.Add(BuildDisplayFlagToggle(
                 CsDisplayCfgFlags.EditGated, "Arm before editing",
                 "When enabled, an encoder or button browses pages unless Allow Editing is "
                 + "toggled. When disabled, an encoder or button will always adjust the "
@@ -191,7 +189,7 @@ public sealed partial class ControlSurfacesPanel
             // refuse — both halves are valid on their own, and the control just
             // browses forever. Only said once a control actually depends on it.
             if (DisplayEditingUnreachable())
-                editing.Children.Add(WarningLine(
+                behavior.Children.Add(WarningLine(
                     "Nothing can arm editing, so a Browse/Adjust control can only browse pages. "
                     + "Bind a button or remote key to Allow Editing."));
 
@@ -210,18 +208,15 @@ public sealed partial class ControlSurfacesPanel
 
             // Side by side rather than stacked: each section is a handful of
             // narrow rows, and one atop the other left the card tall and empty
-            // down its right half. Behavior runs the deepest, so it takes a
-            // column alone; the two short sections share the other.
+            // down its right half. Two sections, one column each - the editing
+            // rows live under Behavior, which is what they govern.
             var columns = new Grid { ColumnSpacing = 28 };
             columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            var right = new StackPanel();
-            right.Children.Add(editing);
-            right.Children.Add(appearance);
             Grid.SetColumn(behavior, 0);
             columns.Children.Add(behavior);
-            Grid.SetColumn(right, 1);
-            columns.Children.Add(right);
+            Grid.SetColumn(appearance, 1);
+            columns.Children.Add(appearance);
             host.Children.Add(columns);
         }
         finally { _building = wasBuilding; }
@@ -244,9 +239,10 @@ public sealed partial class ControlSurfacesPanel
 
             host.Children.Add(SectionHeading("Dashboard Pages",
                 $"{ActiveDisplayPages().Count()} of {_vm.CsDisplayPageCount}"));
-            // On the same rhythm as the rows above: a list of pickers has no
-            // business being denser than the pickers it follows.
-            var pages = new StackPanel { Spacing = 8 };
+            // A touch more air than the config rows: each of these packs
+            // several compact controls, and at the config rhythm they read as
+            // a block rather than a list.
+            var pages = new StackPanel { Spacing = 10 };
             _displayPagesList = pages;
             foreach (int i in ActiveDisplayPages())
             {
@@ -337,7 +333,8 @@ public sealed partial class ControlSurfacesPanel
                 && (byte)_drafts[slot].Value == CsDisplayModels.DefaultAddress(_drafts[slot].Index))
                 _drafts[slot].Value = 0;
             _drafts[slot].Index = (byte)model;
-            PopulateSlotBody(slot);   // the address row names the new default
+            // Applying rebuilds the body, which renames the address default.
+            ApplyDisplayWiring(slot);
         };
         var row = Row("Model", combo);
         ToolTipService.SetToolTip(combo, "The type of display connected.");
@@ -374,7 +371,7 @@ public sealed partial class ControlSurfacesPanel
             {
                 _drafts[slot].Gpio0 = sda;
                 _drafts[slot].Gpio1 = (byte)(sda + 1);
-                RefreshStatusIndicators();
+                ApplyDisplayWiring(slot);
             }
         };
         if (!_pinRefreshers.TryGetValue(slot, out var list))
@@ -407,7 +404,7 @@ public sealed partial class ControlSurfacesPanel
         {
             if (_building) return;
             if (combo.SelectedItem is ComboBoxItem it && it.Tag is short addr)
-            { _drafts[slot].Value = addr; RefreshStatusIndicators(); }
+            { _drafts[slot].Value = addr; ApplyDisplayWiring(slot); }
         };
         ToolTipService.SetToolTip(combo,
             $"7-bit I2C address. Default is the model's usual one (0x{modelDefault:X2}).");
@@ -638,7 +635,7 @@ public sealed partial class ControlSurfacesPanel
         var page = _vm.CsDisplayPages[index];
         var nd = _vm.CsNounDescFor(page.Noun);
 
-        var grid = new Grid { ColumnSpacing = 10 };
+        var grid = new Grid { ColumnSpacing = 12 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                    // ordinal + marker
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // pickers
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                    // options + remove
@@ -682,7 +679,7 @@ public sealed partial class ControlSurfacesPanel
         var pickers = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 6,
+            Spacing = 8,
             VerticalAlignment = VerticalAlignment.Center,
         };
         pickers.Children.Add(BuildDisplayPageNounCombo(index, page));
@@ -705,7 +702,7 @@ public sealed partial class ControlSurfacesPanel
         var options = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 10,
+            Spacing = 12,
             Margin = new Thickness(14, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -862,7 +859,17 @@ public sealed partial class ControlSurfacesPanel
 
     private FrameworkElement BuildDisplayAddPageRow()
     {
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        var panel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            // Indented to the picker column - the ordinal's 26 and the row
+            // grid's 12 - so the button sits under the content it adds to,
+            // rather than hanging off the left edge where only the section
+            // heading lives. The extra top margin sets it off from the last
+            // row: it is the list's footer action, not another row of it.
+            Margin = new Thickness(38, 6, 0, 0),
+        };
         int free = FirstFreeDisplayPage();
         var add = new Button
         {
@@ -929,6 +936,26 @@ public sealed partial class ControlSurfacesPanel
         : "Draws the bar on the bottom row, moving the value up beside its name.";
 
     // ── Applying (live, no Apply button) ─────────────────────────────────────
+
+    /// <summary>Send the wiring draft as it is edited. Writes serialize through
+    /// the slot-apply guard, which drops a call made while one is in flight -
+    /// fine under an Apply button that disables itself, not for live pickers. An
+    /// edit landing mid-write is queued instead, and the re-run sends the draft
+    /// as it stands then, accumulated rather than lost.</summary>
+    private bool _displayWiringQueued;
+    private async void ApplyDisplayWiring(int slot)
+    {
+        if (_applyingSlot != null)
+        {
+            _displayWiringQueued = true;
+            return;
+        }
+        do
+        {
+            _displayWiringQueued = false;
+            await ApplySlotAsync(slot);
+        } while (_displayWiringQueued);
+    }
 
     private async Task ApplyDisplayCfgAsync(CsDisplayCfg cfg)
     {
@@ -1169,6 +1196,17 @@ public sealed partial class ControlSurfacesPanel
     {
         if (control is Control c) c.IsEnabled = !DisplayApplying && _vm.IsDeviceConnected;
         var row = Row(label, control);
+        // These rows live in a half-width column, where a fixed picker width
+        // outgrows the column at the default window width and clips. A picker
+        // stretches to the column instead: it cannot be wider than its home,
+        // and every one shares the column's edge, which is all the fixed width
+        // was buying. The number fields stay at their natural width - a short
+        // value in a full-width box reads worse, and they cannot clip.
+        if (control is ComboBox combo)
+        {
+            combo.MinWidth = 0;
+            combo.HorizontalAlignment = HorizontalAlignment.Stretch;
+        }
         // These labels are wordier than the binding editor's, and the label column
         // is a fixed width, so let one wrap rather than run under its control.
         if (row.Children.Count > 0 && row.Children[0] is TextBlock lbl)
