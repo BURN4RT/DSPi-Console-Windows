@@ -185,13 +185,35 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
         if (item.Tag is not string s || !int.TryParse(s, out int target)) return;
 
         ClearStatus();
+        // Ask before touching the device. The raise applies input by input, so
+        // a clash the device discovered mid-raise left every input after the
+        // blocked one already on - cancelling the prompt then walked away from
+        // a half-applied raise. The claims map knows every pin the firmware
+        // would refuse on, so a clean check here means the raise goes through
+        // whole, and a dirty one prompts with nothing yet changed.
+        var claims = HardwarePins.BuildAssignmentMap(Vm);
+        bool wouldClash = false;
+        for (int i = 1; i < target && !wouldClash; i++)
+            wouldClash = !Vm.SpdifInputEnabled(i) && claims.ContainsKey(Vm.SpdifRxPinAt(i));
+        if (wouldClash)
+        {
+            await PromptForInputPinAsync(target);
+            DispatcherQueue.TryEnqueue(Refresh);
+            return;
+        }
+
+        int before = Vm.SpdifEnabledCount;
         var status = await Task.Run(() => Vm.SetSpdifInputCount(target));
         HardwarePins.RaisePinAssignmentsChanged();
         if (status == PinConfigResult.Success)
             ShowStatus($"{target} S/PDIF input{(target == 1 ? "" : "s")} active", false);
         else if (status == PinConfigResult.PinInUse)
         {
-            await PromptForInputPinAsync(target);
+            // The map said clear, so this is a rule it does not model. Put the
+            // count back rather than leave the raise half-applied.
+            await Task.Run(() => Vm.SetSpdifInputCount(before));
+            HardwarePins.RaisePinAssignmentsChanged();
+            ShowStatus("A pin conflict blocked enabling an input — assign different GPIOs.", true);
         }
         else
             ShowStatus($"Failed to change instance count (0x{status:X2})", true);
@@ -207,10 +229,17 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
         var claims = HardwarePins.BuildAssignmentMap(Vm);
 
         // Every input the raise switches on, not merely the first that clashes.
+        // The gaps are found by enable state, not by count: SetSpdifInputCount
+        // applies input by input, so by now every input whose pin was free is
+        // already on and the refused ones are whatever is still off below the
+        // target. (SpdifInputCount is how many inputs the firmware HAS - it is
+        // never below the target, so starting the walk there built no rows and
+        // sent every conflict to the wordless fallback under it.)
         var blocked = new List<int>();
         var rows = new List<PinReassignment>();
-        for (int i = Vm.SpdifInputCount; i < target; i++)
+        for (int i = 1; i < target; i++)
         {
+            if (Vm.SpdifInputEnabled(i)) continue;
             if (!claims.TryGetValue(Vm.SpdifRxPinAt(i), out var owner)) continue;
             blocked.Add(i);
             rows.Add(new PinReassignment(InputLabel(i), Vm.SpdifRxPinAt(i), owner));
@@ -222,13 +251,22 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
             return;
         }
 
+        int before = Vm.SpdifEnabledCount;
         await PinConflictPrompt.ShowAsync(XamlRoot, rows, claims, HardwarePins.ValidPins,
             async pins =>
             {
                 for (int i = 0; i < blocked.Count; i++)
                     if (await Task.Run(() => Vm.SetSpdifRxPin(pins[i], blocked[i])) != PinConfigResult.Success)
                         return false;
-                if (await Task.Run(() => Vm.SetSpdifInputCount(target)) != PinConfigResult.Success) return false;
+                if (await Task.Run(() => Vm.SetSpdifInputCount(target)) != PinConfigResult.Success)
+                {
+                    // A refusal the moved pins did not cure: put the count back,
+                    // so the prompt that stays open reasons about a state it can
+                    // see rather than a half-applied raise.
+                    await Task.Run(() => Vm.SetSpdifInputCount(before));
+                    HardwarePins.RaisePinAssignmentsChanged();
+                    return false;
+                }
                 HardwarePins.RaisePinAssignmentsChanged();
                 ShowStatus($"{target} S/PDIF input{(target == 1 ? "" : "s")} active, "
                            + $"{blocked.Count} pin{(blocked.Count == 1 ? "" : "s")} reassigned", false);
