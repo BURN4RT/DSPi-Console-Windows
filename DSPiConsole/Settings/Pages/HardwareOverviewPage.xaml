@@ -38,7 +38,9 @@
             </StackPanel>
         </Border>
 
-        <StackPanel x:Name="BodyPanel" Spacing="12">
+        <!-- Same 16 as between the role groups below, so the map card and the
+             first group sit on the same rhythm as every group after it. -->
+        <StackPanel x:Name="BodyPanel" Spacing="16">
 
             <!-- The whole header at a glance. A bare count of free pins answers
                  "how many are left" but not "where", and where is what matters:
@@ -82,8 +84,11 @@
                        FontSize="12" TextAlignment="Center" Margin="0,16,0,16"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
 
-            <!-- One section per role in use, each listing its pins and owners. -->
-            <StackPanel x:Name="GroupsPanel" Spacing="12"/>
+            <!-- One section per role in use, each listing its pins and owners.
+                 Wider spacing between groups than between a label and its card
+                 (6), so each label reads as captioning the card below it rather
+                 than floating between two. -->
+            <StackPanel x:Name="GroupsPanel" Spacing="16"/>
         </StackPanel>
     </StackPanel>
 </settings:SettingsModule>

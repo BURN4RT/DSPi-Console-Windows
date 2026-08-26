@@ -257,13 +257,20 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
         GroupsPanel.Children.Clear();
         foreach (var group in GroupByRole(rows))
         {
-            var section = new StackPanel { Spacing = 12 };
+            // The role's name goes above its card, not inside it. Inside, the
+            // label row and its gap sit on top of the chips while only the
+            // card's padding sits under them, and the chips read as hanging
+            // low in the card. Outside - the way Settings pages caption their
+            // cards - the card holds nothing but chips, so they are centred
+            // by construction.
+            var section = new StackPanel { Spacing = 6 };
             section.Children.Add(new TextBlock
             {
                 Text = RoleTitle(group.Role).ToUpperInvariant(),
                 FontSize = 10,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = SecondaryBrush,
+                Margin = new Thickness(2, 0, 0, 0),
             });
 
             // Always the full column count, even for a role holding one pin: the
@@ -293,18 +300,17 @@ public sealed partial class HardwareOverviewPage : SettingsModule, ISettingsPage
                 Grid.SetRow(cell, i / columns);
                 grid.Children.Add(cell);
             }
-            section.Children.Add(grid);
-
             // Its own card, matching the map's above it.
-            GroupsPanel.Children.Add(new Border
+            section.Children.Add(new Border
             {
                 Background = CardBackground,
                 BorderBrush = CardStroke,
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(16, 14, 16, 14),
-                Child = section,
+                Padding = new Thickness(16, 16, 16, 16),
+                Child = grid,
             });
+            GroupsPanel.Children.Add(section);
         }
     }
 

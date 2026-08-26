@@ -95,7 +95,9 @@
                  Foreground explicitly to TextFillColorPrimaryBrush
                  pulls in our palette and keeps the title from
                  looking glaring. Icon mirrors the same brush. -->
-            <Border Grid.Row="0" Padding="24,16,24,8">
+            <!-- 16 below the title: the same gap the Overview keeps between
+                 its cards, so the header sits on the page rhythm too. -->
+            <Border Grid.Row="0" Padding="24,16,24,16">
                 <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                     <FontIcon x:Name="HeaderIcon"
                               FontFamily="{ThemeResource SymbolThemeFontFamily}"
