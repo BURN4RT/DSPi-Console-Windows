@@ -135,10 +135,10 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
         // map. Each claims its GPIO only while enabled, which is the same rule
         // the map itself follows.
         ClearPinTargets();
-        if (Vm.AdatSupported && Vm.AdatEnabled) RegisterPinTarget(Vm.AdatPin, OutPinCard);
+        if (Vm.AdatSupported && Vm.AdatEnabled) RegisterPinTarget(Vm.AdatPin, OutPinCombo);
         if (Vm.AdatInputSupported && Vm.AdatInputEnabled
             && Vm.AdatInputPin != MainViewModel.AdatInputPinUnset)
-            RegisterPinTarget(Vm.AdatInputPin, InPinCard);
+            RegisterPinTarget(Vm.AdatInputPin, InPinCombo);
     }
 
     /// <summary>Show the receiver's lock state beside the clock picker. Only
@@ -288,13 +288,17 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
             return;
         }
 
-        await PinConflictPrompt.ShowAsync(XamlRoot, "the ADAT output", owner, claims,
-            HardwarePins.ValidPins, async pin =>
+        var rows = new List<PinReassignment>
+        {
+            new("the ADAT output", Vm.AdatPin, owner),
+        };
+        await PinConflictPrompt.ShowAsync(XamlRoot, rows, claims, HardwarePins.ValidPins,
+            async pins =>
             {
-                if (await Task.Run(() => Vm.SetAdatPin(pin)) != PinConfigResult.Success) return false;
+                if (await Task.Run(() => Vm.SetAdatPin(pins[0])) != PinConfigResult.Success) return false;
                 if (await Task.Run(() => Vm.SetAdatEnable(true)) != PinConfigResult.Success) return false;
                 HardwarePins.RaisePinAssignmentsChanged();
-                ShowStatus($"ADAT output enabled on GPIO {pin}", false);
+                ShowStatus($"ADAT output enabled on GPIO {pins[0]}", false);
                 return true;
             });
         Refresh();
@@ -312,13 +316,17 @@ public sealed partial class HardwareAdatPage : SettingsModule, ISettingsPage
             return;
         }
 
-        await PinConflictPrompt.ShowAsync(XamlRoot, "the ADAT input", owner, claims,
-            HardwarePins.ValidPins, async pin =>
+        var rows = new List<PinReassignment>
+        {
+            new("the ADAT input", Vm.AdatInputPin, owner),
+        };
+        await PinConflictPrompt.ShowAsync(XamlRoot, rows, claims, HardwarePins.ValidPins,
+            async pins =>
             {
-                if (await Task.Run(() => Vm.SetAdatInputPin(pin)) != PinConfigResult.Success) return false;
+                if (await Task.Run(() => Vm.SetAdatInputPin(pins[0])) != PinConfigResult.Success) return false;
                 if (await Task.Run(() => Vm.SetAdatInputEnable(true)) != PinConfigResult.Success) return false;
                 HardwarePins.RaisePinAssignmentsChanged();
-                ShowStatus($"ADAT input enabled on GPIO {pin}", false);
+                ShowStatus($"ADAT input enabled on GPIO {pins[0]}", false);
                 return true;
             });
         Refresh();

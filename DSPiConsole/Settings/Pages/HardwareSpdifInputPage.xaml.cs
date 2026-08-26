@@ -97,11 +97,11 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
     public override bool HighlightPin(byte pin)
     {
         if (Vm == null) return false;
-        var cards = new[] { RxPinCard0, RxPinCard1, RxPinCard2, RxPinCard3 };
-        for (int i = 0; i < cards.Length && i < Vm.SpdifInputCount; i++)
+        var pickers = new[] { RxPinCombo0, RxPinCombo1, RxPinCombo2, RxPinCombo3 };
+        for (int i = 0; i < pickers.Length && i < Vm.SpdifInputCount; i++)
         {
             if (Vm.SpdifRxPinAt(i) != pin) continue;
-            PinFlash.Play(cards[i]);
+            PinFlash.Play(pickers[i]);
             return true;
         }
         return false;
@@ -206,29 +206,32 @@ public sealed partial class HardwareSpdifInputPage : SettingsModule, ISettingsPa
         if (Vm == null) return;
         var claims = HardwarePins.BuildAssignmentMap(Vm);
 
-        int blocked = -1;
-        PinAssignment owner = default;
+        // Every input the raise switches on, not merely the first that clashes.
+        var blocked = new List<int>();
+        var rows = new List<PinReassignment>();
         for (int i = Vm.SpdifInputCount; i < target; i++)
         {
-            if (!claims.TryGetValue(Vm.SpdifRxPinAt(i), out owner)) continue;
-            blocked = i;
-            break;
+            if (!claims.TryGetValue(Vm.SpdifRxPinAt(i), out var owner)) continue;
+            blocked.Add(i);
+            rows.Add(new PinReassignment(InputLabel(i), Vm.SpdifRxPinAt(i), owner));
         }
-        if (blocked < 0)
+        if (rows.Count == 0)
         {
             // Refused for something the map cannot account for.
             ShowStatus("A pin conflict blocked enabling an input — assign different GPIOs.", true);
             return;
         }
 
-        await PinConflictPrompt.ShowAsync(XamlRoot, InputLabel(blocked), owner, claims,
-            HardwarePins.ValidPins, async pin =>
+        await PinConflictPrompt.ShowAsync(XamlRoot, rows, claims, HardwarePins.ValidPins,
+            async pins =>
             {
-                if (await Task.Run(() => Vm.SetSpdifRxPin(pin, blocked)) != PinConfigResult.Success) return false;
+                for (int i = 0; i < blocked.Count; i++)
+                    if (await Task.Run(() => Vm.SetSpdifRxPin(pins[i], blocked[i])) != PinConfigResult.Success)
+                        return false;
                 if (await Task.Run(() => Vm.SetSpdifInputCount(target)) != PinConfigResult.Success) return false;
                 HardwarePins.RaisePinAssignmentsChanged();
                 ShowStatus($"{target} S/PDIF input{(target == 1 ? "" : "s")} active, "
-                           + $"{InputLabel(blocked)} on GPIO {pin}", false);
+                           + $"{blocked.Count} pin{(blocked.Count == 1 ? "" : "s")} reassigned", false);
                 return true;
             });
         DispatcherQueue.TryEnqueue(Refresh);

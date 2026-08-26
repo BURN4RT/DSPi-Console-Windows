@@ -358,6 +358,9 @@ public sealed partial class ControlSurfacesPanel
         if (!_pinRefreshers.TryGetValue(slot, out var list))
             _pinRefreshers[slot] = list = new List<Action>();
         list.Add(Populate);
+        // One picker for the pair, so SDA and SCL both resolve to it.
+        _slotPinCombos[(slot, false)] = combo;
+        _slotPinCombos[(slot, true)] = combo;
 
         ToolTipService.SetToolTip(combo, "Clock and data pins are chosen in fixed pairs.");
         return Row("SDA/SCL Pins", combo);

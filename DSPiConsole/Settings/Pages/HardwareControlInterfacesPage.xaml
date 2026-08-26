@@ -33,11 +33,11 @@
                           Toggled="OnUartFieldChanged"/>
         </controls:SettingsCard>
 
-        <controls:SettingsCard Header="TX pin" Description="GPIO with UART TX mux (pin mod 4 = 0).">
+        <controls:SettingsCard x:Name="UartTxCard" Header="TX pin" Description="GPIO with UART TX mux (pin mod 4 = 0).">
             <ComboBox x:Name="UartTxCombo" MinWidth="140" SelectionChanged="OnUartFieldChanged"/>
         </controls:SettingsCard>
 
-        <controls:SettingsCard Header="RX pin" Description="GPIO with UART RX mux (pin mod 4 = 1), same instance.">
+        <controls:SettingsCard x:Name="UartRxCard" Header="RX pin" Description="GPIO with UART RX mux (pin mod 4 = 1), same instance.">
             <ComboBox x:Name="UartRxCombo" MinWidth="140" SelectionChanged="OnUartFieldChanged"/>
         </controls:SettingsCard>
 
@@ -95,11 +95,11 @@
                           Toggled="OnI2cFieldChanged"/>
         </controls:SettingsCard>
 
-        <controls:SettingsCard Header="SDA pin" Description="GPIO with I2C SDA mux (even pin).">
+        <controls:SettingsCard x:Name="I2cSdaCard" Header="SDA pin" Description="GPIO with I2C SDA mux (even pin).">
             <ComboBox x:Name="I2cSdaCombo" MinWidth="140" SelectionChanged="OnI2cFieldChanged"/>
         </controls:SettingsCard>
 
-        <controls:SettingsCard Header="SCL pin" Description="GPIO with I2C SCL mux (next odd pin), same instance.">
+        <controls:SettingsCard x:Name="I2cSclCard" Header="SCL pin" Description="GPIO with I2C SCL mux (next odd pin), same instance.">
             <ComboBox x:Name="I2cSclCombo" MinWidth="140" SelectionChanged="OnI2cFieldChanged"/>
         </controls:SettingsCard>
 

@@ -148,10 +148,10 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
     public override bool HighlightPin(byte pin)
     {
         if (Vm == null) return false;
-        if (pin == Vm.I2SBckPin || pin == Vm.I2SBckPin + 1) { PinFlash.Play(BckPinCard); return true; }
+        if (pin == Vm.I2SBckPin || pin == Vm.I2SBckPin + 1) { PinFlash.Play(BckPinCombo); return true; }
         if (Vm.I2sClockSplit && (pin == Vm.I2sBckPinSlave || pin == Vm.I2sBckPinSlave + 1))
         {
-            PinFlash.Play(SlaveBckCard);
+            PinFlash.Play(SlaveBckCombo);
             return true;
         }
         for (int pair = 0; pair < Vm.I2sActivePairs && pair < _rxCombos.Length; pair++)
@@ -597,27 +597,47 @@ public sealed partial class HardwareI2SPage : SettingsModule, ISettingsPage
         // free and gets offered as the fix for a clash with pair 0.
         var claims = HardwarePins.BuildAssignmentMap(Vm);
 
-        int blocked = -1;
-        PinAssignment owner = default;
+        // Every pair the raise brings up, not merely the first that clashes: three
+        // pairs can be blocked by three different things, and fixing one at a time
+        // would just be refused on the next with no sign of how many remain.
+        var blocked = new List<int>();
+        var rows = new List<PinReassignment>();
         for (int pair = Vm.I2sActivePairs; pair < count / 2; pair++)
         {
-            if (!claims.TryGetValue(Vm.I2sRxPinAt(pair), out owner)) continue;
-            blocked = pair;
-            break;
+            if (!claims.TryGetValue(Vm.I2sRxPinAt(pair), out var owner)) continue;
+            blocked.Add(pair);
+            rows.Add(new PinReassignment(PairLabel(pair), Vm.I2sRxPinAt(pair), owner));
         }
-        if (blocked < 0)
+        if (rows.Count == 0)
         {
             ShowStatus("A pair's data pin conflicts — assign different GPIOs first", true);
             return;
         }
 
-        await PinConflictPrompt.ShowAsync(XamlRoot, PairLabel(blocked), owner, claims,
-            HardwarePins.ValidPins, async pin =>
+        // Candidates follow the stricter tier: this is an I2S RX assignment, so a
+        // pin held by any other configured pair - inactive ones included - would be
+        // refused by the SetI2sRxPin below and must not be offered as the fix. The
+        // pairs being moved are excluded, since they are what we are reassigning.
+        var rxClaims = HardwarePins.BuildAssignmentMap(Vm);
+        var moving = new HashSet<byte>(blocked.Select(Vm.I2sRxPinAt));
+        for (int pair = 0; pair < Vm.I2sMaxPairs; pair++)
+        {
+            if (blocked.Contains(pair)) continue;
+            byte pin = Vm.I2sRxPinAt(pair);
+            if (!rxClaims.ContainsKey(pin) && !moving.Contains(pin))
+                ((Dictionary<byte, PinAssignment>)rxClaims)[pin] =
+                    new PinAssignment(pin, PairLabel(pair), PinRole.Input, Id);
+        }
+
+        await PinConflictPrompt.ShowAsync(XamlRoot, rows, rxClaims, HardwarePins.ValidPins,
+            async pins =>
             {
-                if (await Task.Run(() => Vm.SetI2sRxPin(pin, blocked)) != PinConfigResult.Success) return false;
+                for (int i = 0; i < blocked.Count; i++)
+                    if (await Task.Run(() => Vm.SetI2sRxPin(pins[i], blocked[i])) != PinConfigResult.Success)
+                        return false;
                 if (await Task.Run(() => Vm.SetI2sInputChannels(count)) != PinConfigResult.Success) return false;
                 HardwarePins.RaisePinAssignmentsChanged();
-                ShowStatus($"{count} channels, {PairLabel(blocked)} on GPIO {pin}", false);
+                ShowStatus($"{count} channels, {blocked.Count} pin{(blocked.Count == 1 ? "" : "s")} reassigned", false);
                 return true;
             });
         DispatcherQueue.TryEnqueue(Refresh);

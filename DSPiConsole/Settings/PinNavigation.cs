@@ -50,6 +50,23 @@ internal static class PinFlash
     public static void Play(FrameworkElement target)
     {
         if (target == null) return;
+
+        // A control that has not been realised yet still reports the property
+        // default for BorderThickness, because the style that sets it is applied
+        // with the template. Asking now would send a perfectly ordinary picker to
+        // the border-less fallback - which is why the first flash on a freshly
+        // built page blinked and every one after it outlined.
+        if (!target.IsLoaded)
+        {
+            void Ready(object sender, RoutedEventArgs e)
+            {
+                target.Loaded -= Ready;
+                Play(target);
+            }
+            target.Loaded += Ready;
+            return;
+        }
+
         target.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = true });
         if (target is Control control && HasBorder(control)) PulseBorder(control);
         else PulseOpacity(target);

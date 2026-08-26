@@ -154,7 +154,7 @@ public sealed partial class HardwareMasterClockPage : SettingsModule, ISettingsP
         // Where MCK is set, for a click on it in the Overview's map. Only while
         // it is on: a disabled MCK holds no GPIO, so the map shows none.
         ClearPinTargets();
-        if (Vm.MckEnabled) RegisterPinTarget(Vm.MckPin, MckPinCard);
+        if (Vm.MckEnabled) RegisterPinTarget(Vm.MckPin, MckPinCombo);
     }
 
     /// <summary>The rate and MCK group's live state. In I2S slave mode an external

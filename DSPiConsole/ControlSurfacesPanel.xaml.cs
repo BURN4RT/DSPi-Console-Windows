@@ -64,9 +64,12 @@ public sealed partial class ControlSurfacesPanel : UserControl, IPinHighlightPag
                          || (binding.Gpio1 != CsLimits.GpioUnused && binding.Gpio1 == pin);
             if (!holds) continue;
             if (!_slotCards.TryGetValue(slot, out var card)) return false;
+            // Open the card first: a picker inside a collapsed one has nothing to
+            // show for being rung.
             _expanded.Add(slot);
             if (card is Expander expander) expander.IsExpanded = true;
-            PinFlash.Play(card);
+            bool second = binding.Gpio0 != pin;
+            PinFlash.Play(_slotPinCombos.TryGetValue((slot, second), out var combo) ? combo : card);
             return true;
         }
         return false;
@@ -141,6 +144,12 @@ public sealed partial class ControlSurfacesPanel : UserControl, IPinHighlightPag
     // Per-slot pin-combo refreshers: re-run a slot's GPIO pickers in place (e.g.
     // after another slot claims a pin) without recreating the card body.
     private readonly Dictionary<int, List<Action>> _pinRefreshers = new();
+    // The picker that sets each of a slot's GPIOs, so a pin arriving from the
+    // Overview or a conflict rings the control that sets it, as on every other
+    // page. Keyed by whether it is the slot's second GPIO: an encoder has one
+    // picker per pin, while a display has a single pair picker that both of its
+    // pins resolve to.
+    private readonly Dictionary<(int Slot, bool Second), ComboBox> _slotPinCombos = new();
     // Per-slot / per-sub channel-picker relabellers, re-run when the user renames a
     // channel in the sidebar (the combo keeps its items and selection; only the
     // displayed names change).
@@ -362,6 +371,7 @@ public sealed partial class ControlSurfacesPanel : UserControl, IPinHighlightPag
             _slotBodies.Clear();
             _slotCards.Clear();
             _pinRefreshers.Clear();
+            _slotPinCombos.Clear();
             _channelRelabel.Clear();
             // The display card's own handles go with the cards: a rebuild that no
             // longer draws one would otherwise leave the config sections pointing
@@ -541,6 +551,8 @@ public sealed partial class ControlSurfacesPanel : UserControl, IPinHighlightPag
             // Pickers below re-register fresh closures; a noun without a channel
             // target simply won't put one back.
             _pinRefreshers.Remove(slot);
+            _slotPinCombos.Remove((slot, false));
+            _slotPinCombos.Remove((slot, true));
             _channelRelabel.Remove(slot);
             var draft = _drafts[slot];
 
@@ -797,6 +809,7 @@ public sealed partial class ControlSurfacesPanel : UserControl, IPinHighlightPag
         if (!_pinRefreshers.TryGetValue(slot, out var list))
             _pinRefreshers[slot] = list = new List<Action>();
         list.Add(Populate);
+        _slotPinCombos[(slot, isSecond)] = combo;
         return combo;
     }
 
@@ -1721,6 +1734,8 @@ public sealed partial class ControlSurfacesPanel : UserControl, IPinHighlightPag
         _slotSummaries.Remove(slot);
         _slotApply.Remove(slot);
         _pinRefreshers.Remove(slot);
+        _slotPinCombos.Remove((slot, false));
+        _slotPinCombos.Remove((slot, true));
         _channelRelabel.Remove(slot);
         _expanded.Remove(slot);
         if (slot == _displaySlot)
