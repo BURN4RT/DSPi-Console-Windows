@@ -116,6 +116,7 @@
                             <ComboBoxItem Content="Sinner"/>
                             <ComboBoxItem Content="Logician"/>
                             <ComboBoxItem Content="Reprojector"/>
+                            <ComboBoxItem Content="Riven"/>
                         </ComboBox>
                     </Grid>
 
@@ -254,7 +255,7 @@
                         <!-- Detector HPF -->
                         <StackPanel x:Name="DetectorTransitionPanel" Spacing="4">
                             <TextBlock Text="Detector Bass Cut / Stereo Transition" FontWeight="Medium"/>
-                            <TextBlock Text="Logician ignores bass below this corner in its steering detector. Reprojector uses it as the Stereo Transition: common bass below stays in L/R and out of C."
+                            <TextBlock Text="Logician ignores bass below this corner in its steering detector. Reprojector uses it as the Stereo Transition: common bass below stays in L/R and out of C. Riven uses it as the bass–mid crossover frequency (the mid–treble crossover is auto-derived at 4× this value)."
                                        FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                        TextWrapping="Wrap"/>
                             <Grid>

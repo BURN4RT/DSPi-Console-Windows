@@ -5,7 +5,7 @@ namespace DSPiConsole.Core.Models;
 /// <summary>Centre-engine mode (upmixer_spec.md section 1). Off (wire V27+) was
 /// appended as 2 rather than renumbered, so it sits last while the surround enum
 /// puts its Off first; with Off the centre is silent and L/R stay bit-exact.</summary>
-public enum UpmixCenterMode : byte { Passive = 0, Adaptive = 1, Off = 2 }
+public enum UpmixCenterMode : byte { Passive = 0, Adaptive = 1, Off = 2, Reprojector = 3, Riven = 4 }
 
 /// <summary>Surround-engine mode. Off removes rows 3-4 from the mix entirely.</summary>
 public enum UpmixSurroundMode : byte { Off = 0, Passive = 1, Adaptive = 2 }

@@ -123,6 +123,7 @@ public sealed partial class UpmixerWindow : Window
         0 => 1, // Sinner
         1 => 2, // Logician
         3 => 3, // Reprojector
+        4 => 4, // Riven
         _ => 2
     };
     private static int CenterIndexToWire(int index) => index switch
@@ -131,6 +132,7 @@ public sealed partial class UpmixerWindow : Window
         1 => 0,
         2 => 1,
         3 => 3,
+        4 => 4, // Riven
         _ => 1
     };
 
@@ -149,11 +151,12 @@ public sealed partial class UpmixerWindow : Window
         PresencePanel.Visibility = centerVis;
         bool adaptive = _viewModel.UpmixCenterMode == 1;
         bool reprojector = _viewModel.UpmixCenterMode == 3;
-        AdaptiveCenterPanel.Visibility = adaptive || reprojector
+        bool riven = _viewModel.UpmixCenterMode == 4;
+        AdaptiveCenterPanel.Visibility = adaptive || reprojector || riven
             ? Visibility.Visible : Visibility.Collapsed;
         ThresholdPanel.Visibility = adaptive ? Visibility.Visible : Visibility.Collapsed;
         BallisticsPanel.Visibility = adaptive ? Visibility.Visible : Visibility.Collapsed;
-        DetectorTransitionPanel.Visibility = adaptive || reprojector
+        DetectorTransitionPanel.Visibility = adaptive || reprojector || riven
             ? Visibility.Visible : Visibility.Collapsed;
         SurroundPanel.Visibility = _viewModel.UpmixSurroundMode != 0
             ? Visibility.Visible : Visibility.Collapsed;
