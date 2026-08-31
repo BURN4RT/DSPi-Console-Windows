@@ -220,8 +220,10 @@ starting-point presets and per-output selection.
 ### Stereo upmixer
 
 The upmixer derives centre and surround channels from a stereo source on RP2350 devices. Centre and surround
-extraction each offer two engine modes (Sinner and Logician) with their own conditioning controls: extraction
-strength, centre width, presence, correlation threshold, attack and release, detector bass cut, surround delay,
+extraction offers three modes: Sinner, Logician and Reprojector. Reprojector performs fixed centre extraction
+above an adjustable stereo transition, retaining common bass in L/R for normal side/subwoofer bass management.
+The existing conditioning controls cover extraction strength, centre width, presence, correlation threshold, attack
+and release, detector bass cut / stereo transition, surround delay,
 high-pass and low-pass filtering, and decorrelation. A live telemetry strip shows the measured correlation and
 explains why the upmixer is parked whenever it is not producing output. Controls that do not apply to the current
 mode are hidden rather than greyed out, and the matrix mixer labels the derived rows while the upmixer runs.
