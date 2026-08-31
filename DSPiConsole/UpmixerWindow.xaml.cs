@@ -117,8 +117,22 @@ public sealed partial class UpmixerWindow : Window
 
     // The centre dropdown lists Off first to match the surround one, but the wire
     // enum appends Off as 2 (0 = Passive, 1 = Adaptive), so the two orders differ.
-    private static int CenterWireToIndex(int wire) => wire == 2 ? 0 : Math.Clamp(wire, 0, 1) + 1;
-    private static int CenterIndexToWire(int index) => index == 0 ? 2 : index - 1;
+    private static int CenterWireToIndex(int wire) => wire switch
+    {
+        2 => 0, // Off is last on the wire for backward compatibility.
+        0 => 1, // Sinner
+        1 => 2, // Logician
+        3 => 3, // Reprojector
+        _ => 2
+    };
+    private static int CenterIndexToWire(int index) => index switch
+    {
+        0 => 2,
+        1 => 0,
+        2 => 1,
+        3 => 3,
+        _ => 1
+    };
 
     /// <summary>Per-mode visibility (spec section 4): with the centre engine off
     /// the whole centre group is inapplicable; in passive centre mode only the
@@ -133,7 +147,13 @@ public sealed partial class UpmixerWindow : Window
         StrengthPanel.Visibility = centerVis;
         WidthPanel.Visibility = centerVis;
         PresencePanel.Visibility = centerVis;
-        AdaptiveCenterPanel.Visibility = _viewModel.UpmixCenterMode == 1
+        bool adaptive = _viewModel.UpmixCenterMode == 1;
+        bool reprojector = _viewModel.UpmixCenterMode == 3;
+        AdaptiveCenterPanel.Visibility = adaptive || reprojector
+            ? Visibility.Visible : Visibility.Collapsed;
+        ThresholdPanel.Visibility = adaptive ? Visibility.Visible : Visibility.Collapsed;
+        BallisticsPanel.Visibility = adaptive ? Visibility.Visible : Visibility.Collapsed;
+        DetectorTransitionPanel.Visibility = adaptive || reprojector
             ? Visibility.Visible : Visibility.Collapsed;
         SurroundPanel.Visibility = _viewModel.UpmixSurroundMode != 0
             ? Visibility.Visible : Visibility.Collapsed;
