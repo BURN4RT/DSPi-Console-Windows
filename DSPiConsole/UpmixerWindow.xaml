@@ -115,6 +115,7 @@
                             <ComboBoxItem Content="Off"/>
                             <ComboBoxItem Content="Sinner"/>
                             <ComboBoxItem Content="Logician"/>
+                            <ComboBoxItem Content="Reprojector"/>
                         </ComboBox>
                     </Grid>
 
@@ -190,7 +191,7 @@
                     <StackPanel x:Name="AdaptiveCenterPanel" Spacing="16">
 
                         <!-- Threshold -->
-                        <StackPanel Spacing="4">
+                        <StackPanel x:Name="ThresholdPanel" Spacing="4">
                             <TextBlock Text="Correlation Threshold" FontWeight="Medium"/>
                             <TextBlock Text="Centre presence below this extracts nothing; raise to extract only strongly-correlated content."
                                        FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
@@ -211,7 +212,7 @@
                         </StackPanel>
 
                         <!-- Attack / Release -->
-                        <Grid ColumnSpacing="16">
+                        <Grid x:Name="BallisticsPanel" ColumnSpacing="16">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
@@ -251,9 +252,9 @@
                         </Grid>
 
                         <!-- Detector HPF -->
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="Detector Bass Cut" FontWeight="Medium"/>
-                            <TextBlock Text="The steering detector ignores content below this corner (bass correlates by coincidence); the audio itself is not filtered."
+                        <StackPanel x:Name="DetectorTransitionPanel" Spacing="4">
+                            <TextBlock Text="Detector Bass Cut / Stereo Transition" FontWeight="Medium"/>
+                            <TextBlock Text="Logician ignores bass below this corner in its steering detector. Reprojector uses it as the Stereo Transition: common bass below stays in L/R and out of C."
                                        FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                        TextWrapping="Wrap"/>
                             <Grid>
